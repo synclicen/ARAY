@@ -65,6 +65,7 @@ jobs:
           name: ARAY-Setup-${{ github.ref_name || inputs.tag }}
           path: |
             release/ARAY-Setup-*.exe
+            release/ARAY-Portable-*.exe
             release/latest.yml
           retention-days: 90
           if-no-files-found: warn
@@ -81,7 +82,8 @@ jobs:
 
             ## 📥 Download
 
-            - **Windows installer**: `ARAY-Setup-${{ github.ref_name }}.exe` (below)
+            - **Windows installer**: `ARAY-Setup-*.exe` (below)
+            - **Windows portable**: `ARAY-Portable-*.exe` (below — no install needed, just run)
 
             ## ✅ Verified
 
@@ -109,6 +111,7 @@ jobs:
             *Yap. Snap. Repeat.*
           files: |
             release/ARAY-Setup-*.exe
+            release/ARAY-Portable-*.exe
             release/latest.yml
           draft: false
           prerelease: false
