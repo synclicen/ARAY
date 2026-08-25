@@ -1,5 +1,12 @@
 # ARAY — Are you Ready? and....Yapping!
 
+[![CI](https://github.com/synclicen/ARAY/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/synclicen/ARAY/actions/workflows/ci.yml)
+[![Release](https://github.com/synclicen/ARAY/actions/workflows/release.yml/badge.svg)](https://github.com/synclicen/ARAY/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-purple-haze.svg)](LICENSE)
+[![Phase](https://img.shields.io/badge/Phase-1%20Core-D4AF37.svg)](docs/ARCHITECTURE.md)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-3178C6.svg)](https://www.typescriptlang.org/)
+[![Electron](https://img.shields.io/badge/Electron-31-47848F.svg)](https://www.electronjs.org/)
+
 > A premium Windows photo booth & event experience platform.
 > Local-first. Cloud-optional. Built for event professionals.
 

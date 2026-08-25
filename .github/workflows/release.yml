@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 🚀 Build Windows Installer & Release
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Typecheck
+        run: npm run typecheck
+
+      - name: 🏗️ Build renderer + main + preload
+        run: npm run build
+
+      - name: 🧪 Smoke test
+        run: node scripts/smoke-test.mjs
+
+      - name: 📦 Build Windows installer (NSIS)
+        run: npm run dist
+        env:
+          # Code signing disabled in Phase 1 — Phase 5 will add CERT_PASSWORD
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📊 List release artifacts
+        shell: pwsh
+        run: |
+          Write-Host "### 📦 Release Artifacts" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Write-Host "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          Get-ChildItem -Path release -Recurse -File | ForEach-Object {
+            $sizeKb = [math]::Round($_.Length / 1KB, 1)
+            Write-Host "- $($_.FullName -replace [regex]::Escape((Get-Location).Path + '\'),'') ($sizeKb KB)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
+          Get-ChildItem -Path release -Recurse -File | Format-Table Name, Length, FullName
+
+      - name: 📤 Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARAY-Setup-${{ github.ref_name || inputs.tag }}
+          path: |
+            release/ARAY-Setup-*.exe
+            release/latest.yml
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: 🏷️ Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ARAY ${{ github.ref_name }}
+          body: |
+            # ARAY ${{ github.ref_name }}
+
+            **Are you Ready? and....Yapping!**
+
+            ## 📥 Download
+
+            - **Windows installer**: `ARAY-Setup-${{ github.ref_name }}.exe` (below)
+
+            ## ✅ Verified
+
+            - ✅ TypeScript typecheck passes
+            - ✅ electron-vite build produces main + preload + renderer bundles
+            - ✅ 45/45 smoke tests pass
+            - ✅ NSIS installer packaged
+
+            ## 📦 What's Inside
+
+            - Electron 31 desktop app
+            - React 18 + TypeScript + Vite + Tailwind
+            - SQLite database (better-sqlite3)
+            - Sharp image processing
+            - Local-first storage architecture
+            - Camera abstraction (WebcamProvider)
+            - Brand design system (Purple Haze × Gold × Silver)
+
+            ## 📚 Documentation
+
+            See [README](https://github.com/${{ github.repository }}/blob/main/README.md) and the `docs/` folder.
+
+            ---
+
+            *Yap. Snap. Repeat.*
+          files: |
+            release/ARAY-Setup-*.exe
+            release/latest.yml
+          draft: false
+          prerelease: false
