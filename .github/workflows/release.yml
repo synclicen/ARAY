@@ -82,8 +82,17 @@ jobs:
 
             ## 📥 Download
 
-            - **Windows installer**: `ARAY-Setup-*.exe` (below)
-            - **Windows portable**: `ARAY-Portable-*.exe` (below — no install needed, just run)
+            - **Windows installer**: `ARAY-Setup-*.exe` (below) — recommended
+            - **Windows portable**: `ARAY-Portable-*.exe` (below — no install needed)
+
+            ## ⚠️ First-time launch on Windows
+
+            Windows SmartScreen may block unsigned apps. To run ARAY:
+
+            1. Right-click the downloaded `.exe` → **Properties**
+            2. Check **Unblock** at the bottom → **Apply**
+            3. Double-click to run
+            4. If SmartScreen appears: **More info** → **Run anyway**
 
             ## ✅ Verified
 

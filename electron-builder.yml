@@ -10,6 +10,16 @@ files:
   - out/**/*
   - package.json
 
+# Native modules must be unpacked from asar — they cannot be loaded from inside
+# the archive. This is critical for portable target which extracts to temp dir.
+asarUnpack:
+  - "**/*.{node,dll}"
+  - "**/better-sqlite3/**"
+  - "**/sharp/**"
+  - "**/sharp-win32-x64/**"
+  - "**/@img/**"
+  - "**/node_modules/@img/**"
+
 extraResources:
   - from: resources/
     to: resources/
