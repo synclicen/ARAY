@@ -49,13 +49,15 @@ console.log('\n=== ARAY Smoke Test ===\n')
 
 // ---------- 1. Shared types ----------
 console.log('1. Shared types')
-const sharedTypes = await import(join(ROOT, 'src/shared/types/index.ts')).catch(() => null)
-assert(sharedTypes !== null, 'shared types module loads (will fail if TS not transpiled — expected)')
-// Fallback: just verify the source file exists & has expected exports
+// Note: We do NOT attempt to import the .ts file directly — Node 20 (used in CI)
+// cannot import TypeScript without a loader. Instead we verify the source file
+// exists and contains the expected type definitions.
 try {
   const src = readFileSync(join(ROOT, 'src/shared/types/index.ts'), 'utf8')
+  assert(src.length > 100, 'shared types source file exists and is non-empty')
   assert(src.includes('ArayEvent') && src.includes('ArayMedia') && src.includes('SyncStatus'), 'shared types source exports key domain types')
   assert(src.includes('LOCAL_ONLY') && src.includes('SYNCED') && src.includes('PENDING'), 'SyncStatus enum has expected values')
+  assert(src.includes('ArayIPCResult') && src.includes('StorageInfo') && src.includes('CameraDevice'), 'shared types include IPC + storage + camera contracts')
 } catch (e) {
   assert(false, `shared types source readable: ${e.message}`)
 }
