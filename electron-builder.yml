@@ -1,0 +1,38 @@
+appId: "com.aray.booth"
+productName: "ARAY"
+copyright: "Copyright © 2026 ARAY"
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/
+    to: resources/
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon/icon.ico
+  artifactName: "ARAY-Setup-${version}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon/icon.ico
+  uninstallerIcon: resources/icon/icon.ico
+  shortcutName: ARAY
+  artifactName: "ARAY-Setup-${version}.${ext}"
+  deleteAppDataOnUninstall: false
+
+publish:
+  provider: generic
+  url: https://example.com/aray/releases/
+  channel: latest
