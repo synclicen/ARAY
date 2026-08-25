@@ -2,11 +2,35 @@ import { app } from 'electron'
 import { getDatabase } from '../index'
 import type { AraySettings } from '@shared/types'
 import { join } from 'path'
+import { existsSync, mkdirSync } from 'fs'
 
-const DEFAULT_STORAGE_PATH = join('D:', 'ARAY')
+// Default storage path: use user Documents folder so it works on ANY Windows
+// machine regardless of how many drives they have. D:\ is only suggested in
+// the first-run wizard UI — the actual default must be guaranteed to exist.
+function getDefaultStoragePathSync(): string {
+  try {
+    const docs = app.getPath('documents')
+    return join(docs, 'ARAY')
+  } catch {
+    try {
+      return join(app.getPath('home'), 'ARAY')
+    } catch {
+      return join(app.getPath('userData'), 'ARAY-Storage')
+    }
+  }
+}
+
+// Lazy-evaluated default — computed at first call (after app.whenReady)
+let _defaultStoragePath: string | null = null
+function defaultStoragePath(): string {
+  if (!_defaultStoragePath) {
+    _defaultStoragePath = getDefaultStoragePathSync()
+  }
+  return _defaultStoragePath
+}
 
 const DEFAULT_SETTINGS: AraySettings = {
-  storage_path: DEFAULT_STORAGE_PATH,
+  storage_path: '',  // filled lazily by getSettings() if empty
   first_run_completed: false,
   kiosk_mode: false,
   auto_print: false,
@@ -36,6 +60,10 @@ export function getSettings(): AraySettings {
       ;(settings as any)[row.key] = row.value
     }
   }
+  // Guarantee a valid storage path
+  if (!settings.storage_path) {
+    settings.storage_path = defaultStoragePath()
+  }
   return settings
 }
 
@@ -58,9 +86,38 @@ export function updateSettings(partial: Partial<AraySettings>): AraySettings {
 }
 
 export function getDefaultStoragePath(): string {
-  // On non-Windows dev environments, fall back to user data dir
-  if (process.platform === 'win32') {
-    return DEFAULT_STORAGE_PATH
+  return defaultStoragePath()
+}
+
+/**
+ * Ensure the storage path exists and is writable. If it cannot be created,
+ * fall back to userData/ARAY-Storage (guaranteed writable by Electron).
+ * Returns the path that was actually used.
+ */
+export function ensureValidStoragePath(): string {
+  const settings = getSettings()
+  let path = settings.storage_path || defaultStoragePath()
+
+  try {
+    if (!existsSync(path)) {
+      mkdirSync(path, { recursive: true })
+    }
+    // Test writability by creating a temp file
+    const testFile = join(path, '.aray-write-test')
+    try {
+      require('fs').writeFileSync(testFile, 'ok')
+      require('fs').unlinkSync(testFile)
+    } catch {
+      throw new Error('Storage path not writable')
+    }
+    return path
+  } catch (err) {
+    console.warn('[ARAY] Storage path invalid, falling back to userData:', err)
+    const fallback = join(app.getPath('userData'), 'ARAY-Storage')
+    if (!existsSync(fallback)) {
+      mkdirSync(fallback, { recursive: true })
+    }
+    updateSetting('storage_path', fallback)
+    return fallback
   }
-  return join(app.getPath('home'), 'ARAY')
 }

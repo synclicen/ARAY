@@ -6,19 +6,39 @@ directories:
   output: release
   buildResources: resources
 
+# Disable asar — better-sqlite3 + sharp are native .node modules that
+# cannot be loaded from inside an asar archive on Windows portable target.
+# Shipping as plain files is ~5MB larger but 100% reliable.
+asar: false
+
 files:
   - out/**/*
   - package.json
-
-# Native modules must be unpacked from asar — they cannot be loaded from inside
-# the archive. This is critical for portable target which extracts to temp dir.
-asarUnpack:
-  - "**/*.{node,dll}"
-  - "**/better-sqlite3/**"
-  - "**/sharp/**"
-  - "**/sharp-win32-x64/**"
-  - "**/@img/**"
-  - "**/node_modules/@img/**"
+  - node_modules/better-sqlite3/**/*
+  - node_modules/bindings/**/*
+  - node_modules/file-uri-to-path/**/*
+  - node_modules/sharp/**/*
+  - node_modules/@img/**/*
+  - node_modules/uuid/**/*
+  - node_modules/fs-extra/**/*
+  - node_modules/graceful-fs/**/*
+  - node_modules/jsonfile/**/*
+  - node_modules/universalify/**/*
+  - node_modules/electron-store/**/*
+  - node_modules/conf/**/*
+  - node_modules/atomically/**/*
+  - node_modules/debounce-fn/**/*
+  - node_modules/dot-prop/**/*
+  - node_modules/env-paths/**/*
+  - node_modules/aggregate-error/**/*
+  - node_modules/clean-stack/**/*
+  - node_modules/escape-goat/**/*
+  - node_modules/pupa/**/*
+  - node_modules/semver/**/*
+  - node_modules/lru-cache/**/*
+  - node_modules/yallist/**/*
+  - node_modules/ieee754/**/*
+  - node_modules/safe-buffer/**/*
 
 extraResources:
   - from: resources/
