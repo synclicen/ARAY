@@ -33,6 +33,23 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: ⬇️ Download VC++ Redistributable (bundled for offline install)
+        shell: pwsh
+        run: |
+          Write-Host "Downloading VC++ Redistributable..."
+          $url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+          $output = "resources/vc_redist.x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile $output -UseBasicParsing
+          $size = [math]::Round((Get-Item $output).Length / 1MB, 1)
+          Write-Host "✓ Downloaded vc_redist.x64.exe ($size MB)"
+          # Verify it's a valid PE file
+          $bytes = [System.IO.File]::ReadAllBytes($output)[0..1]
+          if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            Write-Error "Downloaded file is not a valid EXE!"
+            exit 1
+          }
+          Write-Host "✓ Valid executable verified"
+
       - name: 🔍 Typecheck
         run: npm run typecheck
 
