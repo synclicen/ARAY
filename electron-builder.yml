@@ -10,10 +10,11 @@ directories:
 # cannot be loaded from inside an asar archive on Windows.
 asar: false
 
-# CRITICAL: Tell electron-builder to rebuild native modules for Electron's ABI
-# (not Node's ABI). Without this, better-sqlite3 crashes on launch.
-npmRebuild: true
-buildDependenciesFromSource: true
+# CRITICAL: Do NOT let electron-builder rebuild native modules during packaging.
+# It tries to compile from source, which fails on CI runners without Visual Studio.
+# better-sqlite3 v11.10.0 ships prebuilt binaries for Electron 31 — those work as-is.
+# We use @electron/rebuild with --force --prebuild in a separate CI step instead.
+npmRebuild: false
 
 files:
   - out/**/*
