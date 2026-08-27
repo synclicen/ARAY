@@ -1,120 +1,29 @@
-import { contextBridge, ipcRenderer } from 'electron'
-
 /**
- * ARAY Preload — Typed IPC Bridge
- *
- * Strict rule: never expose ipcRenderer directly.
- * All operations go through typed window.aray methods.
+ * ARAY Preload — Minimal Diagnostic Version
+ * Only exposes stub APIs so renderer doesn't crash if it calls them.
  */
 
-const invoke = <T>(channel: string, ...args: any[]): Promise<T> =>
-  ipcRenderer.invoke(channel, ...args)
+import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
-  // ==================== EVENTS ====================
-  events: {
-    create: (input: any) => invoke('events.create', input),
-    list: (includeArchived?: boolean) => invoke('events.list', includeArchived),
-    get: (id: string) => invoke('events.get', id),
-    update: (input: any) => invoke('events.update', input),
-    delete: (id: string) => invoke('events.delete', id),
-    archive: (id: string) => invoke('events.archive', id),
-    duplicate: (id: string) => invoke('events.duplicate', id),
-    openFolder: (id: string) => invoke('events.openFolder', id)
-  },
-
-  // ==================== SESSIONS & MEDIA ====================
-  sessions: {
-    create: (eventId: string, type: string, shotCount?: number) =>
-      invoke('sessions.create', eventId, type, shotCount)
-  },
-  media: {
-    list: (filters?: any) => invoke('media.list', filters),
-    get: (id: string) => invoke('media.get', id),
-    delete: (id: string) => invoke('media.delete', id),
-    stats: (eventId?: string) => invoke('media.stats', eventId),
-    saveCapturedFrame: (payload: any) => invoke('media.saveCapturedFrame', payload),
-    readFile: (path: string) => invoke('media.readFile', path),
-    updateSyncStatus: (id: string, status: string, remoteId?: string | null, error?: string | null) =>
-      invoke('media.updateSyncStatus', id, status, remoteId, error)
-  },
-
-  // ==================== STORAGE ====================
-  storage: {
-    getInfo: () => invoke('storage.getInfo'),
-    getPath: () => invoke('storage.getPath'),
-    setPath: (path: string) => invoke('storage.setPath', path),
-    chooseFolder: () => invoke('storage.chooseFolder'),
-    openFolder: (path: string) => invoke('storage.openFolder', path),
-    ensure: () => invoke('storage.ensure')
-  },
-
-  // ==================== CAMERA ====================
-  camera: {
-    list: () => invoke('camera.list'),
-    connect: (deviceId: string) => invoke('camera.connect', deviceId),
-    disconnect: () => invoke('camera.disconnect')
-  },
-
-  // ==================== SETTINGS ====================
-  settings: {
-    get: () => invoke('settings.get'),
-    update: (partial: any) => invoke('settings.update', partial),
-    getDefaultStoragePath: () => invoke('settings.getDefaultStoragePath')
-  },
-
-  // ==================== PRINT ====================
-  print: {
-    queue: (mediaId: string, printerName?: string, copies?: number) =>
-      invoke('print.queue', mediaId, printerName, copies),
-    listPrinters: () => invoke('print.listPrinters')
-  },
-
-  // ==================== GOOGLE DRIVE ====================
-  googleDrive: {
-    connect: () => invoke('googleDrive.connect'),
-    disconnect: () => invoke('googleDrive.disconnect'),
-    status: () => invoke('googleDrive.status')
-  },
-
-  // ==================== SYNC ====================
-  sync: {
-    start: () => invoke('sync.start'),
-    pause: () => invoke('sync.pause'),
-    resume: () => invoke('sync.resume'),
-    retry: () => invoke('sync.retry'),
-    summary: (eventId?: string) => invoke('sync.summary', eventId)
-  },
-
-  // ==================== APP ====================
   app: {
-    getVersion: () => invoke('app.getVersion'),
-    openExternal: (url: string) => invoke('app.openExternal', url)
+    getVersion: () => ipcRenderer.invoke('app.getVersion'),
+    openExternal: (url: string) => ipcRenderer.invoke('app.openExternal', url)
   },
-
-  // ==================== EVENT LISTENERS ====================
-  // For receiving push events from main process
-  on: (channel: string, callback: (...args: any[]) => void) => {
-    const handler = (_event: any, ...args: any[]) => callback(...args)
-    ipcRenderer.on(channel, handler)
-    return () => ipcRenderer.removeListener(channel, handler)
-  }
+  events: { create: () => Promise.resolve({ success: false, error: { code: 'NO_DB', message: 'Diagnostic mode' } }), list: () => Promise.resolve({ success: true, data: [] }), get: () => Promise.resolve({ success: true, data: null }), update: () => Promise.resolve({ success: false, error: {} }), delete: () => Promise.resolve({ success: false, error: {} }), archive: () => Promise.resolve({ success: false, error: {} }), duplicate: () => Promise.resolve({ success: false, error: {} }), openFolder: () => Promise.resolve({ success: true, data: {} }) },
+  sessions: { create: () => Promise.resolve({ success: true, data: { id: 'diag' } }) },
+  media: { list: () => Promise.resolve({ success: true, data: [] }), get: () => Promise.resolve({ success: true, data: null }), delete: () => Promise.resolve({ success: false, error: {} }), stats: () => Promise.resolve({ success: true, data: { total: 0, synced: 0, pending: 0, failed: 0, uploading: 0 } }), saveCapturedFrame: () => Promise.resolve({ success: false, error: {} }), readFile: () => Promise.resolve({ success: true, data: '' }), updateSyncStatus: () => Promise.resolve({ success: true, data: {} }) },
+  storage: { getInfo: () => Promise.resolve({ success: true, data: { path: 'D:\\ARAY', total_bytes: 1000000000000, used_bytes: 500000000000, free_bytes: 500000000000, used_percent: 50, warning: false, critical: false } }), getPath: () => Promise.resolve({ success: true, data: 'D:\\ARAY' }), setPath: () => Promise.resolve({ success: true, data: {} }), chooseFolder: () => Promise.resolve({ success: true, data: { canceled: true, path: null } }), openFolder: () => Promise.resolve({ success: true, data: {} }), ensure: () => Promise.resolve({ success: true, data: {} }) },
+  camera: { list: () => Promise.resolve({ success: true, data: [] }), connect: () => Promise.resolve({ success: true, data: true }), disconnect: () => Promise.resolve({ success: true, data: undefined }) },
+  settings: { get: () => Promise.resolve({ success: true, data: { storage_path: 'D:\\ARAY', first_run_completed: true, kiosk_mode: false, auto_print: false, auto_sync: false, sync_interval: 'immediately', delete_local_after_sync: false, google_drive_connected: false, google_drive_email: null, camera_device_id: null, printer_name: null, booth_countdown_seconds: 3, booth_shot_count: 4 } }), update: () => Promise.resolve({ success: true, data: {} }), getDefaultStoragePath: () => Promise.resolve({ success: true, data: 'D:\\ARAY' }) },
+  print: { queue: () => Promise.resolve({ success: true, data: { id: 'diag' } }), listPrinters: () => Promise.resolve({ success: true, data: [] }) },
+  googleDrive: { connect: () => Promise.resolve({ success: true, data: { connected: false } }), disconnect: () => Promise.resolve({ success: true, data: {} }), status: () => Promise.resolve({ success: true, data: { connected: false, email: null } }) },
+  sync: { start: () => Promise.resolve({ success: true, data: {} }), pause: () => Promise.resolve({ success: true, data: {} }), resume: () => Promise.resolve({ success: true, data: {} }), retry: () => Promise.resolve({ success: true, data: {} }), summary: () => Promise.resolve({ success: true, data: { total: 0, synced: 0, pending: 0, failed: 0, uploading: 0 } }) },
+  on: () => () => {}
 }
 
-export type ArayAPI = typeof api
-
-// contextIsolation is always true in ARAY — use contextBridge exclusively.
 try {
   contextBridge.exposeInMainWorld('aray', api)
-  // Also expose a simple electronAPI for backward compat with renderer's
-  // direct ipcRenderer.on usage (for startup status notifications)
-  contextBridge.exposeInMainWorld('electronAPI', {
-    receive: (channel: string, callback: (...args: any[]) => void) => {
-      const handler = (_event: any, ...args: any[]) => callback(...args)
-      ipcRenderer.on(channel, handler)
-      return () => ipcRenderer.removeListener(channel, handler)
-    }
-  })
 } catch (err) {
   console.error('[ARAY Preload] Failed to expose API:', err)
 }

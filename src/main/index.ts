@@ -1,124 +1,155 @@
 /**
- * ARAY Main Process — ULTRA MINIMAL diagnostic version
+ * ARAY Main Process — Phase 1 (Pure JS, no native modules)
  *
- * This version does ONE thing: open a window with inline HTML.
- * No database, no IPC, no preload, no storage, no external imports.
- *
- * If THIS version opens a window → Electron packaging is fine,
- *   issue was in previous code.
- * If THIS version also fails → issue is in Electron binary itself
- *   or Windows environment (antivirus, missing VC++ runtime, etc.)
+ * Loads preload + renderer. No database, no IPC, no storage — just window.
+ * Diagnostic mode: proves Electron can open a window with the bundled
+ * renderer + preload scripts.
  */
 
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, shell, dialog } from 'electron'
 import { join } from 'path'
+import { existsSync, appendFileSync } from 'fs'
 
 let mainWindow: BrowserWindow | null = null
 
+function getLogPath(): string {
+  try {
+    return join(app.getPath('userData'), 'aray-startup.log')
+  } catch {
+    return join(process.cwd(), 'aray-startup.log')
+  }
+}
+
+function log(msg: string): void {
+  const line = `[${new Date().toISOString()}] ${msg}\n`
+  try {
+    appendFileSync(getLogPath(), line)
+  } catch {}
+  console.log(`[ARAY] ${msg}`)
+}
+
 function createWindow(): void {
-  console.log('[ARAY] Creating window...')
+  log('Creating main window...')
+
+  // Determine preload path - check multiple possible locations
+  const possiblePreloadPaths = [
+    join(__dirname, 'preload', 'index.js'),           // out/main/preload/index.js (rare)
+    join(__dirname, '..', 'preload', 'index.js'),     // out/preload/index.js (standard)
+    join(__dirname, '..', '..', 'preload', 'index.js') // out/main/../preload/index.js
+  ]
+
+  let preloadPath: string | undefined
+  for (const p of possiblePreloadPaths) {
+    if (existsSync(p)) {
+      preloadPath = p
+      log(`Preload found at: ${p}`)
+      break
+    }
+  }
+  if (!preloadPath) {
+    log(`WARNING: Preload not found in any of ${possiblePreloadPaths.length} locations`)
+    log(`__dirname = ${__dirname}`)
+    log(`Listing __dirname:`)
+    try {
+      const fs = require('fs')
+      const items = fs.readdirSync(__dirname)
+      log(`  ${items.join(', ')}`)
+    } catch (e: any) {
+      log(`  Could not list __dirname: ${e.message}`)
+    }
+  }
+
+  // Determine renderer path
+  const rendererPath = join(__dirname, '..', 'renderer', 'index.html')
+  log(`Renderer path: ${rendererPath}`)
+  log(`Renderer exists: ${existsSync(rendererPath)}`)
 
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    show: true,
-    title: 'ARAY — Diagnostic',
+    width: 1200,
+    height: 800,
+    minWidth: 1024,
+    minHeight: 600,
+    show: false,  // Don't show until ready-to-show fires
+    autoHideMenuBar: true,
+    title: 'ARAY — Are you Ready? and....Yapping!',
     backgroundColor: '#0F0B1A',
     webPreferences: {
+      preload: preloadPath,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: false,
+      webSecurity: false  // Disable for diagnostic — allows file:// loads
     }
   })
 
-  // Load inline HTML via data URL — no external file dependency
-  const html = `data:text/html;charset=utf-8,` + encodeURIComponent(`
-    <!doctype html>
-    <html>
-    <head>
-      <meta charset="utf-8">
-      <title>ARAY Diagnostic</title>
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          font-family: 'Segoe UI', system-ui, sans-serif;
-          background: linear-gradient(135deg, #0F0B1A 0%, #241A40 100%);
-          color: #EDEDF1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          min-height: 100vh;
-          padding: 40px;
-          text-align: center;
-        }
-        h1 {
-          font-size: 48px;
-          font-weight: 800;
-          letter-spacing: -0.04em;
-          background: linear-gradient(135deg, #CDB8E4 0%, #D4AF37 50%, #C0C0C8 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          margin-bottom: 8px;
-        }
-        .tagline { color: #909099; font-style: italic; margin-bottom: 32px; }
-        .ok {
-          padding: 16px 32px;
-          background: rgba(95, 207, 128, 0.15);
-          border: 1px solid rgba(95, 207, 128, 0.3);
-          border-radius: 12px;
-          color: #5FCF80;
-          font-size: 18px;
-          font-weight: 600;
-          margin-bottom: 24px;
-        }
-        .info {
-          color: #A8A8B2;
-          font-size: 14px;
-          line-height: 1.6;
-          max-width: 400px;
-        }
-        .info code {
-          background: rgba(192, 192, 200, 0.1);
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-family: 'Consolas', monospace;
-          color: #CDB8E4;
-        }
-      </style>
-    </head>
-    <body>
-      <h1>ARAY</h1>
-      <p class="tagline">Are you Ready? and....Yapping!</p>
-      <div class="ok">✓ App is running successfully!</div>
-      <div class="info">
-        <p>If you see this window, Electron is working correctly.</p>
-        <p style="margin-top: 12px;">Version: 1.3.1-diagnostic</p>
-        <p>Electron: <span id="ver">loading...</span></p>
-      </div>
-      <script>
-        // Display Electron version if available
-        if (typeof process !== 'undefined') {
-          document.getElementById('ver').textContent = process.versions.electron;
-        } else {
-          document.getElementById('ver').textContent = '(renderer only)';
-        }
-      </script>
-    </body>
-    </html>
-  `)
+  mainWindow.once('ready-to-show', () => {
+    log('Window ready-to-show, showing now')
+    mainWindow?.show()
+  })
 
-  mainWindow.loadURL(html)
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  // Log all renderer events
+  mainWindow.webContents.on('did-start-loading', () => log('Renderer: did-start-loading'))
+  mainWindow.webContents.on('did-stop-loading', () => log('Renderer: did-stop-loading'))
+  mainWindow.webContents.on('dom-ready', () => log('Renderer: dom-ready'))
+  mainWindow.webContents.on('did-finish-load', () => log('Renderer: did-finish-load'))
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
+    log(`Renderer: did-fail-load — code=${errorCode} desc=${errorDescription} url=${validatedURL}`)
+  })
+  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    log(`Renderer console[${level}]: ${message} (${sourceId}:${line})`)
+  })
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    log(`Renderer CRASHED: reason=${details.reason} exitCode=${details.exitCode}`)
+  })
 
   mainWindow.on('closed', () => {
+    log('Window closed')
     mainWindow = null
   })
 
-  console.log('[ARAY] Window created successfully')
+  // Load renderer
+  if (process.env['ELECTRON_RENDERER_URL']) {
+    log(`Loading dev URL: ${process.env['ELECTRON_RENDERER_URL']}`)
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    log(`Loading renderer file: ${rendererPath}`)
+    mainWindow.loadFile(rendererPath)
+  }
+
+  log('Main window created (waiting for ready-to-show)')
 }
 
 app.whenReady().then(() => {
-  console.log('[ARAY] App ready, creating window...')
-  createWindow()
+  log('========================================')
+  log('ARAY starting up')
+  log(`Version: ${app.getVersion()}`)
+  log(`Electron: ${process.versions.electron}`)
+  log(`Node: ${process.versions.node}`)
+  log(`Chromium: ${process.versions.chrome}`)
+  log(`Platform: ${process.platform} ${process.arch}`)
+  log(`__dirname: ${__dirname}`)
+  log(`app.getAppPath: ${app.getAppPath()}`)
+  log(`userData: ${app.getPath('userData')}`)
+  log(`Log file: ${getLogPath()}`)
+  log('========================================')
+
+  try {
+    createWindow()
+  } catch (err: any) {
+    log(`WINDOW CREATION FAILED: ${err.message}`)
+    log(`Stack: ${err.stack}`)
+    dialog.showErrorBox(
+      'ARAY — Window Creation Error',
+      `${err.message}\n\nLog file: ${getLogPath()}`
+    )
+    app.quit()
+    return
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -128,13 +159,23 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  log('All windows closed, quitting')
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
 
-// Log ANY error to console
 process.on('uncaughtException', (err) => {
-  console.error('[ARAY] UNCAUGHT:', err.message)
-  console.error(err.stack)
+  log(`UNCAUGHT EXCEPTION: ${err.message}`)
+  log(`Stack: ${err.stack}`)
+  try {
+    dialog.showErrorBox(
+      'ARAY — Uncaught Error',
+      `${err.message}\n\nStack:\n${err.stack}\n\nLog: ${getLogPath()}`
+    )
+  } catch {}
+})
+
+process.on('unhandledRejection', (reason) => {
+  log(`UNHANDLED REJECTION: ${String(reason)}`)
 })

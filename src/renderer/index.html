@@ -3,11 +3,118 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'" />
     <title>ARAY — Are you Ready? and....Yapping!</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: 'Segoe UI', -apple-system, system-ui, sans-serif;
+        background: linear-gradient(135deg, #0F0B1A 0%, #241A40 50%, #120D24 100%);
+        color: #EDEDF1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 40px;
+        text-align: center;
+        overflow: hidden;
+      }
+      .logo {
+        font-size: 96px;
+        font-weight: 900;
+        letter-spacing: -0.04em;
+        background: linear-gradient(135deg, #CDB8E4 0%, #D4AF37 50%, #C0C0C8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 12px;
+        line-height: 1;
+      }
+      .tagline {
+        color: #909099;
+        font-style: italic;
+        font-size: 18px;
+        margin-bottom: 48px;
+      }
+      .status {
+        padding: 20px 32px;
+        background: rgba(95, 207, 128, 0.12);
+        border: 1px solid rgba(95, 207, 128, 0.3);
+        border-radius: 16px;
+        color: #5FCF80;
+        font-size: 20px;
+        font-weight: 600;
+        margin-bottom: 24px;
+        backdrop-filter: blur(10px);
+      }
+      .info {
+        color: #A8A8B2;
+        font-size: 14px;
+        line-height: 1.8;
+        max-width: 500px;
+      }
+      .info code {
+        background: rgba(192, 192, 200, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        color: #CDB8E4;
+        font-size: 13px;
+      }
+      .yap {
+        margin-top: 40px;
+        color: #7B61A8;
+        font-size: 12px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        opacity: 0.7;
+      }
+      #diag {
+        margin-top: 24px;
+        padding: 12px 16px;
+        background: rgba(192, 192, 200, 0.05);
+        border-radius: 8px;
+        font-family: 'Consolas', monospace;
+        font-size: 11px;
+        color: #74747C;
+        max-width: 600px;
+        text-align: left;
+        line-height: 1.6;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div class="logo">ARAY</div>
+    <div class="tagline">Are you Ready? and....Yapping!</div>
+    <div class="status">✓ App is running successfully!</div>
+    <div class="info">
+      <p>Version 1.4.1 — Minimal Diagnostic Build</p>
+      <p style="margin-top:8px;">If you see this window, Electron works correctly on your machine.</p>
+    </div>
+    <div id="diag">Loading diagnostics...</div>
+    <div class="yap">Yap. Snap. Repeat.</div>
+
+    <script>
+      // Display diagnostic info — no external dependencies, pure inline JS
+      const diag = document.getElementById('diag');
+      const info = [];
+      info.push('Time: ' + new Date().toISOString());
+      info.push('User Agent: ' + navigator.userAgent);
+      info.push('Platform: ' + navigator.platform);
+      info.push('Online: ' + navigator.onLine);
+      info.push('Cores: ' + navigator.hardwareConcurrency);
+      if (typeof process !== 'undefined') {
+        info.push('---');
+        info.push('Electron: ' + process.versions.electron);
+        info.push('Node: ' + process.versions.node);
+        info.push('Chrome: ' + process.versions.chrome);
+      } else {
+        info.push('---');
+        info.push('process: not available (preload working)');
+      }
+      info.push('---');
+      info.push('window.aray available: ' + (typeof window.aray !== 'undefined'));
+      diag.textContent = info.join('\n');
+    </script>
   </body>
 </html>
