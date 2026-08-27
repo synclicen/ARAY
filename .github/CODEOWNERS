@@ -1,0 +1,31 @@
+# These owners will be automatically requested for review on PRs that touch these paths.
+# Default: @synclicen owns everything
+
+*                           @synclicen
+
+# Source code
+/src/                       @synclicen
+/src/main/                  @synclicen
+/src/renderer/              @synclicen
+/src/preload/               @synclicen
+/src/shared/                @synclicen
+
+# CI / build config
+/.github/                   @synclicen
+/electron.vite.config.ts    @synclicen
+/electron-builder.yml       @synclicen
+/package.json               @synclicen
+/tsconfig*.json             @synclicen
+/tailwind.config.ts         @synclicen
+
+# Brand system (any visual change needs design review)
+/src/renderer/src/brand/    @synclicen
+
+# Database schema (any change is high-risk)
+/src/main/database/         @synclicen
+
+# Security-sensitive (preload, IPC handlers, OAuth)
+/src/preload/               @synclicen
+/src/main/ipc/              @synclicen
+/src/main/security/         @synclicen
+/docs/SECURITY.md           @synclicen

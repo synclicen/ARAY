@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Verify: typecheck, build, smoke test on Linux (fast, no Electron GUI)
+  # ─────────────────────────────────────────────────────────────────────
+  verify:
+    name: Typecheck · Build · Smoke Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+        env:
+          # Better-sqlite3 + sharp prebuilt binaries
+          npm_config_build_from_source: 'false'
+
+      - name: 🔍 Typecheck (main + preload + renderer)
+        run: npm run typecheck
+
+      - name: 🏗️ Build (electron-vite)
+        run: npm run build
+
+      - name: 🧪 Smoke test (45 invariants)
+        run: node scripts/smoke-test.mjs
+
+      - name: 📦 Validate bundle syntax
+        run: |
+          node --check out/main/index.js
+          node --check out/preload/index.js
+          echo "✓ All bundles have valid syntax"
+
+      - name: 🎨 Verify brand tokens in CSS
+        run: |
+          CSS_FILE=$(ls out/renderer/assets/*.css | head -1)
+          echo "Checking $CSS_FILE..."
+          grep -q "purple-haze-500" "$CSS_FILE" || (echo "❌ purple-haze-500 missing" && exit 1)
+          grep -q "aray-gradient-text" "$CSS_FILE" || (echo "❌ aray-gradient-text missing" && exit 1)
+          grep -q "aray-btn-gold" "$CSS_FILE" || (echo "❌ aray-btn-gold missing" && exit 1)
+          echo "✓ Brand tokens present in CSS bundle"
+
+      - name: 🔐 Verify security invariants in source
+        run: |
+          grep -q "contextIsolation: true" src/main/index.ts
+          grep -q "nodeIntegration: false" src/main/index.ts
+          grep -q "exposeInMainWorld" src/preload/index.ts
+          ! grep -q "exposeInMainWorld('ipcRenderer'" src/preload/index.ts
+          grep -q "Content-Security-Policy" src/renderer/index.html
+          echo "✓ Security invariants verified"
+
+      - name: 📤 Upload build artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aray-build-${{ github.sha }}
+          path: |
+            out/
+            package.json
+            package-lock.json
+          retention-days: 7
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Cross-platform build matrix: confirm Electron bundles build on Windows too
+  # ─────────────────────────────────────────────────────────────────────
+  build-matrix:
+    name: Build (${{ matrix.os }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🔍 Typecheck
+        run: npm run typecheck
+
+      - name: 🏗️ Build
+        run: npm run build
+
+      - name: 📊 Report bundle sizes
+        shell: bash
+        run: |
+          echo "### 📦 Build Artifacts (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| main/index.js | $(du -h out/main/index.js | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+          echo "| preload/index.js | $(du -h out/preload/index.js | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+          echo "| renderer/index.html | $(du -h out/renderer/index.html | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+          for f in out/renderer/assets/*; do
+            echo "| $(basename $f) | $(du -h $f | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+          done
