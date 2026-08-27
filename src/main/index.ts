@@ -1,13 +1,14 @@
 /**
  * ARAY Main Process — Phase 1 (Pure JS, no native modules)
- *
- * No better-sqlite3, no sharp. 100% pure JavaScript + TypeScript.
- * App WILL open window. No native module crashes possible.
  */
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, dialog } from 'electron'
 import { join } from 'path'
 import { writeFileSync, existsSync, mkdirSync, appendFileSync } from 'fs'
+import { initDatabase } from './database'
+import { ensureStoragePaths } from './storage'
+import { ensureValidStoragePath } from './database/repositories/settings'
+import { registerAllIPCHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -95,19 +96,15 @@ app.whenReady().then(async () => {
     createWindow()
 
     // 2. Init database (JSON storage — cannot fail)
-    const { initDatabase } = require('./database')
     initDatabase()
     log('Database initialized (JSON mode)')
 
     // 3. Init storage paths
-    const { ensureStoragePaths } = require('./storage')
-    const { ensureValidStoragePath } = require('./database/repositories/settings')
     ensureValidStoragePath()
     await ensureStoragePaths()
     log('Storage paths OK')
 
     // 4. Register IPC handlers
-    const { registerAllIPCHandlers } = require('./ipc')
     registerAllIPCHandlers()
     log('IPC handlers registered')
 
@@ -116,7 +113,6 @@ app.whenReady().then(async () => {
     log(`STARTUP ERROR: ${err.message}`)
     log(`Stack: ${err.stack}`)
     try {
-      const { dialog } = require('electron')
       dialog.showErrorBox(
         'ARAY — Error',
         `${err.message}\n\nLog file: ${getLogPath()}`
