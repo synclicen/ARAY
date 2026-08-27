@@ -1,0 +1,56 @@
+appId: "com.aray.booth"
+productName: "ARAY"
+copyright: "Copyright © 2026 ARAY"
+
+directories:
+  output: release
+  buildResources: resources
+
+# Disable asar — better-sqlite3 ships .node native binaries that
+# cannot be loaded from inside an asar archive on Windows.
+asar: false
+
+# CRITICAL: Tell electron-builder to rebuild native modules for Electron's ABI
+# (not Node's ABI). Without this, better-sqlite3 crashes on launch.
+npmRebuild: true
+buildDependenciesFromSource: true
+
+files:
+  - out/**/*
+  - package.json
+  - node_modules/**/*
+  - "!node_modules/**/{*.md,*.markdown,LICENSE,CHANGELOG*,*.ts,*.tsx,*.map,test*,tests*,__tests__,docs,example*,*.yml,*.yaml,.github,.vscode,.idea,coverage*,.nyc_output}"
+  - "!node_modules/**/{jest.config*,webpack.config*,rollup.config*,tsconfig*,babel.config*,.babelrc,.eslintrc*,.prettierrc*,.npmignore,.gitignore}"
+
+extraResources:
+  - from: resources/
+    to: resources/
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: resources/icon/icon.ico
+  artifactName: "ARAY-Setup-${version}.${ext}"
+
+portable:
+  artifactName: "ARAY-Portable-${version}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon/icon.ico
+  uninstallerIcon: resources/icon/icon.ico
+  shortcutName: ARAY
+  artifactName: "ARAY-Setup-${version}.${ext}"
+  deleteAppDataOnUninstall: false
+
+publish:
+  provider: generic
+  url: https://example.com/aray/releases/
+  channel: latest
