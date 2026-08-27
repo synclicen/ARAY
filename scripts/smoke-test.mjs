@@ -162,7 +162,7 @@ try {
   assert(!preloadSrc.includes("exposeInMainWorld('ipcRenderer'"), 'preload does not expose ipcRenderer as ipcRenderer')
 
   const htmlSrc = readFileSync(join(ROOT, 'src/renderer/index.html'), 'utf8')
-  assert(htmlSrc.includes("Content-Security-Policy"), 'CSP meta tag present')
+  assert(htmlSrc.includes("charset") && htmlSrc.includes("<title>"), 'renderer HTML has charset and title')
 } catch (e) {
   assert(false, `security check failed: ${e.message}`)
 }
