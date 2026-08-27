@@ -1,124 +1,124 @@
 /**
- * ARAY Main Process — Phase 1 (Pure JS, no native modules)
+ * ARAY Main Process — ULTRA MINIMAL diagnostic version
+ *
+ * This version does ONE thing: open a window with inline HTML.
+ * No database, no IPC, no preload, no storage, no external imports.
+ *
+ * If THIS version opens a window → Electron packaging is fine,
+ *   issue was in previous code.
+ * If THIS version also fails → issue is in Electron binary itself
+ *   or Windows environment (antivirus, missing VC++ runtime, etc.)
  */
 
-import { app, BrowserWindow, shell, dialog } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { join } from 'path'
-import { writeFileSync, existsSync, mkdirSync, appendFileSync } from 'fs'
-import { initDatabase } from './database'
-import { ensureStoragePaths } from './storage'
-import { ensureValidStoragePath } from './database/repositories/settings'
-import { registerAllIPCHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 
-function getLogPath(): string {
-  try {
-    return join(app.getPath('userData'), 'aray-startup.log')
-  } catch {
-    return join(process.cwd(), 'aray-startup.log')
-  }
-}
-
-function log(msg: string): void {
-  const line = `[${new Date().toISOString()}] ${msg}\n`
-  try {
-    appendFileSync(getLogPath(), line)
-  } catch {}
-  console.log(`[ARAY] ${msg}`)
-}
-
 function createWindow(): void {
-  log('Creating main window...')
+  console.log('[ARAY] Creating window...')
 
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1280,
-    minHeight: 720,
+    width: 800,
+    height: 600,
     show: true,
-    autoHideMenuBar: true,
-    title: 'ARAY — Are you Ready? and....Yapping!',
+    title: 'ARAY — Diagnostic',
     backgroundColor: '#0F0B1A',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-      webSecurity: true
+      nodeIntegration: false
     }
   })
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
+  // Load inline HTML via data URL — no external file dependency
+  const html = `data:text/html;charset=utf-8,` + encodeURIComponent(`
+    <!doctype html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>ARAY Diagnostic</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Segoe UI', system-ui, sans-serif;
+          background: linear-gradient(135deg, #0F0B1A 0%, #241A40 100%);
+          color: #EDEDF1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+          padding: 40px;
+          text-align: center;
+        }
+        h1 {
+          font-size: 48px;
+          font-weight: 800;
+          letter-spacing: -0.04em;
+          background: linear-gradient(135deg, #CDB8E4 0%, #D4AF37 50%, #C0C0C8 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          margin-bottom: 8px;
+        }
+        .tagline { color: #909099; font-style: italic; margin-bottom: 32px; }
+        .ok {
+          padding: 16px 32px;
+          background: rgba(95, 207, 128, 0.15);
+          border: 1px solid rgba(95, 207, 128, 0.3);
+          border-radius: 12px;
+          color: #5FCF80;
+          font-size: 18px;
+          font-weight: 600;
+          margin-bottom: 24px;
+        }
+        .info {
+          color: #A8A8B2;
+          font-size: 14px;
+          line-height: 1.6;
+          max-width: 400px;
+        }
+        .info code {
+          background: rgba(192, 192, 200, 0.1);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: 'Consolas', monospace;
+          color: #CDB8E4;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>ARAY</h1>
+      <p class="tagline">Are you Ready? and....Yapping!</p>
+      <div class="ok">✓ App is running successfully!</div>
+      <div class="info">
+        <p>If you see this window, Electron is working correctly.</p>
+        <p style="margin-top: 12px;">Version: 1.3.1-diagnostic</p>
+        <p>Electron: <span id="ver">loading...</span></p>
+      </div>
+      <script>
+        // Display Electron version if available
+        if (typeof process !== 'undefined') {
+          document.getElementById('ver').textContent = process.versions.electron;
+        } else {
+          document.getElementById('ver').textContent = '(renderer only)';
+        }
+      </script>
+    </body>
+    </html>
+  `)
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    log(`Loading dev URL: ${process.env['ELECTRON_RENDERER_URL']}`)
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    const rendererPath = join(__dirname, '../renderer/index.html')
-    log(`Loading renderer file: ${rendererPath}`)
-    log(`Renderer exists: ${existsSync(rendererPath)}`)
-    mainWindow.loadFile(rendererPath)
-  }
-
-  mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
-    log(`Renderer FAILED to load: ${errorCode} ${errorDescription} (URL: ${validatedURL})`)
-  })
-
-  mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    log(`Renderer CRASHED: ${details.reason}`)
-  })
+  mainWindow.loadURL(html)
 
   mainWindow.on('closed', () => {
     mainWindow = null
   })
 
-  log('Main window created')
+  console.log('[ARAY] Window created successfully')
 }
 
-app.whenReady().then(async () => {
-  log('========================================')
-  log('ARAY starting up (Pure JS mode — no native modules)')
-  log(`Version: ${app.getVersion()}`)
-  log(`Electron: ${process.versions.electron}`)
-  log(`Node: ${process.versions.node}`)
-  log(`Platform: ${process.platform} ${process.arch}`)
-  log(`__dirname: ${__dirname}`)
-  log(`userData: ${app.getPath('userData')}`)
-  log(`Log file: ${getLogPath()}`)
-  log('========================================')
-
-  try {
-    // 1. Open window IMMEDIATELY
-    createWindow()
-
-    // 2. Init database (JSON storage — cannot fail)
-    initDatabase()
-    log('Database initialized (JSON mode)')
-
-    // 3. Init storage paths
-    ensureValidStoragePath()
-    await ensureStoragePaths()
-    log('Storage paths OK')
-
-    // 4. Register IPC handlers
-    registerAllIPCHandlers()
-    log('IPC handlers registered')
-
-    log('Running in FULL MODE (JSON storage)')
-  } catch (err: any) {
-    log(`STARTUP ERROR: ${err.message}`)
-    log(`Stack: ${err.stack}`)
-    try {
-      dialog.showErrorBox(
-        'ARAY — Error',
-        `${err.message}\n\nLog file: ${getLogPath()}`
-      )
-    } catch {}
-  }
+app.whenReady().then(() => {
+  console.log('[ARAY] App ready, creating window...')
+  createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -128,17 +128,13 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  log('All windows closed, quitting')
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
 
+// Log ANY error to console
 process.on('uncaughtException', (err) => {
-  log(`UNCAUGHT EXCEPTION: ${err.message}`)
-  log(`Stack: ${err.stack}`)
-})
-
-process.on('unhandledRejection', (reason) => {
-  log(`UNHANDLED REJECTION: ${String(reason)}`)
+  console.error('[ARAY] UNCAUGHT:', err.message)
+  console.error(err.stack)
 })

@@ -65,6 +65,7 @@ jobs:
           path: |
             release/ARAY-Setup-*.exe
             release/ARAY-Portable-*.exe
+            release/ARAY-*.zip
             release/latest.yml
           retention-days: 90
           if-no-files-found: warn
@@ -81,8 +82,28 @@ jobs:
 
             ## 📥 Download
 
-            - **Windows installer**: `ARAY-Setup-*.exe` (below) — recommended
-            - **Windows portable**: `ARAY-Portable-*.exe` (below — no install needed)
+            3 formats available — **try ZIP first** (most reliable):
+
+            1. **ARAY-Portable-1.0.0.zip** — extract folder, run ARAY.exe directly
+               (no self-extraction, no installer — most reliable)
+            2. **ARAY-Setup-1.0.0.exe** — NSIS installer (recommended for permanent install)
+            3. **ARAY-Portable-1.0.0.exe** — self-extracting portable (smallest, but
+               may be blocked by some antivirus)
+
+            ## 🩺 If app won't open (diagnostic version)
+
+            This is a **diagnostic build** — it shows ONLY a window with "ARAY" text
+            and a green "✓ App is running successfully!" message. No database, no
+            camera, no features — just proving Electron can open a window.
+
+            **If the window appears** → Electron works, previous issues were code bugs.
+            **If window does NOT appear** → the issue is your Windows environment:
+            - Check Windows Defender: Settings → Privacy & Security → Windows Security →
+              Virus & threat protection → Protection history (look for quarantined items)
+            - Install Visual C++ Redistributable:
+              https://aka.ms/vs/17/release/vc_redist.x64.exe
+            - Try running from Command Prompt: open cmd.exe, drag the exe into it,
+              press Enter — error messages will be visible
 
             ## ⚠️ First-time launch on Windows
 
@@ -120,6 +141,7 @@ jobs:
           files: |
             release/ARAY-Setup-*.exe
             release/ARAY-Portable-*.exe
+            release/ARAY-*.zip
             release/latest.yml
           draft: false
           prerelease: false

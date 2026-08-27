@@ -35,6 +35,9 @@ win:
     - target: portable
       arch:
         - x64
+    - target: zip
+      arch:
+        - x64
   icon: resources/icon/icon.ico
   artifactName: "ARAY-Setup-${version}.${ext}"
 
