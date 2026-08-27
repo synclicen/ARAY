@@ -283,8 +283,20 @@ try {
 }
 
 // ---------- cleanup ----------
-db.close()
-rmSync(tmpDir, { recursive: true, force: true })
+try {
+  if (typeof db !== 'undefined' && db && typeof db.close === 'function') {
+    db.close()
+  }
+} catch (e) {
+  console.log('  (db close skipped:', e.message, ')')
+}
+try {
+  if (typeof tmpDir !== 'undefined' && tmpDir) {
+    rmSync(tmpDir, { recursive: true, force: true })
+  }
+} catch (e) {
+  // ignore
+}
 
 // ---------- summary ----------
 console.log('\n=== Summary ===')
