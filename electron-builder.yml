@@ -27,6 +27,13 @@ extraResources:
   - from: resources/
     to: resources/
 
+# Include diagnostic BAT files in app root (visible to user after install/extract)
+extraFiles:
+  - from: resources/run-aray-diagnostic.bat
+    to: run-aray-diagnostic.bat
+  - from: resources/install-vc-runtime.bat
+    to: install-vc-runtime.bat
+
 win:
   target:
     - target: nsis
