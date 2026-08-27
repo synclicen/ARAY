@@ -1,9 +1,8 @@
 import { v4 as uuid } from 'uuid'
-import { getDatabase } from '../index'
+import { readJSON, writeJSON, appendToArray, getFromArray, listArray, removeFromArray, updateInArray } from '../../storage/json-store'
 import type { ArayMedia, AraySession, MediaType, SyncStatus } from '@shared/types'
 
 export function createSession(eventId: string, type: MediaType, shotCount = 1): AraySession {
-  const db = getDatabase()
   const session: AraySession = {
     id: uuid(),
     event_id: eventId,
@@ -11,10 +10,7 @@ export function createSession(eventId: string, type: MediaType, shotCount = 1): 
     shot_count: shotCount,
     created_at: new Date().toISOString()
   }
-  db.prepare(
-    `INSERT INTO sessions (id, event_id, type, shot_count, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(session.id, session.event_id, session.type, session.shot_count, session.created_at)
+  appendToArray<AraySession>('sessions', session)
   return session
 }
 
@@ -29,7 +25,6 @@ export interface CreateMediaInput {
 }
 
 export function createMedia(input: CreateMediaInput): ArayMedia {
-  const db = getDatabase()
   const media: ArayMedia = {
     id: uuid(),
     event_id: input.event_id,
@@ -45,22 +40,12 @@ export function createMedia(input: CreateMediaInput): ArayMedia {
     created_at: new Date().toISOString(),
     uploaded_at: null
   }
-
-  db.prepare(
-    `INSERT INTO media
-     (id, event_id, session_id, type, original_path, processed_path, thumbnail_path,
-      checksum, sync_status, remote_file_id, last_error, created_at, uploaded_at)
-     VALUES (@id, @event_id, @session_id, @type, @original_path, @processed_path,
-             @thumbnail_path, @checksum, @sync_status, @remote_file_id, @last_error,
-             @created_at, @uploaded_at)`
-  ).run(media)
-
+  appendToArray<ArayMedia>('media', media)
   return media
 }
 
 export function getMediaById(id: string): ArayMedia | null {
-  const db = getDatabase()
-  return (db.prepare('SELECT * FROM media WHERE id = ?').get(id) as ArayMedia | undefined) ?? null
+  return getFromArray<ArayMedia>('media', id)
 }
 
 export function listMedia(filters: {
@@ -70,30 +55,13 @@ export function listMedia(filters: {
   limit?: number
   offset?: number
 } = {}): ArayMedia[] {
-  const db = getDatabase()
-  const conditions: string[] = []
-  const params: any[] = []
-
-  if (filters.event_id) {
-    conditions.push('event_id = ?')
-    params.push(filters.event_id)
-  }
-  if (filters.type) {
-    conditions.push('type = ?')
-    params.push(filters.type)
-  }
-  if (filters.sync_status) {
-    conditions.push('sync_status = ?')
-    params.push(filters.sync_status)
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  let result = listArray<ArayMedia>('media')
+  if (filters.event_id) result = result.filter((m) => m.event_id === filters.event_id)
+  if (filters.type) result = result.filter((m) => m.type === filters.type)
+  if (filters.sync_status) result = result.filter((m) => m.sync_status === filters.sync_status)
   const limit = filters.limit ?? 500
   const offset = filters.offset ?? 0
-
-  return db
-    .prepare(`SELECT * FROM media ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
-    .all(...params, limit, offset) as ArayMedia[]
+  return result.slice(offset, offset + limit)
 }
 
 export function updateMediaSyncStatus(
@@ -102,43 +70,31 @@ export function updateMediaSyncStatus(
   remoteFileId?: string | null,
   error?: string | null
 ): void {
-  const db = getDatabase()
-  const uploadedAt = syncStatus === 'SYNCED' ? new Date().toISOString() : null
-  db.prepare(
-    `UPDATE media SET
-       sync_status = ?, remote_file_id = COALESCE(?, remote_file_id),
-       last_error = ?, uploaded_at = COALESCE(?, uploaded_at)
-     WHERE id = ?`
-  ).run(syncStatus, remoteFileId ?? null, error ?? null, uploadedAt, id)
+  const updates: Partial<ArayMedia> = {
+    sync_status: syncStatus,
+    last_error: error ?? null
+  }
+  if (syncStatus === 'SYNCED') {
+    updates.uploaded_at = new Date().toISOString()
+  }
+  if (remoteFileId) {
+    updates.remote_file_id = remoteFileId
+  }
+  updateInArray<ArayMedia>('media', id, updates)
 }
 
 export function deleteMedia(id: string): boolean {
-  const db = getDatabase()
-  const result = db.prepare('DELETE FROM media WHERE id = ?').run(id)
-  return result.changes > 0
+  return removeFromArray<ArayMedia>('media', id)
 }
 
 export function getMediaStats(eventId?: string) {
-  const db = getDatabase()
-  const where = eventId ? `WHERE event_id = ?` : ''
-  const params = eventId ? [eventId] : []
-  const row = db
-    .prepare(
-      `SELECT
-         COUNT(*) as total,
-         SUM(CASE WHEN sync_status = 'SYNCED' THEN 1 ELSE 0 END) as synced,
-         SUM(CASE WHEN sync_status IN ('PENDING','RETRYING','OFFLINE') THEN 1 ELSE 0 END) as pending,
-         SUM(CASE WHEN sync_status = 'FAILED' THEN 1 ELSE 0 END) as failed,
-         SUM(CASE WHEN sync_status = 'UPLOADING' THEN 1 ELSE 0 END) as uploading
-       FROM media ${where}`
-    )
-    .get(...params) as {
-    total: number
-    synced: number
-    pending: number
-    failed: number
-    uploading: number
+  const media = listArray<ArayMedia>('media')
+  const filtered = eventId ? media.filter((m) => m.event_id === eventId) : media
+  return {
+    total: filtered.length,
+    synced: filtered.filter((m) => m.sync_status === 'SYNCED').length,
+    pending: filtered.filter((m) => ['PENDING', 'RETRYING', 'OFFLINE'].includes(m.sync_status)).length,
+    failed: filtered.filter((m) => m.sync_status === 'FAILED').length,
+    uploading: filtered.filter((m) => m.sync_status === 'UPLOADING').length
   }
-
-  return row
 }

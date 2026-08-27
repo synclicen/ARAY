@@ -33,23 +33,6 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
-      - name: 🔧 Verify better-sqlite3 prebuilt binary for Electron 31
-        shell: pwsh
-        run: |
-          Write-Host "Checking better-sqlite3 prebuilt binaries..."
-          $bsqlDir = "node_modules\better-sqlite3\build\Release"
-          if (Test-Path "$bsqlDir\better_sqlite3.node") {
-            $size = [math]::Round((Get-Item "$bsqlDir\better_sqlite3.node").Length / 1KB, 1)
-            Write-Host "✓ better_sqlite3.node found ($size KB)"
-          } else {
-            Write-Host "✗ better_sqlite3.node NOT found — prebuilt binary missing"
-            Write-Host "Available files in $bsqlDir :"
-            if (Test-Path $bsqlDir) {
-              Get-ChildItem $bsqlDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
-            }
-            exit 1
-          }
-
       - name: 🔍 Typecheck
         run: npm run typecheck
 
@@ -62,7 +45,6 @@ jobs:
       - name: 📦 Build Windows installer (NSIS)
         run: npm run dist
         env:
-          # Code signing disabled in Phase 1 — Phase 5 will add CERT_PASSWORD
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📊 List release artifacts

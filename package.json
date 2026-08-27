@@ -13,19 +13,15 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
     "dist": "npm run build && electron-builder --win --x64",
     "dist:dir": "npm run build && electron-builder --win --x64 --dir"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
     "fs-extra": "^11.2.0",
     "uuid": "^10.0.0",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.6.0",
-    "@types/better-sqlite3": "^7.6.11",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^22.5.0",
     "@types/react": "^18.3.5",
