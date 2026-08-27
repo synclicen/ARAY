@@ -27,14 +27,12 @@ extraResources:
   - from: resources/
     to: resources/
 
-# Include diagnostic BAT files + VC++ redist in app root
+# Include diagnostic BAT files in app root
 extraFiles:
   - from: resources/run-aray-diagnostic.bat
     to: run-aray-diagnostic.bat
   - from: resources/install-vc-runtime.bat
     to: install-vc-runtime.bat
-  - from: resources/vc_redist.x64.exe
-    to: vc_redist.x64.exe
 
 win:
   target:
@@ -62,8 +60,6 @@ nsis:
   shortcutName: ARAY
   artifactName: "ARAY-Setup-${version}.${ext}"
   deleteAppDataOnUninstall: false
-  # Run VC++ redist installer before ARAY install completes
-  include: resources/nsis-installer.nsh
 
 publish:
   provider: generic
