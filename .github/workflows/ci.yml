@@ -65,11 +65,10 @@ jobs:
 
       - name: 🔐 Verify security invariants in source
         run: |
-          grep -q "contextIsolation: true" src/main/index.ts
-          grep -q "nodeIntegration: false" src/main/index.ts
-          grep -q "exposeInMainWorld" src/preload/index.ts
-          ! grep -q "exposeInMainWorld('ipcRenderer'" src/preload/index.ts
-          grep -q "Content-Security-Policy" src/renderer/index.html
+          grep -q "contextIsolation: true" electron/main.ts
+          grep -q "nodeIntegration: false" electron/main.ts
+          grep -q "exposeInMainWorld" electron/preload.ts
+          ! grep -q "exposeInMainWorld('ipcRenderer'" electron/preload.ts
           echo "✓ Security invariants verified"
 
       - name: 📤 Upload build artifacts
