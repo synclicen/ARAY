@@ -43,6 +43,9 @@ export function BoothPage() {
   const [currentShot, setCurrentShot] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [lastFlash, setLastFlash] = useState(false)
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  const [mirror, setMirror] = useState(true)
 
   const activeEvent = events.find((e) => e.id === activeEventId) ?? events[0]
   const totalShots = settings?.booth_shot_count ?? 4
@@ -59,17 +62,53 @@ export function BoothPage() {
     }
   }, [])
 
-  const startCamera = useCallback(async () => {
+  const enumerateCameras = useCallback(async () => {
+    try {
+      // Request permission first (required by some browsers/Electron)
+      await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        .then((s) => s.getTracks().forEach((t) => t.stop()))
+        .catch(() => {})
+
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const videos = devices.filter((d) => d.kind === 'videoinput')
+      setVideoDevices(videos)
+      if (videos.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(videos[0].deviceId)
+      }
+      return videos
+    } catch (e: any) {
+      console.error('[Booth] Enumerate cameras failed:', e)
+      return []
+    }
+  }, [selectedDeviceId])
+
+  const startCamera = useCallback(async (deviceId?: string) => {
     try {
       setError(null)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      const constraints: MediaStreamConstraints = {
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } as MediaTrackConstraints,
         audio: false
-      })
+      }
+      if (deviceId || selectedDeviceId) {
+        ;(constraints.video as MediaTrackConstraints).deviceId = {
+          exact: deviceId || selectedDeviceId || undefined
+        }
+      } else {
+        ;(constraints.video as MediaTrackConstraints).facingMode = 'user'
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       streamRef.current = stream
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         await videoRef.current.play()
+      }
+      // Refresh device list after permission granted (labels become available)
+      if (videoDevices.length === 0) {
+        enumerateCameras()
       }
       return true
     } catch (e: any) {
@@ -78,9 +117,9 @@ export function BoothPage() {
       setPhase('error')
       return false
     }
-  }, [])
+  }, [selectedDeviceId, videoDevices.length, enumerateCameras])
 
-  const captureFrame = useCallback((): string | null => {
+  const captureFrame = useCallback((): { full: string; thumb: string } | null => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return null
@@ -92,14 +131,27 @@ export function BoothPage() {
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
 
-    // Mirror for selfie feel
-    ctx.translate(w, 0)
-    ctx.scale(-1, 1)
+    // Mirror for selfie feel (optional, controlled by user)
+    if (mirror) {
+      ctx.translate(w, 0)
+      ctx.scale(-1, 1)
+    }
     ctx.drawImage(video, 0, 0, w, h)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
 
-    return canvas.toDataURL('image/jpeg', 0.92)
-  }, [])
+    const full = canvas.toDataURL('image/jpeg', 0.92)
+
+    // Generate thumbnail (320x240)
+    const thumbCanvas = document.createElement('canvas')
+    thumbCanvas.width = 320
+    thumbCanvas.height = 240
+    const thumbCtx = thumbCanvas.getContext('2d')
+    if (!thumbCtx) return { full, thumb: full }
+    thumbCtx.drawImage(video, 0, 0, 320, 240)
+    const thumb = thumbCanvas.toDataURL('image/jpeg', 0.8)
+
+    return { full, thumb }
+  }, [mirror])
 
   const performCapture = useCallback(async () => {
     if (!activeEvent) {
@@ -108,8 +160,8 @@ export function BoothPage() {
       return
     }
 
-    const dataUrl = captureFrame()
-    if (!dataUrl) {
+    const frames = captureFrame()
+    if (!frames) {
       setError('Failed to capture frame.')
       setPhase('error')
       return
@@ -129,12 +181,14 @@ export function BoothPage() {
         ;(window as any).__aray_current_session_id = sessionId
       }
 
-      const base64 = dataUrl.split(',')[1]
+      const fullBase64 = frames.full.split(',')[1]
+      const thumbBase64 = frames.thumb.split(',')[1]
       const saveResult = await window.aray.media.saveCapturedFrame({
         event_id: activeEvent.id,
         session_id: sessionId,
         shot_number: currentShot,
-        frame_base64: base64,
+        frame_base64: fullBase64,
+        thumbnail_base64: thumbBase64,
         mime_type: 'image/jpeg'
       })
 
@@ -144,7 +198,7 @@ export function BoothPage() {
       addMedia(media)
       setCapturedShots((prev) => [
         ...prev,
-        { shotNumber: currentShot, mediaId: media.id, dataUrl }
+        { shotNumber: currentShot, mediaId: media.id, dataUrl: frames.full }
       ])
     } catch (e: any) {
       setError(e.message)
@@ -264,12 +318,51 @@ export function BoothPage() {
             <div className="relative z-10 text-center">
               <ArayLogo size="xl" animated className="mb-8" />
               <h1 className="text-5xl font-bold mb-3 aray-gradient-text">ARE YOU READY?</h1>
-              <p className="text-silver-300 text-xl italic mb-10">Let's make a memory.</p>
+              <p className="text-silver-300 text-xl italic mb-6">Let's make a memory.</p>
+
+              {/* Camera device selector */}
+              <div className="mb-6 flex items-center justify-center gap-3">
+                <div className="flex items-center gap-2 bg-surface-elevated/60 border border-silver-300/20 rounded-xl px-4 py-2">
+                  <Camera className="w-4 h-4 text-purple-haze-300" />
+                  <select
+                    className="bg-transparent text-sm text-silver-100 outline-none cursor-pointer min-w-[180px]"
+                    value={selectedDeviceId || ''}
+                    onChange={async (e) => {
+                      setSelectedDeviceId(e.target.value)
+                      // Refresh device list to get labels
+                      if (videoDevices.length === 0) await enumerateCameras()
+                    }}
+                    onClick={() => enumerateCameras()}
+                  >
+                    <option value="" className="bg-surface-elevated text-silver-100">
+                      {videoDevices.length === 0 ? 'Click to detect cameras...' : 'Select camera...'}
+                    </option>
+                    {videoDevices.map((device, idx) => (
+                      <option key={device.deviceId} value={device.deviceId} className="bg-surface-elevated text-silver-100">
+                        {device.label || `Camera ${idx + 1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => setMirror(!mirror)}
+                  className={`px-3 py-2 rounded-xl text-xs font-medium border transition-all ${
+                    mirror
+                      ? 'bg-purple-haze-500/20 border-purple-haze-500/40 text-purple-haze-100'
+                      : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+                  }`}
+                  title="Toggle mirror effect"
+                >
+                  {mirror ? '🔒 Mirror ON' : '🔓 Mirror OFF'}
+                </button>
+              </div>
+
               <ArayButton
                 variant="gold"
                 size="xl"
                 icon={<Sparkles className="w-5 h-5" />}
                 onClick={async () => {
+                  enumerateCameras()
                   const ok = await startCamera()
                   if (ok) {
                     setCapturedShots([])
