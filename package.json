@@ -1,0 +1,38 @@
+{
+  "name": "aray",
+  "version": "1.7.1",
+  "description": "ARAY — Are you Ready? and....Yapping! Premium Windows Photo Booth & Event Experience Platform",
+  "main": "electron/main.js",
+  "author": "ARAY",
+  "license": "MIT",
+  "productName": "ARAY",
+  "scripts": {
+    "dev": "vite dev --config vite.renderer.config.ts",
+    "build": "vite build --config vite.renderer.config.ts && tsc -p electron/tsconfig.json && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && esbuild electron/preload.ts --bundle --platform=node --outfile=electron/preload.js --external:electron",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc -p electron/tsconfig.json --noEmit",
+    "dist": "npm run build && electron-builder --win --x64",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir"
+  },
+  "dependencies": {
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.21.5",
+    "framer-motion": "^11.3.21",
+    "lucide-react": "^0.428.0",
+    "postcss": "^8.4.41",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.1",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.1"
+  }
+}
