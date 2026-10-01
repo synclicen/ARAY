@@ -1010,8 +1010,8 @@ export function BoothPage() {
         )}
       </AnimatePresence>
 
-      {/* Capture button (visible during preview) */}
-      {phase === 'preview' && (
+      {/* Capture button (visible during preview, PHOTO mode only) */}
+      {phase === 'preview' && mode === 'photo' && (
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20">
           <button
             onClick={() => {
