@@ -301,6 +301,10 @@ export function BoothPage() {
       const filterCss = (filter.canvasFilter !== 'none' ? filter.canvasFilter : '') + cinematicBoost
 
       // Draw loop: video frame → canvas with filter applied
+      // Use captureStream(0) + manual requestFrame for precise frame control
+      const canvasStream = canvas.captureStream(0) // 0 = manual frame control
+      const track = canvasStream.getVideoTracks()[0]
+
       const drawFrame = () => {
         if (video.videoWidth > 0) {
           if (filterCss.trim()) ctx.filter = filterCss
@@ -314,14 +318,14 @@ export function BoothPage() {
             ctx.drawImage(video, 0, 0, w, h)
           }
           ctx.filter = 'none'
+          // Manually request a frame from the track
+          if (track && typeof (track as any).requestFrame === 'function') {
+            ;(track as any).requestFrame()
+          }
         }
         rafRecordRef.current = requestAnimationFrame(drawFrame)
       }
       drawFrame()
-
-      // Capture stream from canvas with motion-style FPS
-      const canvasStream = canvas.captureStream(fps)
-      console.log('[Booth] Canvas stream at', fps, 'fps for style:', style)
 
       // Pick best supported mime type
       let mimeType = 'video/webm;codecs=vp9'
@@ -388,35 +392,39 @@ export function BoothPage() {
         reader.readAsDataURL(finalBlob)
       }
 
-      // Start recording — collect data every 250ms for reliability
-      recorder.start(250)
+      // Start recording WITHOUT timeslice — collect all data at stop
+      // This prevents premature data truncation that caused 10s limit
+      recorder.start()
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
 
+      const startTime = Date.now()
+      console.log('[Booth] Recording started at', startTime, 'target duration:', duration, 's')
+
       // Single timer: updates display AND auto-stops at exact duration
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime((t) => {
-          const newTime = t + 1
-          if (newTime >= duration) {
-            console.log('[Booth] Auto-stop at', newTime, 's (duration was', duration, 's)')
-            // Stop everything
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-              mediaRecorderRef.current.stop()
-            }
-            if (rafRecordRef.current) {
-              cancelAnimationFrame(rafRecordRef.current)
-              rafRecordRef.current = null
-            }
-            if (recordingTimerRef.current) {
-              clearInterval(recordingTimerRef.current)
-              recordingTimerRef.current = null
-            }
-            setIsRecording(false)
-            setPhase('result')
+        const elapsed = Math.floor((Date.now() - startTime) / 1000)
+        setRecordingTime(elapsed)
+        console.log('[Booth] Recording tick:', elapsed, 's /', duration, 's')
+
+        if (elapsed >= duration) {
+          console.log('[Booth] Auto-stop at', elapsed, 's (duration was', duration, 's)')
+          // Stop everything
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop()
           }
-          return newTime
-        })
+          if (rafRecordRef.current) {
+            cancelAnimationFrame(rafRecordRef.current)
+            rafRecordRef.current = null
+          }
+          if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current)
+            recordingTimerRef.current = null
+          }
+          setIsRecording(false)
+          setPhase('result')
+        }
       }, 1000)
 
     } catch (e: any) {
