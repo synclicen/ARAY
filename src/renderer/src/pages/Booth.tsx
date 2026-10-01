@@ -102,6 +102,16 @@ export function BoothPage() {
   const countdownSeconds = settings?.booth_countdown_seconds ?? 3
   const activeFilter = FILTERS.find(f => f.id === activeFilterId) || FILTERS[0]
 
+  // Refs to avoid stale closures in async recording callbacks
+  const videoDurationRef = useRef(videoDuration)
+  const videoStyleRef = useRef(videoStyle)
+  const activeFilterRef = useRef(activeFilter)
+  const mirrorRef = useRef(mirror)
+  videoDurationRef.current = videoDuration
+  videoStyleRef.current = videoStyle
+  activeFilterRef.current = activeFilter
+  mirrorRef.current = mirror
+
   useEffect(() => {
     if (events.length === 0) loadEvents()
   }, [events.length, loadEvents])
@@ -255,6 +265,14 @@ export function BoothPage() {
     const video = videoRef.current
     if (!video || !streamRef.current) return
 
+    // Read latest values from refs (avoid stale closures)
+    const duration = videoDurationRef.current
+    const style = videoStyleRef.current
+    const filter = activeFilterRef.current
+    const mir = mirrorRef.current
+
+    console.log('[Booth] startRecording — duration:', duration, 'style:', style, 'filter:', filter.id)
+
     try {
       // Create canvas for filtered capture
       const canvas = document.createElement('canvas')
@@ -266,11 +284,27 @@ export function BoothPage() {
       const ctx = canvas.getContext('2d')
       if (!ctx) throw new Error('Canvas context failed')
 
+      // Motion style → capture FPS
+      // Lower FPS = slower/choppier playback (slow-mo effect)
+      // Higher FPS = faster playback (time-lapse effect)
+      const fpsMap: Record<string, number> = {
+        'normal': 30,
+        'boomerang': 30,
+        'slow-motion': 15,    // half frames → plays slower
+        'timelapse': 5,       // very few frames → time-lapse
+        'cinematic': 24       // movie-like 24fps
+      }
+      const fps = fpsMap[style] || 30
+
+      // Cinematic gets extra color grade
+      const cinematicBoost = style === 'cinematic' ? ' contrast(1.15) saturate(1.1)' : ''
+      const filterCss = (filter.canvasFilter !== 'none' ? filter.canvasFilter : '') + cinematicBoost
+
       // Draw loop: video frame → canvas with filter applied
       const drawFrame = () => {
         if (video.videoWidth > 0) {
-          ctx.filter = activeFilter.canvasFilter
-          if (mirror) {
+          if (filterCss.trim()) ctx.filter = filterCss
+          if (mir) {
             ctx.save()
             ctx.translate(w, 0)
             ctx.scale(-1, 1)
@@ -285,8 +319,9 @@ export function BoothPage() {
       }
       drawFrame()
 
-      // Capture stream from canvas (NOT from camera directly — this applies filter)
-      const canvasStream = canvas.captureStream(30) // 30 FPS
+      // Capture stream from canvas with motion-style FPS
+      const canvasStream = canvas.captureStream(fps)
+      console.log('[Booth] Canvas stream at', fps, 'fps for style:', style)
 
       // Pick best supported mime type
       let mimeType = 'video/webm;codecs=vp9'
@@ -305,14 +340,25 @@ export function BoothPage() {
       }
 
       recorder.onstop = async () => {
-        // Stop draw loop
         if (rafRecordRef.current) {
           cancelAnimationFrame(rafRecordRef.current)
           rafRecordRef.current = null
         }
 
         const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
-        console.log('[Booth] Video recorded:', blob.size, 'bytes, style:', videoStyle)
+        console.log('[Booth] Video recorded:', blob.size, 'bytes, style:', style, 'fps:', fps, 'duration:', duration)
+
+        // For boomerang: duplicate chunks in reverse (simple approach)
+        let finalBlob = blob
+        if (style === 'boomerang' && recordedChunksRef.current.length > 1) {
+          try {
+            const reversed = [...recordedChunksRef.current].reverse()
+            finalBlob = new Blob([...recordedChunksRef.current, ...reversed], { type: 'video/webm' })
+            console.log('[Booth] Boomerang: appended reversed frames')
+          } catch (e) {
+            console.warn('[Booth] Boomerang reverse failed, using normal')
+          }
+        }
 
         const reader = new FileReader()
         reader.onloadend = async () => {
@@ -331,41 +377,54 @@ export function BoothPage() {
               session_id: sessionId,
               video_base64: base64,
               mime_type: 'video/webm',
-              video_style: videoStyle,
-              filter: activeFilterId
+              video_style: style,
+              filter: filter.id
             })
             if (saveResult.success) {
               addMedia(saveResult.data as ArayMedia)
             }
           }
         }
-        reader.readAsDataURL(blob)
+        reader.readAsDataURL(finalBlob)
       }
 
-      // Start recording with timeslice for reliable data collection
-      recorder.start(100) // collect data every 100ms
+      // Start recording — collect data every 250ms for reliability
+      recorder.start(250)
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
 
-      // Timer for display
+      // Single timer: updates display AND auto-stops at exact duration
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime((t) => t + 1)
+        setRecordingTime((t) => {
+          const newTime = t + 1
+          if (newTime >= duration) {
+            console.log('[Booth] Auto-stop at', newTime, 's (duration was', duration, 's)')
+            // Stop everything
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+              mediaRecorderRef.current.stop()
+            }
+            if (rafRecordRef.current) {
+              cancelAnimationFrame(rafRecordRef.current)
+              rafRecordRef.current = null
+            }
+            if (recordingTimerRef.current) {
+              clearInterval(recordingTimerRef.current)
+              recordingTimerRef.current = null
+            }
+            setIsRecording(false)
+            setPhase('result')
+          }
+          return newTime
+        })
       }, 1000)
-
-      // Auto-stop after exact duration
-      recordTimeoutRef.current = setTimeout(() => {
-        console.log('[Booth] Auto-stop after', videoDuration, 's')
-        stopRecording()
-        setPhase('result')
-      }, videoDuration * 1000)
 
     } catch (e: any) {
       console.error('[Booth] Recording start failed:', e)
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia, videoDuration, videoStyle, activeFilterId, activeFilter, mirror, stopRecording])
+  }, [activeEvent, addMedia])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
