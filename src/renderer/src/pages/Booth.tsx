@@ -43,19 +43,22 @@ const FILTERS: CameraFilter[] = [
   { id: 'warm-sunset', name: 'Warm Sunset', css: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)', canvasFilter: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)' }
 ]
 
-// ─── VIDEO MOTION STYLES (5 types) ──────────────────────────────
+// ─── VIDEO MOTION STYLES (5 types — all 30fps, fixed durations) ─
 interface VideoStyle {
   id: string
   name: string
   description: string
+  fixedDuration: number | null  // null = user selects, number = fixed
+  drawFilter: string            // extra canvas filter for this style
+  reverse: boolean              // append reversed frames (boomerang)
 }
 
 const VIDEO_STYLES: VideoStyle[] = [
-  { id: 'normal', name: 'Normal', description: 'Standard recording' },
-  { id: 'boomerang', name: 'Boomerang', description: 'Forward + reverse loop' },
-  { id: 'slow-motion', name: 'Slow Motion', description: '0.5x playback speed' },
-  { id: 'timelapse', name: 'Time-lapse', description: 'Speed up playback 3x' },
-  { id: 'cinematic', name: 'Cinematic', description: 'Slight slow-mo + color grade' }
+  { id: 'normal', name: 'Normal', description: 'Standard recording', fixedDuration: null, drawFilter: '', reverse: false },
+  { id: 'cinematic', name: 'Cinematic', description: 'Movie color grade', fixedDuration: null, drawFilter: 'contrast(1.15) saturate(1.1)', reverse: false },
+  { id: 'boomerang', name: 'Boomerang', description: 'Fixed 10s → 20s (forward+reverse)', fixedDuration: 10, drawFilter: '', reverse: true },
+  { id: 'vintage-film', name: 'Vintage Film', description: 'Fixed 15s, retro warm tone', fixedDuration: 15, drawFilter: 'sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)', reverse: false },
+  { id: 'neon-pulse', name: 'Neon Pulse', description: 'Fixed 15s, purple neon glow', fixedDuration: 15, drawFilter: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)', reverse: false }
 ]
 
 const VIDEO_DURATIONS = [10, 15, 30, 60]
@@ -240,16 +243,13 @@ export function BoothPage() {
   const recordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const stopRecording = useCallback(() => {
-    // Stop MediaRecorder
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop()
     }
-    // Stop animation frame loop
     if (rafRecordRef.current) {
       cancelAnimationFrame(rafRecordRef.current)
       rafRecordRef.current = null
     }
-    // Clear timers
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current)
       recordingTimerRef.current = null
@@ -265,16 +265,17 @@ export function BoothPage() {
     const video = videoRef.current
     if (!video || !streamRef.current) return
 
-    // Read latest values from refs (avoid stale closures)
     const duration = videoDurationRef.current
-    const style = videoStyleRef.current
+    const styleId = videoStyleRef.current
     const filter = activeFilterRef.current
     const mir = mirrorRef.current
+    const styleDef = VIDEO_STYLES.find(s => s.id === styleId) || VIDEO_STYLES[0]
+    // Use fixed duration if style has one, otherwise user-selected
+    const actualDuration = styleDef.fixedDuration || duration
 
-    console.log('[Booth] startRecording — duration:', duration, 'style:', style, 'filter:', filter.id)
+    console.log('[Booth] startRecording — duration:', actualDuration, 'style:', styleId, 'filter:', filter.id)
 
     try {
-      // Create canvas for filtered capture
       const canvas = document.createElement('canvas')
       const w = video.videoWidth || 1280
       const h = video.videoHeight || 720
@@ -284,30 +285,15 @@ export function BoothPage() {
       const ctx = canvas.getContext('2d')
       if (!ctx) throw new Error('Canvas context failed')
 
-      // Motion style → capture FPS
-      // Lower FPS = slower/choppier playback (slow-mo effect)
-      // Higher FPS = faster playback (time-lapse effect)
-      const fpsMap: Record<string, number> = {
-        'normal': 30,
-        'boomerang': 30,
-        'slow-motion': 15,    // half frames → plays slower
-        'timelapse': 5,       // very few frames → time-lapse
-        'cinematic': 24       // movie-like 24fps
-      }
-      const fps = fpsMap[style] || 30
+      // Combine camera filter + motion style draw filter
+      const camFilter = filter.canvasFilter !== 'none' ? filter.canvasFilter : ''
+      const styleFilter = styleDef.drawFilter || ''
+      const combinedFilter = (camFilter + ' ' + styleFilter).trim()
 
-      // Cinematic gets extra color grade
-      const cinematicBoost = style === 'cinematic' ? ' contrast(1.15) saturate(1.1)' : ''
-      const filterCss = (filter.canvasFilter !== 'none' ? filter.canvasFilter : '') + cinematicBoost
-
-      // Draw loop: video frame → canvas with filter applied
-      // Use captureStream(0) + manual requestFrame for precise frame control
-      const canvasStream = canvas.captureStream(0) // 0 = manual frame control
-      const track = canvasStream.getVideoTracks()[0]
-
+      // Draw loop — always at display refresh rate, captureStream handles 30fps
       const drawFrame = () => {
         if (video.videoWidth > 0) {
-          if (filterCss.trim()) ctx.filter = filterCss
+          if (combinedFilter) ctx.filter = combinedFilter
           if (mir) {
             ctx.save()
             ctx.translate(w, 0)
@@ -318,22 +304,18 @@ export function BoothPage() {
             ctx.drawImage(video, 0, 0, w, h)
           }
           ctx.filter = 'none'
-          // Manually request a frame from the track
-          if (track && typeof (track as any).requestFrame === 'function') {
-            ;(track as any).requestFrame()
-          }
         }
         rafRecordRef.current = requestAnimationFrame(drawFrame)
       }
       drawFrame()
 
-      // Pick best supported mime type
+      // ALWAYS captureStream(30) — 30fps, reliable timestamps, no truncation
+      const canvasStream = canvas.captureStream(30)
+
       let mimeType = 'video/webm;codecs=vp9'
       if (!MediaRecorder.isTypeSupported(mimeType)) {
         mimeType = 'video/webm;codecs=vp8'
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'video/webm'
-        }
+        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm'
       }
 
       const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 5000000 })
@@ -349,20 +331,19 @@ export function BoothPage() {
           rafRecordRef.current = null
         }
 
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
-        console.log('[Booth] Video recorded:', blob.size, 'bytes, style:', style, 'fps:', fps, 'duration:', duration)
-
-        // For boomerang: duplicate chunks in reverse (simple approach)
-        let finalBlob = blob
-        if (style === 'boomerang' && recordedChunksRef.current.length > 1) {
+        // Boomerang: append reversed chunks
+        let finalBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+        if (styleDef.reverse && recordedChunksRef.current.length > 1) {
           try {
             const reversed = [...recordedChunksRef.current].reverse()
             finalBlob = new Blob([...recordedChunksRef.current, ...reversed], { type: 'video/webm' })
             console.log('[Booth] Boomerang: appended reversed frames')
           } catch (e) {
-            console.warn('[Booth] Boomerang reverse failed, using normal')
+            console.warn('[Booth] Boomerang reverse failed')
           }
         }
+
+        console.log('[Booth] Video saved:', finalBlob.size, 'bytes, style:', styleId, 'duration:', actualDuration)
 
         const reader = new FileReader()
         reader.onloadend = async () => {
@@ -381,59 +362,51 @@ export function BoothPage() {
               session_id: sessionId,
               video_base64: base64,
               mime_type: 'video/webm',
-              video_style: style,
+              video_style: styleId,
               filter: filter.id
             })
-            if (saveResult.success) {
-              addMedia(saveResult.data as ArayMedia)
-            }
+            if (saveResult.success) addMedia(saveResult.data as ArayMedia)
           }
         }
         reader.readAsDataURL(finalBlob)
       }
 
-      // Start recording with 1s timeslice for reliable data flush
-      recorder.start(1000)
+      // Start recording — NO timeslice, all data at stop
+      recorder.start()
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
+      // Set videoDuration to actualDuration so countdown badge shows correct number
+      setVideoDuration(actualDuration)
 
       const startTime = Date.now()
-      console.log('[Booth] Recording started at', startTime, 'target duration:', duration, 's')
+      console.log('[Booth] Recording started, target:', actualDuration, 's')
 
-      // Single timer: updates display AND auto-stops at exact duration
+      // Timer for display countdown
       recordingTimerRef.current = setInterval(() => {
         const elapsed = Math.floor((Date.now() - startTime) / 1000)
         setRecordingTime(elapsed)
+      }, 500)
 
-        if (elapsed >= duration) {
-          console.log('[Booth] Auto-stop at', elapsed, 's (duration was', duration, 's)')
-          // Request final data flush before stopping
-          try {
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-              mediaRecorderRef.current.requestData()
-            }
-          } catch (e) {
-            console.warn('[Booth] requestData failed:', e)
-          }
-          // Small delay to let final data flush complete
-          setTimeout(() => {
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-              mediaRecorderRef.current.stop()
-            }
-            if (rafRecordRef.current) {
-              cancelAnimationFrame(rafRecordRef.current)
-              rafRecordRef.current = null
-            }
-            if (recordingTimerRef.current) {
-              clearInterval(recordingTimerRef.current)
-              recordingTimerRef.current = null
-            }
-            setIsRecording(false)
-            setPhase('result')
-          }, 200)
+      // Exact auto-stop via setTimeout — directly call stop(), no delay
+      recordTimeoutRef.current = setTimeout(() => {
+        const actual = Math.floor((Date.now() - startTime) / 1000)
+        console.log('[Booth] Auto-stop at', actual, 's (target:', actualDuration, 's)')
+
+        if (rafRecordRef.current) {
+          cancelAnimationFrame(rafRecordRef.current)
+          rafRecordRef.current = null
         }
-      }, 1000)
+        if (recordingTimerRef.current) {
+          clearInterval(recordingTimerRef.current)
+          recordingTimerRef.current = null
+        }
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop()
+        }
+        setIsRecording(false)
+        setPhase('result')
+      }, actualDuration * 1000)
 
     } catch (e: any) {
       console.error('[Booth] Recording start failed:', e)
@@ -687,18 +660,28 @@ export function BoothPage() {
               {/* Video settings (video mode only) */}
               {mode === 'video' && (
                 <div className="mb-4 flex flex-col items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-silver-500 uppercase tracking-wide">Duration:</span>
-                    <select
-                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
-                      value={videoDuration}
-                      onChange={(e) => setVideoDuration(parseInt(e.target.value))}
-                    >
-                      {VIDEO_DURATIONS.map(d => (
-                        <option key={d} value={d} className="bg-surface-elevated">{d}s</option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Duration selector — only for styles without fixed duration */}
+                  {(() => {
+                    const sel = VIDEO_STYLES.find(s => s.id === videoStyle)
+                    return !sel?.fixedDuration ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-silver-500 uppercase tracking-wide">Duration:</span>
+                        <select
+                          className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
+                          value={videoDuration}
+                          onChange={(e) => setVideoDuration(parseInt(e.target.value))}
+                        >
+                          {VIDEO_DURATIONS.map(d => (
+                            <option key={d} value={d} className="bg-surface-elevated">{d}s</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gold-300">Fixed: {sel.fixedDuration}s</span>
+                      </div>
+                    )
+                  })()}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-silver-500 uppercase tracking-wide">Style:</span>
                     <select
@@ -707,7 +690,9 @@ export function BoothPage() {
                       onChange={(e) => setVideoStyle(e.target.value)}
                     >
                       {VIDEO_STYLES.map(s => (
-                        <option key={s.id} value={s.id} className="bg-surface-elevated">{s.name} — {s.description}</option>
+                        <option key={s.id} value={s.id} className="bg-surface-elevated">
+                          {s.name}{s.fixedDuration ? ` (${s.fixedDuration}s)` : ''} — {s.description}
+                        </option>
                       ))}
                     </select>
                   </div>
