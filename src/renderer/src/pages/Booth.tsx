@@ -767,36 +767,46 @@ export function BoothPage() {
 
             {/* Video recording: no overlay (clean preview, auto-stop handles everything) */}
 
-            <div className="text-center mb-8">
-              {mode === 'photo' ? (
-                <>
-                  <p className="text-silver-200 text-2xl font-semibold mb-1">
-                    Shot {currentShot} of {totalShots}
-                  </p>
-                  <p className="text-silver-400 text-sm italic">Strike a pose. Don't blink.</p>
-                </>
-              ) : (
-                <>
-                  <p className="text-silver-200 text-2xl font-semibold mb-1">
-                    {isRecording ? 'Recording...' : 'Ready to record'}
-                  </p>
-                  <p className="text-silver-400 text-sm italic">
-                    {isRecording ? 'Click stop when done' : 'Click record to start'}
-                  </p>
-                </>
-              )}
-            </div>
+            {/* Video recording: REC badge at top with countdown, nothing else */}
+            {mode === 'video' && isRecording && (
+              <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-4 py-1.5 z-20">
+                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                <span
+                  className={`text-sm font-mono font-bold ${
+                    videoDuration - recordingTime <= 3 ? 'text-red-300' : 'text-red-200'
+                  }`}
+                >
+                  REC {videoDuration - recordingTime}s
+                </span>
+              </div>
+            )}
+
+            {/* Text below video: photo mode only, hidden during video recording */}
+            {!(mode === 'video' && isRecording) && (
+              <div className="text-center mb-8">
+                {mode === 'photo' ? (
+                  <>
+                    <p className="text-silver-200 text-2xl font-semibold mb-1">
+                      Shot {currentShot} of {totalShots}
+                    </p>
+                    <p className="text-silver-400 text-sm italic">Strike a pose. Don't blink.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-silver-200 text-2xl font-semibold mb-1">
+                      Ready to record
+                    </p>
+                    <p className="text-silver-400 text-sm italic">Click record to start</p>
+                  </>
+                )}
+              </div>
+            )}
 
             {mode === 'video' ? (
               isRecording ? (
-                // During recording: show info text, NO button (auto-stop)
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-24 h-24 rounded-full bg-red-500/20 border-4 border-red-500 flex items-center justify-center">
-                    <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                  </div>
-                  <span className="text-red-300 text-sm font-mono font-bold">
-                    {videoDuration - recordingTime}s remaining
-                  </span>
+                // During recording: red circle only (auto-stop, no button)
+                <div className="w-24 h-24 rounded-full bg-red-500/20 border-4 border-red-500 flex items-center justify-center">
+                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
                 </div>
               ) : (
                 // Before recording: record button
