@@ -53,7 +53,6 @@ export function EventsPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-silver-500" />
           <input
             type="text"
-            placeholder="Search events..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="aray-input pl-10"
@@ -293,10 +292,9 @@ function CreateEventModal({
           </button>
         </div>
         <div className="p-5 space-y-4">
-          <Field label="Event Name *" hint="A friendly name for this event">
+          <Field label="Event Name *">
             <input
               className="aray-input"
-              placeholder="Wedding of Alex & Jamie"
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
@@ -304,14 +302,14 @@ function CreateEventModal({
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Client">
-              <input className="aray-input" placeholder="Alex & Jamie" value={client} onChange={(e) => setClient(e.target.value)} />
+              <input className="aray-input" value={client} onChange={(e) => setClient(e.target.value)} />
             </Field>
             <Field label="Operator">
-              <input className="aray-input" placeholder="Your name" value={operator} onChange={(e) => setOperator(e.target.value)} />
+              <input className="aray-input" value={operator} onChange={(e) => setOperator(e.target.value)} />
             </Field>
           </div>
           <Field label="Venue">
-            <input className="aray-input" placeholder="Grand Ballroom Hotel" value={venue} onChange={(e) => setVenue(e.target.value)} />
+            <input className="aray-input" value={venue} onChange={(e) => setVenue(e.target.value)} />
           </Field>
           <Field label="Event Date">
             <input type="date" className="aray-input" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
