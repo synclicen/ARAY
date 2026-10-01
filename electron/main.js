@@ -104,9 +104,29 @@ function ensureStoragePath() {
     return fallback;
   }
 }
-function ensureEventStorage(eventCode) {
+function sanitizeFilename(name) {
+  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "Untitled";
+}
+function buildEventFolderName(event) {
+  const parts = [event.code];
+  if (event.name) parts.push(sanitizeFilename(event.name));
+  if (event.event_date) {
+    const d = new Date(event.event_date);
+    if (!isNaN(d.getTime())) {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      parts.push(`${yyyy}-${mm}-${dd}`);
+    } else if (typeof event.event_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(event.event_date)) {
+      parts.push(event.event_date);
+    }
+  }
+  return parts.join("_");
+}
+function ensureEventStorage(event) {
   const base = ensureStoragePath();
-  const eventPath = path.join(base, "Events", eventCode);
+  const folderName = buildEventFolderName(event);
+  const eventPath = path.join(base, "Events", folderName);
   for (const sub of [
     "Photos/Original",
     "Photos/Edited",
@@ -122,12 +142,16 @@ function ensureEventStorage(eventCode) {
     const p = path.join(eventPath, sub);
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
   }
+  if (event.storage_path !== eventPath) {
+    event.storage_path = eventPath;
+  }
   return eventPath;
 }
-function getPhotoPaths(eventCode, sessionId, shotNumber, ext = "jpg") {
-  const base = ensureStoragePath();
-  const eventDir = path.join(base, "Events", eventCode, "Photos");
-  const filename = `${eventCode}_${sessionId}_${String(shotNumber).padStart(3, "0")}`;
+function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
+  const eventPath = ensureEventStorage(event);
+  const eventDir = path.join(eventPath, "Photos");
+  const code = event.code || "ARAY";
+  const filename = `${code}_${sessionId}_${String(shotNumber).padStart(3, "0")}`;
   return {
     original: path.join(eventDir, "Original", `${filename}.${ext}`),
     thumbnail: path.join(eventDir, "Thumbnails", `${filename}_thumb.${ext}`)
@@ -267,7 +291,8 @@ function createEvent(input) {
     event_date: input.event_date || null,
     operator: input.operator || null,
     template_id: input.template_id || null,
-    storage_path: path.join(getStoragePath(), "Events"),
+    storage_path: "",
+    // filled by ensureEventStorage
     google_drive_folder_id: null,
     sync_status: "LOCAL_ONLY",
     status: "active",
@@ -276,7 +301,8 @@ function createEvent(input) {
   };
   db.events.unshift(event);
   saveDB(db);
-  ensureEventStorage(event.code);
+  ensureEventStorage(event);
+  saveDB(loadDB());
   return event;
 }
 function listEvents(includeArchived = false) {
@@ -411,8 +437,8 @@ function registerIPC() {
   import_electron.ipcMain.handle("events.openFolder", (_e, id) => wrap(() => {
     const event = getEventById(id);
     if (!event) throw new Error("Event not found");
-    ensureEventStorage(event.code);
-    import_electron.shell.openPath(path.join(getStoragePath(), "Events", event.code));
+    const eventPath = ensureEventStorage(event);
+    import_electron.shell.openPath(eventPath);
     return { success: true };
   }));
   import_electron.ipcMain.handle("sessions.create", (_e, eventId, type, shotCount) => wrap(() => createSession(eventId, type, shotCount)));
@@ -430,9 +456,8 @@ function registerIPC() {
   import_electron.ipcMain.handle("media.saveCapturedFrame", (_e, payload) => wrap(() => {
     const event = getEventById(payload.event_id);
     if (!event) throw new Error("Event not found");
-    ensureEventStorage(event.code);
     const ext = payload.mime_type === "image/png" ? "png" : "jpg";
-    const paths = getPhotoPaths(event.code, payload.session_id, payload.shot_number, ext);
+    const paths = getPhotoPaths(event, payload.session_id, payload.shot_number, ext);
     const base64Data = payload.frame_base64.replace(/^data:image\/\w+;base64,/, "");
     fs.writeFileSync(paths.original, Buffer.from(base64Data, "base64"));
     let thumbnailPath = null;
