@@ -95,11 +95,13 @@ function sanitizeFilename(name: string): string {
 }
 
 function buildEventFolderName(event: any): string {
-  // Format: ARAY_EVENT_2026_0001_Wedding-of-Alex-Jamie_2026-09-15
-  const parts = [event.code]
+  // Format: Wedding-of-Alex-Jamie_2026-09-15
+  // Simple: just event name + date. No code prefix.
+  const parts: string[] = []
   if (event.name) parts.push(sanitizeFilename(event.name))
+  else parts.push('Untitled-Event')
+
   if (event.event_date) {
-    // Normalize date to YYYY-MM-DD
     const d = new Date(event.event_date)
     if (!isNaN(d.getTime())) {
       const yyyy = d.getFullYear()

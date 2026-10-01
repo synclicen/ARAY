@@ -108,8 +108,9 @@ function sanitizeFilename(name) {
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "Untitled";
 }
 function buildEventFolderName(event) {
-  const parts = [event.code];
+  const parts = [];
   if (event.name) parts.push(sanitizeFilename(event.name));
+  else parts.push("Untitled-Event");
   if (event.event_date) {
     const d = new Date(event.event_date);
     if (!isNaN(d.getTime())) {
