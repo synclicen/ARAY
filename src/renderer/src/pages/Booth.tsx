@@ -392,9 +392,8 @@ export function BoothPage() {
         reader.readAsDataURL(finalBlob)
       }
 
-      // Start recording WITHOUT timeslice — collect all data at stop
-      // This prevents premature data truncation that caused 10s limit
-      recorder.start()
+      // Start recording with 1s timeslice for reliable data flush
+      recorder.start(1000)
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
@@ -406,24 +405,33 @@ export function BoothPage() {
       recordingTimerRef.current = setInterval(() => {
         const elapsed = Math.floor((Date.now() - startTime) / 1000)
         setRecordingTime(elapsed)
-        console.log('[Booth] Recording tick:', elapsed, 's /', duration, 's')
 
         if (elapsed >= duration) {
           console.log('[Booth] Auto-stop at', elapsed, 's (duration was', duration, 's)')
-          // Stop everything
-          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop()
+          // Request final data flush before stopping
+          try {
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+              mediaRecorderRef.current.requestData()
+            }
+          } catch (e) {
+            console.warn('[Booth] requestData failed:', e)
           }
-          if (rafRecordRef.current) {
-            cancelAnimationFrame(rafRecordRef.current)
-            rafRecordRef.current = null
-          }
-          if (recordingTimerRef.current) {
-            clearInterval(recordingTimerRef.current)
-            recordingTimerRef.current = null
-          }
-          setIsRecording(false)
-          setPhase('result')
+          // Small delay to let final data flush complete
+          setTimeout(() => {
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+              mediaRecorderRef.current.stop()
+            }
+            if (rafRecordRef.current) {
+              cancelAnimationFrame(rafRecordRef.current)
+              rafRecordRef.current = null
+            }
+            if (recordingTimerRef.current) {
+              clearInterval(recordingTimerRef.current)
+              recordingTimerRef.current = null
+            }
+            setIsRecording(false)
+            setPhase('result')
+          }, 200)
         }
       }, 1000)
 
@@ -757,30 +765,7 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Recording countdown (video mode) — REC badge with remaining seconds */}
-            {mode === 'video' && isRecording && (
-              <>
-                {/* Top badge: REC + countdown seconds remaining */}
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-4 py-1.5 z-20">
-                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                  <span
-                    className={`text-sm font-mono font-bold ${
-                      videoDuration - recordingTime <= 3 ? 'text-red-300' : 'text-red-200'
-                    }`}
-                  >
-                    REC {videoDuration - recordingTime}s
-                  </span>
-                </div>
-
-                {/* Progress bar at bottom */}
-                <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-silver-900/50 z-20">
-                  <div
-                    className="h-full bg-gradient-to-r from-gold-400 to-red-500 transition-all duration-1000 ease-linear"
-                    style={{ width: `${(recordingTime / videoDuration) * 100}%` }}
-                  />
-                </div>
-              </>
-            )}
+            {/* Video recording: no overlay (clean preview, auto-stop handles everything) */}
 
             <div className="text-center mb-8">
               {mode === 'photo' ? (
@@ -803,29 +788,28 @@ export function BoothPage() {
             </div>
 
             {mode === 'video' ? (
-              <button
-                onClick={() => {
-                  if (isRecording) {
-                    stopRecording()
-                    setPhase('result')
-                  } else {
-                    // Start countdown then record
+              isRecording ? (
+                // During recording: show info text, NO button (auto-stop)
+                <div className="flex flex-col items-center gap-2">
+                  <div className="w-24 h-24 rounded-full bg-red-500/20 border-4 border-red-500 flex items-center justify-center">
+                    <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                  </div>
+                  <span className="text-red-300 text-sm font-mono font-bold">
+                    {videoDuration - recordingTime}s remaining
+                  </span>
+                </div>
+              ) : (
+                // Before recording: record button
+                <button
+                  onClick={() => {
                     setPhase('countdown')
                     runCountdown()
-                  }
-                }}
-                className={`w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center ${
-                  isRecording
-                    ? 'bg-red-500 border-white/80 shadow-[0_0_24px_rgba(228,90,90,0.6)]'
-                    : 'bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold'
-                }`}
-              >
-                {isRecording ? (
-                  <div className="w-8 h-8 bg-white rounded-md" />
-                ) : (
+                  }}
+                  className="w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold"
+                >
                   <Video className="w-10 h-10 text-purple-haze-950" />
-                )}
-              </button>
+                </button>
+              )
             ) : (
               <ArayButton
                 variant="gold"
