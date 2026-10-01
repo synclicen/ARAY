@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #0f0b1a;
+    color: #ededf1;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #120d24;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #392b5a;
+    border-radius: 6px;
+    border: 2px solid #120d24;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #7b61a8;
+  }
+
+  input,
+  textarea,
+  select {
+    user-select: text;
+  }
+}
+
+@layer components {
+  .aray-gradient-text {
+    background: linear-gradient(135deg, #cdb8e4 0%, #d4af37 50%, #c0c0c8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .aray-glass {
+    background: rgba(36, 26, 64, 0.6);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(192, 192, 200, 0.12);
+  }
+
+  .aray-card {
+    @apply aray-glass rounded-2xl shadow-card;
+  }
+
+  .aray-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all;
+    background: linear-gradient(135deg, #7b61a8 0%, #654e8e 100%);
+    color: #f4f0fa;
+    box-shadow: 0 4px 16px rgba(123, 97, 168, 0.35);
+  }
+  .aray-btn-primary:hover {
+    background: linear-gradient(135deg, #9b6fc8 0%, #7b61a8 100%);
+    box-shadow: 0 6px 24px rgba(123, 97, 168, 0.5);
+  }
+  .aray-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .aray-btn-gold {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all;
+    background: linear-gradient(135deg, #d4af37 0%, #b8932b 100%);
+    color: #1a1404;
+    box-shadow: 0 4px 16px rgba(212, 175, 55, 0.35);
+  }
+  .aray-btn-gold:hover {
+    background: linear-gradient(135deg, #e4c647 0%, #d4af37 100%);
+    box-shadow: 0 6px 24px rgba(212, 175, 55, 0.55);
+  }
+
+  .aray-btn-silver {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all;
+    background: rgba(192, 192, 200, 0.08);
+    color: #dcdce3;
+    border: 1px solid rgba(192, 192, 200, 0.18);
+  }
+  .aray-btn-silver:hover {
+    background: rgba(192, 192, 200, 0.14);
+    border-color: rgba(192, 192, 200, 0.3);
+  }
+
+  .aray-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all;
+    color: #a8a8b2;
+  }
+  .aray-btn-ghost:hover {
+    color: #ededf1;
+    background: rgba(192, 192, 200, 0.06);
+  }
+
+  .aray-input {
+    @apply w-full px-4 py-2.5 rounded-xl text-sm transition-all outline-none;
+    background: rgba(18, 13, 36, 0.6);
+    border: 1px solid rgba(192, 192, 200, 0.16);
+    color: #ededf1;
+  }
+  .aray-input:focus {
+    border-color: #7b61a8;
+    box-shadow: 0 0 0 3px rgba(123, 97, 168, 0.18);
+  }
+  .aray-input::placeholder {
+    color: #74747c;
+  }
+
+  .aray-badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+}
