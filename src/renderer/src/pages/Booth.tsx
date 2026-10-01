@@ -333,27 +333,49 @@ export function BoothPage() {
         const rawBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
         console.log('[Booth] Raw video:', rawBlob.size, 'bytes, motion:', styleId)
 
+        if (rawBlob.size === 0) {
+          console.error('[Booth] Raw video blob is EMPTY — no data recorded')
+          setError('Video recording failed — no data captured')
+          setPhase('error')
+          return
+        }
+
         // Apply motion effect via post-processing
         let finalBlob = rawBlob
         if (styleId !== 'normal') {
           try {
+            console.log('[Booth] Applying motion effect:', styleId)
             const processed = await applyMotionEffect(rawBlob, {
               motionStyle: styleId,
               filter: filter.canvasFilter,
               mirror: mir
             })
-            if (processed) {
+            if (processed && processed.size > 0) {
               finalBlob = processed
               console.log('[Booth] Motion effect applied:', styleId, finalBlob.size, 'bytes')
+            } else {
+              console.warn('[Booth] Motion effect returned null, using raw video')
             }
           } catch (e: any) {
             console.error('[Booth] Motion effect failed:', e)
+            // Fall back to raw video
           }
         }
 
-        const reader = new FileReader()
-        reader.onloadend = async () => {
-          const base64 = (reader.result as string).split(',')[1]
+        console.log('[Booth] Converting to base64, size:', finalBlob.size)
+        // Use ArrayBuffer instead of FileReader for reliability with large blobs
+        try {
+          const arrayBuffer = await finalBlob.arrayBuffer()
+          const bytes = new Uint8Array(arrayBuffer)
+          // Convert to base64 in chunks to avoid call stack overflow
+          let binary = ''
+          const chunkSize = 0x8000
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)) as any)
+          }
+          const base64 = btoa(binary)
+          console.log('[Booth] Base64 length:', base64.length)
+
           if (activeEvent) {
             let sessionId = (window as any).__aray_current_session_id
             if (!sessionId) {
@@ -363,6 +385,7 @@ export function BoothPage() {
                 ;(window as any).__aray_current_session_id = sessionId
               }
             }
+            console.log('[Booth] Saving video to disk...')
             const saveResult = await window.aray.media.saveVideo({
               event_id: activeEvent.id,
               session_id: sessionId,
@@ -371,10 +394,20 @@ export function BoothPage() {
               video_style: styleId,
               filter: filter.id
             })
-            if (saveResult.success) addMedia(saveResult.data as ArayMedia)
+            console.log('[Booth] Save result:', saveResult.success, saveResult)
+            if (saveResult.success) {
+              addMedia(saveResult.data as ArayMedia)
+              console.log('[Booth] Video saved successfully!')
+            } else {
+              console.error('[Booth] Save failed:', (saveResult as any).error)
+              setError('Failed to save video: ' + ((saveResult as any).error?.message || 'Unknown'))
+            }
           }
+        } catch (e: any) {
+          console.error('[Booth] Video processing error:', e)
+          setError('Video processing failed: ' + e.message)
+          setPhase('error')
         }
-        reader.readAsDataURL(finalBlob)
       }
 
       // Start recording — NO timeslice, all data at stop
