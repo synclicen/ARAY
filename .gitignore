@@ -18,10 +18,6 @@ release/
 .vite/
 *.tsbuildinfo
 
-# Electron
-main.js
-preload.js
-
 # Logs
 logs/
 *.log
