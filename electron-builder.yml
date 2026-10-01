@@ -6,16 +6,13 @@ directories:
   output: release
   buildResources: resources
 
-# Disable asar — better-sqlite3 + sharp ship .node native binaries that
-# cannot be loaded from inside an asar archive on Windows.
-asar: false
+asar: true
 
 files:
+  - electron/main.js
+  - electron/preload.js
   - out/**/*
   - package.json
-  - node_modules/**/*
-  - "!node_modules/**/{*.md,*.markdown,LICENSE,CHANGELOG*,*.ts,*.tsx,*.map,test*,tests*,__tests__,docs,example*,*.yml,*.yaml,.github,.vscode,.idea,coverage*,.nyc_output}"
-  - "!node_modules/**/{jest.config*,webpack.config*,rollup.config*,tsconfig*,babel.config*,.babelrc,.eslintrc*,.prettierrc*,.npmignore,.gitignore}"
 
 extraResources:
   - from: resources/
@@ -27,6 +24,9 @@ win:
       arch:
         - x64
     - target: portable
+      arch:
+        - x64
+    - target: zip
       arch:
         - x64
   icon: resources/icon/icon.ico
@@ -44,8 +44,3 @@ nsis:
   shortcutName: ARAY
   artifactName: "ARAY-Setup-${version}.${ext}"
   deleteAppDataOnUninstall: false
-
-publish:
-  provider: generic
-  url: https://example.com/aray/releases/
-  channel: latest
