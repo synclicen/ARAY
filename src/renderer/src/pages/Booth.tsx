@@ -20,7 +20,7 @@ import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
 import { useEventStore } from '../stores/events'
 import { useMediaStore } from '../stores/media'
 import { useSettingsStore } from '../stores/settings'
-import { TEMPLATES, compositeTemplate } from '../services/templates'
+import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
 import type { ArayMedia } from '@shared/types'
 
 type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
@@ -297,14 +297,39 @@ export function BoothPage() {
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
     const templateId = settings?.selected_template_id || 'classic-strip-4'
-    const template = TEMPLATES.find(t => t.id === templateId)
-    if (!template) return
-    if (capturedShots.length < template.shotCount) return
+
+    // Check built-in templates first
+    const builtinTemplate = TEMPLATES.find(t => t.id === templateId)
+    // Check custom templates
+    const customTemplates = getCustomTemplates()
+    const customTemplate = customTemplates.find(t => t.id === templateId)
+
+    if (!builtinTemplate && !customTemplate) {
+      console.warn('[Booth] No template found for id:', templateId)
+      return
+    }
+
+    const requiredShots = builtinTemplate?.shotCount || customTemplate?.shotCount || 4
+    if (capturedShots.length < requiredShots) {
+      console.warn('[Booth] Not enough shots:', capturedShots.length, 'needed:', requiredShots)
+      return
+    }
 
     setCompositing(true)
     try {
       const photoUrls = capturedShots.map(s => s.dataUrl)
-      const composite = await compositeTemplate(template, photoUrls)
+      let composite: string | null = null
+
+      if (customTemplate) {
+        // Custom template: use compositeCustomTemplate
+        console.log('[Booth] Compositing with custom template:', customTemplate.name)
+        composite = await compositeCustomTemplate(customTemplate, photoUrls)
+      } else if (builtinTemplate) {
+        // Built-in template: use compositeTemplate
+        console.log('[Booth] Compositing with built-in template:', builtinTemplate.name)
+        composite = await compositeTemplate(builtinTemplate, photoUrls)
+      }
+
       if (composite && activeEvent) {
         const sessionId = (window as any).__aray_current_session_id
         const base64 = composite.split(',')[1]
@@ -317,6 +342,7 @@ export function BoothPage() {
         if (saveResult.success) {
           setCompositeUrl(composite)
           addMedia(saveResult.data as ArayMedia)
+          console.log('[Booth] Composite saved successfully')
         }
       }
     } catch (e: any) {
@@ -495,7 +521,7 @@ export function BoothPage() {
               {mode === 'photo' && (
                 <div className="mb-4 flex items-center justify-center gap-2 text-xs text-silver-500">
                   <LayoutTemplate className="w-3.5 h-3.5" />
-                  <span>Template: {TEMPLATES.find(t => t.id === (settings?.selected_template_id || 'classic-strip-4'))?.name || 'None'}</span>
+                  <span>Template: {TEMPLATES.find(t => t.id === (settings?.selected_template_id || 'classic-strip-4'))?.name || getCustomTemplates().find(t => t.id === settings?.selected_template_id)?.name || 'None'}</span>
                   <span>·</span>
                   <span>{totalShots} shots</span>
                 </div>
