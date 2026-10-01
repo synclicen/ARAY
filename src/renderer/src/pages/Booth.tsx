@@ -690,14 +690,43 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Recording indicator (video mode) */}
+            {/* Recording countdown timer (video mode) — shows remaining time */}
             {mode === 'video' && isRecording && (
-              <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-4 py-1.5">
-                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-200 text-sm font-mono">
-                  REC {String(Math.floor(recordingTime / 60)).padStart(2, '0')}:{String(recordingTime % 60).padStart(2, '0')}
-                </span>
-              </div>
+              <>
+                {/* Top badge: REC + elapsed */}
+                <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-4 py-1.5 z-20">
+                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-red-200 text-sm font-mono">
+                    REC {String(Math.floor(recordingTime / 60)).padStart(2, '0')}:{String(recordingTime % 60).padStart(2, '0')}
+                  </span>
+                </div>
+
+                {/* Center overlay: big countdown (remaining time) */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
+                  <div className="text-center">
+                    <div
+                      className="text-[180px] font-extrabold leading-none"
+                      style={{
+                        color: videoDuration - recordingTime <= 3 ? '#E45A5A' : '#D4AF37',
+                        textShadow: '0 0 40px rgba(0,0,0,0.8), 0 0 80px rgba(212,175,55,0.4)'
+                      }}
+                    >
+                      {videoDuration - recordingTime}
+                    </div>
+                    <div className="text-silver-200 text-lg font-medium mt-2" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.8)' }}>
+                      seconds remaining
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progress bar at bottom */}
+                <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-silver-900/50 z-20">
+                  <div
+                    className="h-full bg-gradient-to-r from-gold-400 to-red-500 transition-all duration-1000 ease-linear"
+                    style={{ width: `${(recordingTime / videoDuration) * 100}%` }}
+                  />
+                </div>
+              </>
             )}
 
             <div className="text-center mb-8">
