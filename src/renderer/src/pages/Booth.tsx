@@ -26,6 +26,40 @@ import type { ArayMedia } from '@shared/types'
 type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
 type BoothMode = 'photo' | 'video'
 
+// ─── CINEMATIC FILTERS (5 styles) ───────────────────────────────
+interface CameraFilter {
+  id: string
+  name: string
+  css: string
+  canvasFilter: string
+}
+
+const FILTERS: CameraFilter[] = [
+  { id: 'original', name: 'Original', css: 'none', canvasFilter: 'none' },
+  { id: 'purple-haze', name: 'Purple Haze', css: 'hue-rotate(270deg) saturate(1.4) contrast(1.15) brightness(1.05)', canvasFilter: 'hue-rotate(270deg) saturate(1.4) contrast(1.15) brightness(1.05)' },
+  { id: 'vintage', name: 'Vintage', css: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)', canvasFilter: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)' },
+  { id: 'noir', name: 'Noir B&W', css: 'grayscale(1) contrast(1.4) brightness(1.05)', canvasFilter: 'grayscale(1) contrast(1.4) brightness(1.05)' },
+  { id: 'cool-blue', name: 'Cool Blue', css: 'hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)', canvasFilter: 'hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)' },
+  { id: 'warm-sunset', name: 'Warm Sunset', css: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)', canvasFilter: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)' }
+]
+
+// ─── VIDEO MOTION STYLES (5 types) ──────────────────────────────
+interface VideoStyle {
+  id: string
+  name: string
+  description: string
+}
+
+const VIDEO_STYLES: VideoStyle[] = [
+  { id: 'normal', name: 'Normal', description: 'Standard recording' },
+  { id: 'boomerang', name: 'Boomerang', description: 'Forward + reverse loop' },
+  { id: 'slow-motion', name: 'Slow Motion', description: '0.5x playback speed' },
+  { id: 'timelapse', name: 'Time-lapse', description: 'Speed up playback 3x' },
+  { id: 'cinematic', name: 'Cinematic', description: 'Slight slow-mo + color grade' }
+]
+
+const VIDEO_DURATIONS = [10, 15, 30, 60]
+
 interface CapturedShot {
   shotNumber: number
   mediaId: string
@@ -52,6 +86,9 @@ export function BoothPage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [mirror, setMirror] = useState(true)
   const [mode, setMode] = useState<BoothMode>('photo')
+  const [activeFilterId, setActiveFilterId] = useState('original')
+  const [videoDuration, setVideoDuration] = useState(15)
+  const [videoStyle, setVideoStyle] = useState('normal')
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
@@ -63,6 +100,7 @@ export function BoothPage() {
   const activeEvent = events.find((e) => e.id === activeEventId) ?? events[0]
   const totalShots = settings?.booth_shot_count ?? 4
   const countdownSeconds = settings?.booth_countdown_seconds ?? 3
+  const activeFilter = FILTERS.find(f => f.id === activeFilterId) || FILTERS[0]
 
   useEffect(() => {
     if (events.length === 0) loadEvents()
@@ -96,26 +134,43 @@ export function BoothPage() {
     }
   }, [])
 
-  const captureFrame = useCallback((): string | null => {
+  const captureFrame = useCallback((): { full: string; thumb: string } | null => {
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return null
+    if (video.videoWidth === 0 || video.videoHeight === 0) return null
 
-    const w = video.videoWidth || 1280
-    const h = video.videoHeight || 720
+    const w = video.videoWidth
+    const h = video.videoHeight
     canvas.width = w
     canvas.height = h
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
 
-    // Mirror for selfie feel
-    ctx.translate(w, 0)
-    ctx.scale(-1, 1)
+    // Apply cinematic filter to canvas
+    if (activeFilter.canvasFilter !== 'none') {
+      ctx.filter = activeFilter.canvasFilter
+    }
+    // Mirror
+    if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1) }
     ctx.drawImage(video, 0, 0, w, h)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.filter = 'none'
 
-    return canvas.toDataURL('image/jpeg', 0.92)
-  }, [])
+    const full = canvas.toDataURL('image/jpeg', 0.92)
+
+    // Thumbnail
+    const tc = document.createElement('canvas')
+    tc.width = 320; tc.height = 240
+    const tctx = tc.getContext('2d')
+    if (!tctx) return { full, thumb: full }
+    if (activeFilter.canvasFilter !== 'none') tctx.filter = activeFilter.canvasFilter
+    if (mirror) { tctx.translate(320, 0); tctx.scale(-1, 1) }
+    tctx.drawImage(video, 0, 0, 320, 240)
+    tctx.setTransform(1, 0, 0, 1, 0, 0)
+    const thumb = tc.toDataURL('image/jpeg', 0.8)
+    return { full, thumb }
+  }, [mirror, activeFilter])
 
   const performCapture = useCallback(async () => {
     if (!activeEvent) {
@@ -124,9 +179,9 @@ export function BoothPage() {
       return
     }
 
-    const dataUrl = captureFrame()
-    if (!dataUrl) {
-      setError('Failed to capture frame.')
+    const frames = captureFrame()
+    if (!frames) {
+      setError('Failed to capture frame. Camera may not be ready.')
       setPhase('error')
       return
     }
@@ -136,7 +191,6 @@ export function BoothPage() {
     setTimeout(() => setLastFlash(false), 220)
 
     try {
-      // Create session lazily on first shot
       let sessionId = (window as any).__aray_current_session_id as string | undefined
       if (!sessionId) {
         const sessionResult = await window.aray.sessions.create(activeEvent.id, 'photo', totalShots)
@@ -145,12 +199,14 @@ export function BoothPage() {
         ;(window as any).__aray_current_session_id = sessionId
       }
 
-      const base64 = dataUrl.split(',')[1]
+      const fullBase64 = frames.full.split(',')[1]
+      const thumbBase64 = frames.thumb.split(',')[1]
       const saveResult = await window.aray.media.saveCapturedFrame({
         event_id: activeEvent.id,
         session_id: sessionId,
         shot_number: currentShot,
-        frame_base64: base64,
+        frame_base64: fullBase64,
+        thumbnail_base64: thumbBase64,
         mime_type: 'image/jpeg'
       })
 
@@ -160,7 +216,7 @@ export function BoothPage() {
       addMedia(media)
       setCapturedShots((prev) => [
         ...prev,
-        { shotNumber: currentShot, mediaId: media.id, dataUrl }
+        { shotNumber: currentShot, mediaId: media.id, dataUrl: frames.full }
       ])
     } catch (e: any) {
       setError(e.message)
@@ -169,6 +225,17 @@ export function BoothPage() {
   }, [activeEvent, captureFrame, currentShot, totalShots, addMedia])
 
   // ─── VIDEO RECORDING ──────────────────────────────────────────
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    setIsRecording(false)
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+  }, [])
+
   const startRecording = useCallback(() => {
     if (!streamRef.current) return
     try {
@@ -211,25 +278,21 @@ export function BoothPage() {
       setIsRecording(true)
       setRecordingTime(0)
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime((t) => t + 1)
+        setRecordingTime((t) => {
+          if (t + 1 >= videoDuration) {
+            // Auto-stop after duration
+            stopRecording()
+            setPhase('result')
+          }
+          return t + 1
+        })
       }, 1000)
     } catch (e: any) {
       console.error('[Booth] Recording start failed:', e)
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia])
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
-    }
-    setIsRecording(false)
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current)
-      recordingTimerRef.current = null
-    }
-  }, [])
+  }, [activeEvent, addMedia, videoDuration, stopRecording])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
@@ -325,17 +388,17 @@ export function BoothPage() {
     <div className="h-full w-full relative bg-black overflow-hidden">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Camera video (always rendered when in booth phases) */}
-      {(phase === 'preview' || phase === 'countdown' || phase === 'flash') && (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: 'scaleX(-1)' }}
-        />
-      )}
+      {/* Camera video — ALWAYS rendered. Filter applied via CSS. */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className={`absolute inset-0 w-full h-full object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
+          phase === 'preview' || phase === 'countdown' || phase === 'flash' ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+        style={{ filter: activeFilter.css }}
+      />
 
       {/* Flash overlay */}
       <AnimatePresence>
@@ -414,6 +477,20 @@ export function BoothPage() {
                 </button>
               </div>
 
+              {/* Camera filter selector */}
+              <div className="mb-4 flex items-center justify-center gap-2">
+                <span className="text-xs text-silver-500 uppercase tracking-wide">Effect:</span>
+                <select
+                  className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
+                  value={activeFilterId}
+                  onChange={(e) => setActiveFilterId(e.target.value)}
+                >
+                  {FILTERS.map(f => (
+                    <option key={f.id} value={f.id} className="bg-surface-elevated">{f.name}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Template indicator (photo mode only) */}
               {mode === 'photo' && (
                 <div className="mb-4 flex items-center justify-center gap-2 text-xs text-silver-500">
@@ -421,6 +498,36 @@ export function BoothPage() {
                   <span>Template: {TEMPLATES.find(t => t.id === (settings?.selected_template_id || 'classic-strip-4'))?.name || 'None'}</span>
                   <span>·</span>
                   <span>{totalShots} shots</span>
+                </div>
+              )}
+
+              {/* Video settings (video mode only) */}
+              {mode === 'video' && (
+                <div className="mb-4 flex flex-col items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-silver-500 uppercase tracking-wide">Duration:</span>
+                    <select
+                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
+                      value={videoDuration}
+                      onChange={(e) => setVideoDuration(parseInt(e.target.value))}
+                    >
+                      {VIDEO_DURATIONS.map(d => (
+                        <option key={d} value={d} className="bg-surface-elevated">{d}s</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-silver-500 uppercase tracking-wide">Style:</span>
+                    <select
+                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
+                      value={videoStyle}
+                      onChange={(e) => setVideoStyle(e.target.value)}
+                    >
+                      {VIDEO_STYLES.map(s => (
+                        <option key={s.id} value={s.id} className="bg-surface-elevated">{s.name} — {s.description}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               )}
 

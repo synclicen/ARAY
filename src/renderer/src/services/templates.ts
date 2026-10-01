@@ -103,6 +103,120 @@ export const TEMPLATES: ArayTemplateDef[] = [
   }
 ]
 
+// ─── CUSTOM TEMPLATE (user-uploaded frame) ──────────────────────
+export interface CustomTemplate {
+  id: string
+  name: string
+  frameDataUrl: string  // user-uploaded frame image (PNG with transparency)
+  shotCount: number
+  layout: 'strip-4' | 'grid-4' | 'triple-3' | 'single-1'
+  canvasWidth: number
+  canvasHeight: number
+}
+
+const CUSTOM_KEY = 'aray_custom_templates'
+
+export function getCustomTemplates(): CustomTemplate[] {
+  try {
+    const data = localStorage.getItem(CUSTOM_KEY)
+    return data ? JSON.parse(data) : []
+  } catch { return [] }
+}
+
+export function saveCustomTemplate(t: CustomTemplate): void {
+  const all = getCustomTemplates()
+  const idx = all.findIndex(x => x.id === t.id)
+  if (idx >= 0) all[idx] = t; else all.push(t)
+  localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
+}
+
+export function deleteCustomTemplate(id: string): void {
+  const all = getCustomTemplates().filter(x => x.id !== id)
+  localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
+}
+
+// Layout presets for custom templates
+const LAYOUT_SLOTS: Record<string, TemplateSlot[]> = {
+  'strip-4': [
+    { x: 5, y: 8, width: 90, height: 20 },
+    { x: 5, y: 31, width: 90, height: 20 },
+    { x: 5, y: 54, width: 90, height: 20 },
+    { x: 5, y: 77, width: 90, height: 20 }
+  ],
+  'grid-4': [
+    { x: 5, y: 8, width: 42, height: 38 },
+    { x: 53, y: 8, width: 42, height: 38 },
+    { x: 5, y: 50, width: 42, height: 38 },
+    { x: 53, y: 50, width: 42, height: 38 }
+  ],
+  'triple-3': [
+    { x: 3, y: 10, width: 30, height: 75 },
+    { x: 35, y: 10, width: 30, height: 75 },
+    { x: 67, y: 10, width: 30, height: 75 }
+  ],
+  'single-1': [
+    { x: 8, y: 8, width: 84, height: 78 }
+  ]
+}
+
+const LAYOUT_SHOT_COUNT: Record<string, number> = {
+  'strip-4': 4, 'grid-4': 4, 'triple-3': 3, 'single-1': 1
+}
+
+const LAYOUT_DIMS: Record<string, { w: number; h: number }> = {
+  'strip-4': { w: 600, h: 1800 },
+  'grid-4': { w: 1200, h: 1800 },
+  'triple-3': { w: 1800, h: 600 },
+  'single-1': { w: 1200, h: 1800 }
+}
+
+export async function compositeCustomTemplate(
+  custom: CustomTemplate,
+  photoDataUrls: string[]
+): Promise<string | null> {
+  try {
+    const dims = LAYOUT_DIMS[custom.layout] || LAYOUT_DIMS['strip-4']
+    const slots = LAYOUT_SLOTS[custom.layout] || LAYOUT_SLOTS['strip-4']
+    const canvas = document.createElement('canvas')
+    canvas.width = dims.w
+    canvas.height = dims.h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+
+    // Black background
+    ctx.fillStyle = '#000000'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+    // Draw photos into slots
+    const photos = photoDataUrls.slice(0, slots.length)
+    for (let i = 0; i < slots.length && i < photos.length; i++) {
+      const slot = slots[i]
+      const img = await loadImage(photos[i])
+      if (!img) continue
+      const sx = (slot.x / 100) * canvas.width
+      const sy = (slot.y / 100) * canvas.height
+      const sw = (slot.width / 100) * canvas.width
+      const sh = (slot.height / 100) * canvas.height
+      drawImageCover(ctx, img, sx, sy, sw, sh)
+    }
+
+    // Overlay custom frame image on top
+    const frameImg = await loadImage(custom.frameDataUrl)
+    if (frameImg) {
+      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height)
+    }
+
+    return canvas.toDataURL('image/jpeg', 0.92)
+  } catch (err) {
+    console.error('[Custom Template] Composite failed:', err)
+    return null
+  }
+}
+
+export function getLayoutShotCount(layout: string): number {
+  return LAYOUT_SHOT_COUNT[layout] || 4
+}
+
 export async function compositeTemplate(
   template: ArayTemplateDef,
   photoDataUrls: string[]
