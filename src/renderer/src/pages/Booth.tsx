@@ -224,30 +224,96 @@ export function BoothPage() {
     }
   }, [activeEvent, captureFrame, currentShot, totalShots, addMedia])
 
-  // ─── VIDEO RECORDING ──────────────────────────────────────────
+  // ─── VIDEO RECORDING (canvas-based for filter support) ────────
+  const canvasRecordRef = useRef<HTMLCanvasElement | null>(null)
+  const rafRecordRef = useRef<number | null>(null)
+  const recordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const stopRecording = useCallback(() => {
+    // Stop MediaRecorder
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop()
     }
-    setIsRecording(false)
+    // Stop animation frame loop
+    if (rafRecordRef.current) {
+      cancelAnimationFrame(rafRecordRef.current)
+      rafRecordRef.current = null
+    }
+    // Clear timers
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current)
       recordingTimerRef.current = null
     }
+    if (recordTimeoutRef.current) {
+      clearTimeout(recordTimeoutRef.current)
+      recordTimeoutRef.current = null
+    }
+    setIsRecording(false)
   }, [])
 
   const startRecording = useCallback(() => {
-    if (!streamRef.current) return
+    const video = videoRef.current
+    if (!video || !streamRef.current) return
+
     try {
-      const recorder = new MediaRecorder(streamRef.current, {
-        mimeType: 'video/webm;codecs=vp9'
-      })
+      // Create canvas for filtered capture
+      const canvas = document.createElement('canvas')
+      const w = video.videoWidth || 1280
+      const h = video.videoHeight || 720
+      canvas.width = w
+      canvas.height = h
+      canvasRecordRef.current = canvas
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('Canvas context failed')
+
+      // Draw loop: video frame → canvas with filter applied
+      const drawFrame = () => {
+        if (video.videoWidth > 0) {
+          ctx.filter = activeFilter.canvasFilter
+          if (mirror) {
+            ctx.save()
+            ctx.translate(w, 0)
+            ctx.scale(-1, 1)
+            ctx.drawImage(video, 0, 0, w, h)
+            ctx.restore()
+          } else {
+            ctx.drawImage(video, 0, 0, w, h)
+          }
+          ctx.filter = 'none'
+        }
+        rafRecordRef.current = requestAnimationFrame(drawFrame)
+      }
+      drawFrame()
+
+      // Capture stream from canvas (NOT from camera directly — this applies filter)
+      const canvasStream = canvas.captureStream(30) // 30 FPS
+
+      // Pick best supported mime type
+      let mimeType = 'video/webm;codecs=vp9'
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp8'
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/webm'
+        }
+      }
+
+      const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 5000000 })
       recordedChunksRef.current = []
+
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunksRef.current.push(e.data)
       }
+
       recorder.onstop = async () => {
+        // Stop draw loop
+        if (rafRecordRef.current) {
+          cancelAnimationFrame(rafRecordRef.current)
+          rafRecordRef.current = null
+        }
+
         const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+        console.log('[Booth] Video recorded:', blob.size, 'bytes, style:', videoStyle)
+
         const reader = new FileReader()
         reader.onloadend = async () => {
           const base64 = (reader.result as string).split(',')[1]
@@ -264,7 +330,9 @@ export function BoothPage() {
               event_id: activeEvent.id,
               session_id: sessionId,
               video_base64: base64,
-              mime_type: 'video/webm'
+              mime_type: 'video/webm',
+              video_style: videoStyle,
+              filter: activeFilterId
             })
             if (saveResult.success) {
               addMedia(saveResult.data as ArayMedia)
@@ -273,26 +341,31 @@ export function BoothPage() {
         }
         reader.readAsDataURL(blob)
       }
-      recorder.start()
+
+      // Start recording with timeslice for reliable data collection
+      recorder.start(100) // collect data every 100ms
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
+
+      // Timer for display
       recordingTimerRef.current = setInterval(() => {
-        setRecordingTime((t) => {
-          if (t + 1 >= videoDuration) {
-            // Auto-stop after duration
-            stopRecording()
-            setPhase('result')
-          }
-          return t + 1
-        })
+        setRecordingTime((t) => t + 1)
       }, 1000)
+
+      // Auto-stop after exact duration
+      recordTimeoutRef.current = setTimeout(() => {
+        console.log('[Booth] Auto-stop after', videoDuration, 's')
+        stopRecording()
+        setPhase('result')
+      }, videoDuration * 1000)
+
     } catch (e: any) {
       console.error('[Booth] Recording start failed:', e)
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia, videoDuration, stopRecording])
+  }, [activeEvent, addMedia, videoDuration, videoStyle, activeFilterId, activeFilter, mirror, stopRecording])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
@@ -361,7 +434,16 @@ export function BoothPage() {
 
   const runCountdown = useCallback(async () => {
     if (mode === 'video') {
-      // Video mode: start recording, no countdown
+      // Video mode: countdown THEN start recording
+      for (let i = countdownSeconds; i > 0; i--) {
+        setCountdown(i)
+        setPhase('countdown')
+        await sleep(1000)
+      }
+      setCountdown(0)
+      setPhase('preview')
+      // Small delay then start recording
+      await sleep(200)
       startRecording()
       return
     }
@@ -645,7 +727,9 @@ export function BoothPage() {
                     stopRecording()
                     setPhase('result')
                   } else {
-                    startRecording()
+                    // Start countdown then record
+                    setPhase('countdown')
+                    runCountdown()
                   }
                 }}
                 className={`w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center ${
