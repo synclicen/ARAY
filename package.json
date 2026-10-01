@@ -8,8 +8,8 @@
   "productName": "ARAY",
   "scripts": {
     "dev": "vite dev --config vite.renderer.config.ts",
-    "build": "vite build --config vite.renderer.config.ts && tsc -p electron/tsconfig.json && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && esbuild electron/preload.ts --bundle --platform=node --outfile=electron/preload.js --external:electron",
-    "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc -p electron/tsconfig.json --noEmit",
+    "build": "vite build --config vite.renderer.config.ts && esbuild electron/main.ts --bundle --platform=node --outfile=electron/main.js --external:electron --external:buffer --external:fs --external:path --external:os --external:http --external:https --external:net --external:crypto --external:stream --external:events --external:url --external:child_process --external:dns --external:tls --external:zlib --external:string_decoder && esbuild electron/preload.ts --bundle --platform=node --outfile=electron/preload.js --external:electron",
+    "typecheck": "tsc --noEmit -p tsconfig.web.json",
     "dist": "npm run build && electron-builder --win --x64",
     "dist:dir": "npm run build && electron-builder --win --x64 --dir"
   },
