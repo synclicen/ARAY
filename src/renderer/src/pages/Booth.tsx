@@ -21,6 +21,7 @@ import { useEventStore } from '../stores/events'
 import { useMediaStore } from '../stores/media'
 import { useSettingsStore } from '../stores/settings'
 import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
+import { applyMotionEffect } from '../services/motion-effects'
 import type { ArayMedia } from '@shared/types'
 
 type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
@@ -40,25 +41,25 @@ const FILTERS: CameraFilter[] = [
   { id: 'vintage', name: 'Vintage', css: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)', canvasFilter: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)' },
   { id: 'noir', name: 'Noir B&W', css: 'grayscale(1) contrast(1.4) brightness(1.05)', canvasFilter: 'grayscale(1) contrast(1.4) brightness(1.05)' },
   { id: 'cool-blue', name: 'Cool Blue', css: 'hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)', canvasFilter: 'hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)' },
-  { id: 'warm-sunset', name: 'Warm Sunset', css: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)', canvasFilter: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)' }
+  { id: 'warm-sunset', name: 'Warm Sunset', css: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)', canvasFilter: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)' },
+  { id: 'cinematic', name: 'Cinematic', css: 'contrast(1.15) saturate(1.1)', canvasFilter: 'contrast(1.15) saturate(1.1)' },
+  { id: 'vintage-film', name: 'Vintage Film', css: 'sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)', canvasFilter: 'sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)' },
+  { id: 'neon-pulse', name: 'Neon Pulse', css: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)', canvasFilter: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)' }
 ]
 
-// ─── VIDEO MOTION STYLES (5 types — all 30fps, fixed durations) ─
-interface VideoStyle {
+// ─── MOTION STYLES (360 booth style transitions) ────────────────
+interface MotionStyleDef {
   id: string
   name: string
   description: string
-  fixedDuration: number | null  // null = user selects, number = fixed
-  drawFilter: string            // extra canvas filter for this style
-  reverse: boolean              // append reversed frames (boomerang)
 }
 
-const VIDEO_STYLES: VideoStyle[] = [
-  { id: 'normal', name: 'Normal', description: 'Standard recording', fixedDuration: null, drawFilter: '', reverse: false },
-  { id: 'cinematic', name: 'Cinematic', description: 'Movie color grade', fixedDuration: null, drawFilter: 'contrast(1.15) saturate(1.1)', reverse: false },
-  { id: 'boomerang', name: 'Boomerang', description: 'Fixed 10s → 20s (forward+reverse)', fixedDuration: 10, drawFilter: '', reverse: true },
-  { id: 'vintage-film', name: 'Vintage Film', description: 'Fixed 15s, retro warm tone', fixedDuration: 15, drawFilter: 'sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)', reverse: false },
-  { id: 'neon-pulse', name: 'Neon Pulse', description: 'Fixed 15s, purple neon glow', fixedDuration: 15, drawFilter: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)', reverse: false }
+const MOTION_STYLES: MotionStyleDef[] = [
+  { id: 'normal', name: 'Normal', description: 'No motion effect' },
+  { id: 'boomerang', name: 'Boomerang', description: 'Forward then reverse' },
+  { id: 'reverse', name: 'Reverse', description: 'Play backward' },
+  { id: 'fast-forward', name: 'Fast Forward', description: '2x speed' },
+  { id: 'zoom-pulse', name: 'Zoom Pulse', description: 'Gradual zoom in/out' }
 ]
 
 const VIDEO_DURATIONS = [10, 15, 30, 60]
@@ -91,7 +92,7 @@ export function BoothPage() {
   const [mode, setMode] = useState<BoothMode>('photo')
   const [activeFilterId, setActiveFilterId] = useState('original')
   const [videoDuration, setVideoDuration] = useState(15)
-  const [videoStyle, setVideoStyle] = useState('normal')
+  const [motionStyle, setMotionStyle] = useState('normal')
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
@@ -107,11 +108,11 @@ export function BoothPage() {
 
   // Refs to avoid stale closures in async recording callbacks
   const videoDurationRef = useRef(videoDuration)
-  const videoStyleRef = useRef(videoStyle)
+  const motionStyleRef = useRef(motionStyle)
   const activeFilterRef = useRef(activeFilter)
   const mirrorRef = useRef(mirror)
   videoDurationRef.current = videoDuration
-  videoStyleRef.current = videoStyle
+  motionStyleRef.current = motionStyle
   activeFilterRef.current = activeFilter
   mirrorRef.current = mirror
 
@@ -266,12 +267,10 @@ export function BoothPage() {
     if (!video || !streamRef.current) return
 
     const duration = videoDurationRef.current
-    const styleId = videoStyleRef.current
+    const styleId = motionStyleRef.current
     const filter = activeFilterRef.current
     const mir = mirrorRef.current
-    const styleDef = VIDEO_STYLES.find(s => s.id === styleId) || VIDEO_STYLES[0]
-    // Use fixed duration if style has one, otherwise user-selected
-    const actualDuration = styleDef.fixedDuration || duration
+    const actualDuration = duration  // all styles use user-selected duration
 
     console.log('[Booth] startRecording — duration:', actualDuration, 'style:', styleId, 'filter:', filter.id)
 
@@ -287,8 +286,8 @@ export function BoothPage() {
 
       // Combine camera filter + motion style draw filter
       const camFilter = filter.canvasFilter !== 'none' ? filter.canvasFilter : ''
-      const styleFilter = styleDef.drawFilter || ''
-      const combinedFilter = (camFilter + ' ' + styleFilter).trim()
+      // Motion style is applied in post-processing, not during recording
+      const combinedFilter = camFilter
 
       // Draw loop — always at display refresh rate, captureStream handles 30fps
       const drawFrame = () => {
@@ -331,19 +330,26 @@ export function BoothPage() {
           rafRecordRef.current = null
         }
 
-        // Boomerang: append reversed chunks
-        let finalBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
-        if (styleDef.reverse && recordedChunksRef.current.length > 1) {
+        const rawBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+        console.log('[Booth] Raw video:', rawBlob.size, 'bytes, motion:', styleId)
+
+        // Apply motion effect via post-processing
+        let finalBlob = rawBlob
+        if (styleId !== 'normal') {
           try {
-            const reversed = [...recordedChunksRef.current].reverse()
-            finalBlob = new Blob([...recordedChunksRef.current, ...reversed], { type: 'video/webm' })
-            console.log('[Booth] Boomerang: appended reversed frames')
-          } catch (e) {
-            console.warn('[Booth] Boomerang reverse failed')
+            const processed = await applyMotionEffect(rawBlob, {
+              motionStyle: styleId,
+              filter: filter.canvasFilter,
+              mirror: mir
+            })
+            if (processed) {
+              finalBlob = processed
+              console.log('[Booth] Motion effect applied:', styleId, finalBlob.size, 'bytes')
+            }
+          } catch (e: any) {
+            console.error('[Booth] Motion effect failed:', e)
           }
         }
-
-        console.log('[Booth] Video saved:', finalBlob.size, 'bytes, style:', styleId, 'duration:', actualDuration)
 
         const reader = new FileReader()
         reader.onloadend = async () => {
@@ -377,7 +383,7 @@ export function BoothPage() {
       setIsRecording(true)
       setRecordingTime(0)
       // Set videoDuration to actualDuration so countdown badge shows correct number
-      setVideoDuration(actualDuration)
+      // Duration stays as user-selected
 
       const startTime = Date.now()
       console.log('[Booth] Recording started, target:', actualDuration, 's')
@@ -661,37 +667,28 @@ export function BoothPage() {
               {mode === 'video' && (
                 <div className="mb-4 flex flex-col items-center gap-2">
                   {/* Duration selector — only for styles without fixed duration */}
-                  {(() => {
-                    const sel = VIDEO_STYLES.find(s => s.id === videoStyle)
-                    return !sel?.fixedDuration ? (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-silver-500 uppercase tracking-wide">Duration:</span>
-                        <select
-                          className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
-                          value={videoDuration}
-                          onChange={(e) => setVideoDuration(parseInt(e.target.value))}
-                        >
-                          {VIDEO_DURATIONS.map(d => (
-                            <option key={d} value={d} className="bg-surface-elevated">{d}s</option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gold-300">Fixed: {sel.fixedDuration}s</span>
-                      </div>
-                    )
-                  })()}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-silver-500 uppercase tracking-wide">Duration:</span>
+                    <select
+                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
+                      value={videoDuration}
+                      onChange={(e) => setVideoDuration(parseInt(e.target.value))}
+                    >
+                      {VIDEO_DURATIONS.map(d => (
+                        <option key={d} value={d} className="bg-surface-elevated">{d}s</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-silver-500 uppercase tracking-wide">Style:</span>
                     <select
                       className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
-                      value={videoStyle}
-                      onChange={(e) => setVideoStyle(e.target.value)}
+                      value={motionStyle}
+                      onChange={(e) => setMotionStyle(e.target.value)}
                     >
-                      {VIDEO_STYLES.map(s => (
+                      {MOTION_STYLES.map(s => (
                         <option key={s.id} value={s.id} className="bg-surface-elevated">
-                          {s.name}{s.fixedDuration ? ` (${s.fixedDuration}s)` : ''} — {s.description}
+                          {s.name} — {s.description}
                         </option>
                       ))}
                     </select>
