@@ -541,17 +541,24 @@ export function BoothPage() {
     <div className="h-full w-full relative bg-black overflow-hidden">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Camera video — ALWAYS rendered. Filter applied via CSS. Aspect ratio container. */}
-      <div className={`absolute inset-0 flex items-center justify-center bg-black ${aspectRatio === '9:16' ? 'portrait-container' : aspectRatio === '1:1' ? 'square-container' : aspectRatio === '4:3' ? 'ratio43-container' : 'landscape-container'}`}>
+      {/* Camera video — ALWAYS rendered. Filter applied via CSS. Aspect ratio via inline style. */}
+      <div className="absolute inset-0 flex items-center justify-center bg-black overflow-hidden">
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className={`w-full h-full object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
-          phase === 'preview' || phase === 'countdown' || phase === 'flash' ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}
-        style={{ filter: activeFilter.css }}
+          className={`object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
+            phase === 'preview' || phase === 'countdown' || phase === 'flash' ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          style={{
+            filter: activeFilter.css,
+            aspectRatio: aspectRatio.replace(':', ' / '),
+            maxHeight: '100vh',
+            maxWidth: '100%',
+            width: aspectRatio === '16:9' ? '100%' : 'auto',
+            height: aspectRatio === '16:9' ? '100%' : '100vh'
+          }}
         />
       </div>
 
