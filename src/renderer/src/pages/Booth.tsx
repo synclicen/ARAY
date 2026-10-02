@@ -21,7 +21,7 @@ import { useEventStore } from '../stores/events'
 import { useMediaStore } from '../stores/media'
 import { useSettingsStore } from '../stores/settings'
 import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
-import { applyMotionEffect } from '../services/motion-effects'
+import { VIDEO_TEMPLATES, drawMotionFrame, type VideoTemplate } from '../services/video-templates'
 import type { ArayMedia } from '@shared/types'
 
 type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
@@ -47,22 +47,7 @@ const FILTERS: CameraFilter[] = [
   { id: 'neon-pulse', name: 'Neon Pulse', css: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)', canvasFilter: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)' }
 ]
 
-// ─── MOTION STYLES (360 booth style transitions) ────────────────
-interface MotionStyleDef {
-  id: string
-  name: string
-  description: string
-}
-
-const MOTION_STYLES: MotionStyleDef[] = [
-  { id: 'normal', name: 'Normal', description: 'No motion effect' },
-  { id: 'boomerang', name: 'Boomerang', description: 'Forward then reverse' },
-  { id: 'reverse', name: 'Reverse', description: 'Play backward' },
-  { id: 'fast-forward', name: 'Fast Forward', description: '2x speed' },
-  { id: 'zoom-pulse', name: 'Zoom Pulse', description: 'Gradual zoom in/out' }
-]
-
-const VIDEO_DURATIONS = [10, 15, 30, 60]
+// Video templates defined in services/video-templates.ts
 
 interface CapturedShot {
   shotNumber: number
@@ -91,8 +76,8 @@ export function BoothPage() {
   const [mirror, setMirror] = useState(true)
   const [mode, setMode] = useState<BoothMode>('photo')
   const [activeFilterId, setActiveFilterId] = useState('original')
-  const [videoDuration, setVideoDuration] = useState(15)
-  const [motionStyle, setMotionStyle] = useState('normal')
+  const [videoDuration, setVideoDuration] = useState(15)  // set by template in startRecording
+  const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('classic-15')
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
@@ -105,15 +90,12 @@ export function BoothPage() {
   const totalShots = settings?.booth_shot_count ?? 4
   const countdownSeconds = settings?.booth_countdown_seconds ?? 3
   const activeFilter = FILTERS.find(f => f.id === activeFilterId) || FILTERS[0]
+  const activeVideoTemplate = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
 
   // Refs to avoid stale closures in async recording callbacks
-  const videoDurationRef = useRef(videoDuration)
-  const motionStyleRef = useRef(motionStyle)
-  const activeFilterRef = useRef(activeFilter)
+      const activeFilterRef = useRef(activeFilter)
   const mirrorRef = useRef(mirror)
-  videoDurationRef.current = videoDuration
-  motionStyleRef.current = motionStyle
-  activeFilterRef.current = activeFilter
+      activeFilterRef.current = activeFilter
   mirrorRef.current = mirror
 
   useEffect(() => {
@@ -266,13 +248,18 @@ export function BoothPage() {
     const video = videoRef.current
     if (!video || !streamRef.current) return
 
-    const duration = videoDurationRef.current
-    const styleId = motionStyleRef.current
+    // Get selected video template
+    const template = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
+    const duration = template.duration
     const filter = activeFilterRef.current
     const mir = mirrorRef.current
-    const actualDuration = duration  // all styles use user-selected duration
 
-    console.log('[Booth] startRecording — duration:', actualDuration, 'style:', styleId, 'filter:', filter.id)
+    // Combine camera filter + template filter
+    const camFilter = filter.canvasFilter !== 'none' ? filter.canvasFilter : ''
+    const templateFilter = template.filterCss || ''
+    const combinedFilter = (camFilter + ' ' + templateFilter).trim()
+
+    console.log('[Booth] startRecording — template:', template.id, 'duration:', duration, 'motion:', template.motionType, 'filter:', filter.id)
 
     try {
       const canvas = document.createElement('canvas')
@@ -284,31 +271,19 @@ export function BoothPage() {
       const ctx = canvas.getContext('2d')
       if (!ctx) throw new Error('Canvas context failed')
 
-      // Combine camera filter + motion style draw filter
-      const camFilter = filter.canvasFilter !== 'none' ? filter.canvasFilter : ''
-      // Motion style is applied in post-processing, not during recording
-      const combinedFilter = camFilter
+      const startTime = Date.now()
 
-      // Draw loop — always at display refresh rate, captureStream handles 30fps
+      // Draw loop with motion effect — ALL effects applied HERE, in real-time
       const drawFrame = () => {
         if (video.videoWidth > 0) {
-          if (combinedFilter) ctx.filter = combinedFilter
-          if (mir) {
-            ctx.save()
-            ctx.translate(w, 0)
-            ctx.scale(-1, 1)
-            ctx.drawImage(video, 0, 0, w, h)
-            ctx.restore()
-          } else {
-            ctx.drawImage(video, 0, 0, w, h)
-          }
-          ctx.filter = 'none'
+          const elapsed = (Date.now() - startTime) / 1000
+          drawMotionFrame(ctx, video, w, h, template.motionType, elapsed, duration, mir, combinedFilter)
         }
         rafRecordRef.current = requestAnimationFrame(drawFrame)
       }
       drawFrame()
 
-      // ALWAYS captureStream(30) — 30fps, reliable timestamps, no truncation
+      // Capture stream from canvas — 30fps, reliable
       const canvasStream = canvas.captureStream(30)
 
       let mimeType = 'video/webm;codecs=vp9'
@@ -331,43 +306,20 @@ export function BoothPage() {
         }
 
         const rawBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
-        console.log('[Booth] Raw video:', rawBlob.size, 'bytes, motion:', styleId)
+        console.log('[Booth] Video recorded:', rawBlob.size, 'bytes, template:', template.id)
 
         if (rawBlob.size === 0) {
-          console.error('[Booth] Raw video blob is EMPTY — no data recorded')
+          console.error('[Booth] Video blob is EMPTY')
           setError('Video recording failed — no data captured')
           setPhase('error')
           return
         }
 
-        // Apply motion effect via post-processing
-        let finalBlob = rawBlob
-        if (styleId !== 'normal') {
-          try {
-            console.log('[Booth] Applying motion effect:', styleId)
-            const processed = await applyMotionEffect(rawBlob, {
-              motionStyle: styleId,
-              filter: filter.canvasFilter,
-              mirror: mir
-            })
-            if (processed && processed.size > 0) {
-              finalBlob = processed
-              console.log('[Booth] Motion effect applied:', styleId, finalBlob.size, 'bytes')
-            } else {
-              console.warn('[Booth] Motion effect returned null, using raw video')
-            }
-          } catch (e: any) {
-            console.error('[Booth] Motion effect failed:', e)
-            // Fall back to raw video
-          }
-        }
-
-        console.log('[Booth] Converting to base64, size:', finalBlob.size)
-        // Use ArrayBuffer instead of FileReader for reliability with large blobs
+        // Convert to base64 and save — NO post-processing needed
+        console.log('[Booth] Converting to base64...')
         try {
-          const arrayBuffer = await finalBlob.arrayBuffer()
+          const arrayBuffer = await rawBlob.arrayBuffer()
           const bytes = new Uint8Array(arrayBuffer)
-          // Convert to base64 in chunks to avoid call stack overflow
           let binary = ''
           const chunkSize = 0x8000
           for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -385,74 +337,67 @@ export function BoothPage() {
                 ;(window as any).__aray_current_session_id = sessionId
               }
             }
-            console.log('[Booth] Saving video to disk...')
+            console.log('[Booth] Saving video...')
             const saveResult = await window.aray.media.saveVideo({
               event_id: activeEvent.id,
               session_id: sessionId,
               video_base64: base64,
               mime_type: 'video/webm',
-              video_style: styleId,
+              video_style: template.id,
               filter: filter.id
             })
-            console.log('[Booth] Save result:', saveResult.success, saveResult)
+            console.log('[Booth] Save result:', saveResult.success)
             if (saveResult.success) {
               addMedia(saveResult.data as ArayMedia)
               console.log('[Booth] Video saved successfully!')
             } else {
               console.error('[Booth] Save failed:', (saveResult as any).error)
-              setError('Failed to save video: ' + ((saveResult as any).error?.message || 'Unknown'))
+              setError('Failed to save video')
             }
           }
         } catch (e: any) {
-          console.error('[Booth] Video processing error:', e)
-          setError('Video processing failed: ' + e.message)
+          console.error('[Booth] Video save error:', e)
+          setError('Video save failed: ' + e.message)
           setPhase('error')
         }
       }
 
-      // Start recording with 100ms timeslice for reliable data collection
+      // Start recording with 100ms timeslice
       recorder.start(100)
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
-      // Set videoDuration to actualDuration so countdown badge shows correct number
-      // Duration stays as user-selected
+      setVideoDuration(duration)
 
-      const startTime = Date.now()
-      console.log('[Booth] Recording started, target:', actualDuration, 's')
+      const recStartTime = Date.now()
+      console.log('[Booth] Recording started, target:', duration, 's')
 
-      // Timer for display countdown
+      // Display timer
       recordingTimerRef.current = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - startTime) / 1000)
+        const elapsed = Math.floor((Date.now() - recStartTime) / 1000)
         setRecordingTime(elapsed)
       }, 500)
 
-      // Exact auto-stop via setTimeout — directly call stop(), no delay
+      // Exact auto-stop
       recordTimeoutRef.current = setTimeout(() => {
-        const actual = Math.floor((Date.now() - startTime) / 1000)
-        console.log('[Booth] Auto-stop at', actual, 's (target:', actualDuration, 's)')
+        const actual = Math.floor((Date.now() - recStartTime) / 1000)
+        console.log('[Booth] Auto-stop at', actual, 's')
 
-        if (rafRecordRef.current) {
-          cancelAnimationFrame(rafRecordRef.current)
-          rafRecordRef.current = null
-        }
-        if (recordingTimerRef.current) {
-          clearInterval(recordingTimerRef.current)
-          recordingTimerRef.current = null
-        }
+        if (rafRecordRef.current) { cancelAnimationFrame(rafRecordRef.current); rafRecordRef.current = null }
+        if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null }
         if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
           mediaRecorderRef.current.stop()
         }
         setIsRecording(false)
         setPhase('result')
-      }, actualDuration * 1000)
+      }, duration * 1000)
 
     } catch (e: any) {
       console.error('[Booth] Recording start failed:', e)
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia])
+  }, [activeEvent, addMedia, selectedVideoTemplate])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
@@ -696,32 +641,19 @@ export function BoothPage() {
                 </div>
               )}
 
-              {/* Video settings (video mode only) */}
+              {/* Video template selector (video mode only) */}
               {mode === 'video' && (
                 <div className="mb-4 flex flex-col items-center gap-2">
-                  {/* Duration selector — only for styles without fixed duration */}
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-silver-500 uppercase tracking-wide">Duration:</span>
+                    <span className="text-xs text-silver-500 uppercase tracking-wide">Template:</span>
                     <select
-                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
-                      value={videoDuration}
-                      onChange={(e) => setVideoDuration(parseInt(e.target.value))}
+                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer min-w-[200px]"
+                      value={selectedVideoTemplate}
+                      onChange={(e) => setSelectedVideoTemplate(e.target.value)}
                     >
-                      {VIDEO_DURATIONS.map(d => (
-                        <option key={d} value={d} className="bg-surface-elevated">{d}s</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-silver-500 uppercase tracking-wide">Style:</span>
-                    <select
-                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
-                      value={motionStyle}
-                      onChange={(e) => setMotionStyle(e.target.value)}
-                    >
-                      {MOTION_STYLES.map(s => (
-                        <option key={s.id} value={s.id} className="bg-surface-elevated">
-                          {s.name} — {s.description}
+                      {VIDEO_TEMPLATES.map(t => (
+                        <option key={t.id} value={t.id} className="bg-surface-elevated">
+                          {t.name} ({t.duration}s) — {t.description}
                         </option>
                       ))}
                     </select>
