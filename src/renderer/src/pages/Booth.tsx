@@ -645,11 +645,10 @@ export function BoothPage() {
             />
             <div className="relative z-10 text-center">
               <ArayLogo size="xl" animated className="mb-8" />
-              <h1 className="text-5xl font-bold mb-3 aray-gradient-text">ARE YOU READY?</h1>
-              <p className="text-silver-300 text-xl italic mb-6">Let's make a memory.</p>
+              <p className="text-silver-300 text-xl italic mb-8">Let's make a memory.</p>
 
               {/* Mode selector: Photo / Video */}
-              <div className="mb-6 flex items-center justify-center gap-2">
+              <div className="mb-8 flex items-center justify-center gap-2">
                 <button
                   onClick={() => setMode('photo')}
                   className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
@@ -672,38 +671,11 @@ export function BoothPage() {
                 </button>
               </div>
 
-              {/* Settings summary — compact display only, no selectors */}
-              <div className="mb-6 flex items-center justify-center gap-3 text-xs text-silver-500">
-                <span>{aspectRatio}</span>
-                <span>·</span>
-                <span>{activeFilter.name}</span>
-                {mode === 'video' && (
-                  <>
-                    <span>·</span>
-                    <span>{activeVideoTemplate.name}</span>
-                  </>
-                )}
-                {mode === 'photo' && (
-                  <>
-                    <span>·</span>
-                    <span>{totalShots} shots</span>
-                  </>
-                )}
-                <span>·</span>
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="text-purple-haze-300 hover:text-purple-haze-100 underline"
-                >
-                  Edit
-                </button>
-              </div>
-
               <ArayButton
                 variant="gold"
                 size="xl"
                 icon={mode === 'video' ? <Video className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
                 onClick={async () => {
-                  // Camera already started on greeting — just transition to preview
                   if (!streamRef.current) {
                     const ok = await startCamera()
                     if (!ok) return
@@ -718,9 +690,6 @@ export function BoothPage() {
               >
                 LET'S YAP!
               </ArayButton>
-              <p className="text-silver-500 text-xs mt-6">
-                {totalShots} shots · {countdownSeconds}s countdown each
-              </p>
             </div>
           </motion.div>
         )}
