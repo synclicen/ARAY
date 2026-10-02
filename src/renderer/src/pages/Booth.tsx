@@ -929,8 +929,11 @@ export function BoothPage() {
                 variant="gold"
                 icon={<Sparkles className="w-4 h-4" />}
                 onClick={() => {
-                  stopCamera()
-                  navigate('/gallery')
+                  setCapturedShots([])
+                  setCurrentShot(1)
+                  setCompositeUrl(null)
+                  ;(window as any).__aray_current_session_id = undefined
+                  setPhase('greeting')
                 }}
               >
                 Done
