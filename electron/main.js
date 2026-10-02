@@ -650,6 +650,19 @@ import_electron.app.whenReady().then(() => {
     registerIPC();
     createWindow();
     log("Window created successfully");
+    import_electron.globalShortcut.register("Ctrl+Shift+Alt+Q", () => {
+      log("Kiosk exit shortcut pressed");
+      const db = loadDB();
+      if (db.settings.kiosk_mode) {
+        db.settings.kiosk_mode = false;
+        saveDB(db);
+        log("Kiosk mode disabled via shortcut");
+        if (mainWindow) {
+          mainWindow.reload();
+        }
+      }
+    });
+    log("Kiosk exit shortcut registered: Ctrl+Shift+Alt+Q");
   } catch (err2) {
     log(`STARTUP ERROR: ${err2.message}`);
     log(`Stack: ${err2.stack}`);

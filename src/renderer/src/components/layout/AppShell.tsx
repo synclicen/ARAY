@@ -37,8 +37,25 @@ export function AppShell({ children }: AppShellProps) {
   const isKiosk = settings?.kiosk_mode ?? false
 
   if (isKiosk) {
-    // In kiosk mode, hide navigation entirely (booth-only)
-    return <div className="h-full w-full">{children}</div>
+    // In kiosk mode, hide navigation but show exit button
+    return (
+      <div className="h-full w-full relative">
+        {children}
+        {/* Kiosk exit button — tiny, top-right corner */}
+        <button
+          onClick={async () => {
+            await window.aray.settings.update({ kiosk_mode: false })
+            window.location.reload()
+          }}
+          className="absolute top-2 right-2 z-50 w-6 h-6 rounded-full bg-silver-900/40 hover:bg-red-500/40 border border-silver-700/30 hover:border-red-500/50 flex items-center justify-center transition-all group"
+          title="Exit Kiosk Mode"
+        >
+          <svg className="w-3 h-3 text-silver-600 group-hover:text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    )
   }
 
   return (

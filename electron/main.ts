@@ -3,7 +3,7 @@
  * Photo + Video + Template composite. Pure JS, no native modules.
  */
 
-import { app, BrowserWindow, shell, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, dialog, ipcMain, globalShortcut } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as crypto from 'crypto'
@@ -535,6 +535,22 @@ app.whenReady().then(() => {
     ensureStoragePath(); log('Storage path ensured')
     registerIPC()
     createWindow(); log('Window created successfully')
+
+    // Register kiosk exit shortcut: Ctrl+Shift+Alt+Q
+    globalShortcut.register('Ctrl+Shift+Alt+Q', () => {
+      log('Kiosk exit shortcut pressed')
+      const db = loadDB()
+      if (db.settings.kiosk_mode) {
+        db.settings.kiosk_mode = false
+        saveDB(db)
+        log('Kiosk mode disabled via shortcut')
+        // Reload the window to apply
+        if (mainWindow) {
+          mainWindow.reload()
+        }
+      }
+    })
+    log('Kiosk exit shortcut registered: Ctrl+Shift+Alt+Q')
   } catch (err: any) {
     log(`STARTUP ERROR: ${err.message}`); log(`Stack: ${err.stack}`)
     dialog.showErrorBox('ARAY — Error', `${err.message}\n\nLog: ${getLogPath()}`)
