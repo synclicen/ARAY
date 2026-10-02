@@ -22,6 +22,16 @@ import { useMediaStore } from '../stores/media'
 import { useSettingsStore } from '../stores/settings'
 import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
 import { VIDEO_TEMPLATES, drawMotionFrame, type VideoTemplate } from '../services/video-templates'
+
+// Aspect ratio dimensions helper
+const aspectDims: Record<string, { w: number; h: number }> = {
+  '16:9': { w: 1280, h: 720 },
+  '9:16': { w: 720, h: 1280 },
+  '1:1': { w: 1080, h: 1080 },
+  '4:3': { w: 1024, h: 768 }
+}
+
+
 import type { ArayMedia } from '@shared/types'
 
 type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
@@ -76,6 +86,7 @@ export function BoothPage() {
   const [mirror, setMirror] = useState(true)
   const [mode, setMode] = useState<BoothMode>('photo')
   const [activeFilterId, setActiveFilterId] = useState('original')
+  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
   const [videoDuration, setVideoDuration] = useState(15)  // set by template in startRecording
   const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('classic-15')
   const [isRecording, setIsRecording] = useState(false)
@@ -136,8 +147,9 @@ export function BoothPage() {
     if (!video || !canvas) return null
     if (video.videoWidth === 0 || video.videoHeight === 0) return null
 
-    const w = video.videoWidth
-    const h = video.videoHeight
+    const dims = aspectDims[aspectRatio] || aspectDims['9:16']
+    const w = dims.w
+    const h = dims.h
     canvas.width = w
     canvas.height = h
     const ctx = canvas.getContext('2d')
@@ -263,8 +275,9 @@ export function BoothPage() {
 
     try {
       const canvas = document.createElement('canvas')
-      const w = video.videoWidth || 1280
-      const h = video.videoHeight || 720
+      const dims = aspectDims[aspectRatio] || aspectDims['9:16']
+      const w = dims.w
+      const h = dims.h
       canvas.width = w
       canvas.height = h
       canvasRecordRef.current = canvas
@@ -528,17 +541,19 @@ export function BoothPage() {
     <div className="h-full w-full relative bg-black overflow-hidden">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Camera video — ALWAYS rendered. Filter applied via CSS. */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className={`absolute inset-0 w-full h-full object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
+      {/* Camera video — ALWAYS rendered. Filter applied via CSS. Aspect ratio container. */}
+      <div className={`absolute inset-0 flex items-center justify-center bg-black ${aspectRatio === '9:16' ? 'portrait-container' : aspectRatio === '1:1' ? 'square-container' : aspectRatio === '4:3' ? 'ratio43-container' : 'landscape-container'}`}>
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`w-full h-full object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
           phase === 'preview' || phase === 'countdown' || phase === 'flash' ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         style={{ filter: activeFilter.css }}
-      />
+        />
+      </div>
 
       {/* Flash overlay */}
       <AnimatePresence>
@@ -615,6 +630,24 @@ export function BoothPage() {
                 >
                   <Video className="w-4 h-4" /> Video
                 </button>
+              </div>
+
+              {/* Aspect ratio selector */}
+              <div className="mb-4 flex items-center justify-center gap-2">
+                <span className="text-xs text-silver-500 uppercase tracking-wide">Ratio:</span>
+                {(['9:16', '1:1', '4:3', '16:9'] as const).map(r => (
+                  <button
+                    key={r}
+                    onClick={() => setAspectRatio(r)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
+                      aspectRatio === r
+                        ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+                        : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
               </div>
 
               {/* Camera filter selector */}
