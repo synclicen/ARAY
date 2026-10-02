@@ -123,6 +123,70 @@ export function SettingsPage() {
           >
             <Toggle value={settings.auto_print} onChange={(v) => updateSettings({ auto_print: v })} />
           </SettingRow>
+
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Default camera effect"
+            hint="Cinematic filter applied to photos and videos"
+          >
+            <select
+              className="aray-input max-w-[200px]"
+              value={settings.camera_effect || 'original'}
+              onChange={(e) => updateSettings({ camera_effect: e.target.value })}
+            >
+              <option value="original">Original</option>
+              <option value="purple-haze">Purple Haze</option>
+              <option value="vintage">Vintage</option>
+              <option value="noir">Noir B&W</option>
+              <option value="cool-blue">Cool Blue</option>
+              <option value="warm-sunset">Warm Sunset</option>
+              <option value="cinematic">Cinematic</option>
+              <option value="vintage-film">Vintage Film</option>
+              <option value="neon-pulse">Neon Pulse</option>
+            </select>
+          </SettingRow>
+
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Aspect ratio"
+            hint="Output dimensions for photos and videos"
+          >
+            <select
+              className="aray-input max-w-[120px]"
+              value={settings.aspect_ratio || '9:16'}
+              onChange={(e) => updateSettings({ aspect_ratio: e.target.value })}
+            >
+              <option value="9:16">9:16 (Portrait)</option>
+              <option value="1:1">1:1 (Square)</option>
+              <option value="4:3">4:3 (Classic)</option>
+              <option value="16:9">16:9 (Landscape)</option>
+            </select>
+          </SettingRow>
+
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Video template"
+            hint="Motion effect for video booth recordings"
+          >
+            <select
+              className="aray-input max-w-[300px]"
+              value={settings.video_template || 'plain'}
+              onChange={(e) => updateSettings({ video_template: e.target.value })}
+            >
+              <option value="plain">Plain — No motion (15s)</option>
+              <option value="slowmo">Slow Motion — Dreamy slow zoom (15s)</option>
+              <option value="speed-ram">Speed Ramp — Slow→fast→slow (15s)</option>
+              <option value="boomerang">Boomerang — Bouncing zoom (10s)</option>
+              <option value="shake">Shake — 8mm film shake (15s)</option>
+              <option value="slowmo-shake">Slow-mo + Shake (15s)</option>
+              <option value="boomerang-shake">Boomerang + Shake (10s)</option>
+              <option value="speedram-shake">Speed Ramp + Shake (15s)</option>
+              <option value="slowmo-boomerang">Slow-mo + Boomerang (15s)</option>
+              <option value="pulse">Pulse Zoom — Rhythmic (15s)</option>
+              <option value="zoom-in">Zoom In — Portrait focus (15s)</option>
+              <option value="sway">Sway — Gentle (15s)</option>
+            </select>
+          </SettingRow>
         </div>
       </ArayCard>
 

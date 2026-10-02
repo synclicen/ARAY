@@ -98,6 +98,9 @@ export interface AraySettings {
   booth_mode: 'photo' | 'video'
   backup_folder: string | null
   auto_backup: boolean
+  camera_effect: string
+  aspect_ratio: string
+  video_template: string
 }
 
 export interface StorageInfo {

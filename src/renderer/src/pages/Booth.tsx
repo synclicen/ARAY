@@ -87,8 +87,8 @@ export function BoothPage() {
   const [mode, setMode] = useState<BoothMode>('photo')
   const [activeFilterId, setActiveFilterId] = useState('original')
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
-  const [videoDuration, setVideoDuration] = useState(15)  // set by template in startRecording
-  const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('classic-15')
+  const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('plain')
+  const [videoDuration, setVideoDuration] = useState(15)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
@@ -111,7 +111,13 @@ export function BoothPage() {
 
   useEffect(() => {
     if (events.length === 0) loadEvents()
-  }, [events.length, loadEvents])
+    // Load booth settings from Settings page
+    if (settings) {
+      if (settings.camera_effect) setActiveFilterId(settings.camera_effect)
+      if (settings.aspect_ratio) setAspectRatio(settings.aspect_ratio as any)
+      if (settings.video_template) setSelectedVideoTemplate(settings.video_template)
+    }
+  }, [events.length, loadEvents, settings])
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -657,67 +663,31 @@ export function BoothPage() {
                 </button>
               </div>
 
-              {/* Aspect ratio selector */}
-              <div className="mb-4 flex items-center justify-center gap-2">
-                <span className="text-xs text-silver-500 uppercase tracking-wide">Ratio:</span>
-                {(['9:16', '1:1', '4:3', '16:9'] as const).map(r => (
-                  <button
-                    key={r}
-                    onClick={() => setAspectRatio(r)}
-                    className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
-                      aspectRatio === r
-                        ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
-                        : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-
-              {/* Camera filter selector */}
-              <div className="mb-4 flex items-center justify-center gap-2">
-                <span className="text-xs text-silver-500 uppercase tracking-wide">Effect:</span>
-                <select
-                  className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer"
-                  value={activeFilterId}
-                  onChange={(e) => setActiveFilterId(e.target.value)}
+              {/* Settings summary — compact display only, no selectors */}
+              <div className="mb-6 flex items-center justify-center gap-3 text-xs text-silver-500">
+                <span>{aspectRatio}</span>
+                <span>·</span>
+                <span>{activeFilter.name}</span>
+                {mode === 'video' && (
+                  <>
+                    <span>·</span>
+                    <span>{activeVideoTemplate.name}</span>
+                  </>
+                )}
+                {mode === 'photo' && (
+                  <>
+                    <span>·</span>
+                    <span>{totalShots} shots</span>
+                  </>
+                )}
+                <span>·</span>
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="text-purple-haze-300 hover:text-purple-haze-100 underline"
                 >
-                  {FILTERS.map(f => (
-                    <option key={f.id} value={f.id} className="bg-surface-elevated">{f.name}</option>
-                  ))}
-                </select>
+                  Edit
+                </button>
               </div>
-
-              {/* Template indicator (photo mode only) */}
-              {mode === 'photo' && (
-                <div className="mb-4 flex items-center justify-center gap-2 text-xs text-silver-500">
-                  <LayoutTemplate className="w-3.5 h-3.5" />
-                  <span>Template: {TEMPLATES.find(t => t.id === (settings?.selected_template_id || 'classic-strip-4'))?.name || getCustomTemplates().find(t => t.id === settings?.selected_template_id)?.name || 'None'}</span>
-                  <span>·</span>
-                  <span>{totalShots} shots</span>
-                </div>
-              )}
-
-              {/* Video template selector (video mode only) */}
-              {mode === 'video' && (
-                <div className="mb-4 flex flex-col items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-silver-500 uppercase tracking-wide">Template:</span>
-                    <select
-                      className="bg-surface-elevated/60 border border-silver-300/20 rounded-lg px-3 py-1.5 text-xs text-silver-100 outline-none cursor-pointer min-w-[200px]"
-                      value={selectedVideoTemplate}
-                      onChange={(e) => setSelectedVideoTemplate(e.target.value)}
-                    >
-                      {VIDEO_TEMPLATES.map(t => (
-                        <option key={t.id} value={t.id} className="bg-surface-elevated">
-                          {t.name} ({t.duration}s) — {t.description}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
 
               <ArayButton
                 variant="gold"
