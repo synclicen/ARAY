@@ -542,6 +542,13 @@ export function BoothPage() {
     }
   }, [stopCamera])
 
+  // Auto-start camera on greeting screen for live background
+  useEffect(() => {
+    if (phase === 'greeting' && !streamRef.current) {
+      startCamera()
+    }
+  }, [phase, startCamera])
+
   // No active event
   if (!activeEvent) {
     return (
@@ -573,7 +580,7 @@ export function BoothPage() {
           playsInline
           muted
           className={`object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
-            phase === 'preview' || phase === 'countdown' || phase === 'flash' ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            phase === 'preview' || phase === 'countdown' || phase === 'flash' || phase === 'greeting' ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
           style={{
             filter: activeFilter.css,
@@ -625,10 +632,12 @@ export function BoothPage() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
-            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900"
+            className="absolute inset-0 z-10 flex flex-col items-center justify-center"
           >
+            {/* Dark overlay over live camera background */}
+            <div className="absolute inset-0 bg-gradient-to-b from-purple-haze-950/80 via-surface-base/60 to-purple-haze-950/80" />
             <div
-              className="absolute inset-0 opacity-30 pointer-events-none"
+              className="absolute inset-0 opacity-20 pointer-events-none"
               style={{
                 backgroundImage:
                   'radial-gradient(circle at 30% 30%, rgba(123,97,168,0.4) 0%, transparent 50%), radial-gradient(circle at 70% 70%, rgba(212,175,55,0.2) 0%, transparent 45%)'
@@ -694,14 +703,16 @@ export function BoothPage() {
                 size="xl"
                 icon={mode === 'video' ? <Video className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
                 onClick={async () => {
-                  const ok = await startCamera()
-                  if (ok) {
-                    setCapturedShots([])
-                    setCurrentShot(1)
-                    setCompositeUrl(null)
-                    ;(window as any).__aray_current_session_id = undefined
-                    setPhase('preview')
+                  // Camera already started on greeting — just transition to preview
+                  if (!streamRef.current) {
+                    const ok = await startCamera()
+                    if (!ok) return
                   }
+                  setCapturedShots([])
+                  setCurrentShot(1)
+                  setCompositeUrl(null)
+                  ;(window as any).__aray_current_session_id = undefined
+                  setPhase('preview')
                 }}
                 className="text-lg px-12 py-4"
               >
