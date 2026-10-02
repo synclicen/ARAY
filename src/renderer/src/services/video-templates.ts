@@ -1,179 +1,152 @@
 /**
- * ARAY Video Templates — 360 booth style + trending effects
+ * ARAY Video Templates — motion combination templates
  * 
- * ALL effects applied DURING recording via canvas draw.
- * NO post-processing. Video saved immediately after recording stops.
- *
- * Each template combines: duration + filter + motion effect
- * Output is ready for social media (reels/shorts/tiktok).
+ * ONLY motion effects. NO color filters (those are in the Effect dropdown).
+ * Each template combines multiple motion types into one cohesive video.
+ * All effects applied DURING recording via canvas draw — real-time.
  */
 
 export interface VideoTemplate {
   id: string
   name: string
   description: string
-  duration: number          // fixed duration in seconds
-  filterCss: string         // canvas filter for color grade
-  motionType: string        // motion effect type for drawFrame
+  duration: number
+  motionType: string  // single or combined motion
+  filterCss: string   // always '' — filters come from Effect dropdown
 }
 
 export const VIDEO_TEMPLATES: VideoTemplate[] = [
-  // ─── BASIC ──────────────────────────────────────────────────
+  // ─── SINGLE MOTION ───────────────────────────────────────────
   {
-    id: 'classic-15',
-    name: 'Classic',
-    description: 'Clean recording, no effects. Natural look.',
+    id: 'plain',
+    name: 'Plain',
+    description: 'No motion. Clean recording only.',
     duration: 15,
-    filterCss: '',
-    motionType: 'none'
-  },
-
-  // ─── ZOOM & PULSE ───────────────────────────────────────────
-  {
-    id: 'party-pulse-15',
-    name: 'Party Pulse',
-    description: 'Zoom pulse + purple haze. Energetic party vibe.',
-    duration: 15,
-    filterCss: 'hue-rotate(270deg) saturate(1.4) contrast(1.15) brightness(1.05)',
-    motionType: 'pulse'
+    motionType: 'none',
+    filterCss: ''
   },
   {
-    id: 'cinematic-zoom-15',
-    name: 'Cinematic Zoom',
-    description: 'Slow zoom in + cinematic color. Movie trailer feel.',
+    id: 'slowmo',
+    name: 'Slow Motion',
+    description: 'Dreamy slow zoom. Smooth and elegant.',
     duration: 15,
-    filterCss: 'contrast(1.2) saturate(1.1) brightness(0.98)',
-    motionType: 'zoom-in'
-  },
-
-  // ─── VINTAGE & FILM ─────────────────────────────────────────
-  {
-    id: 'vintage-shake-15',
-    name: 'Vintage Shake',
-    description: 'Retro film + subtle shake. Nostalgic 8mm feel.',
-    duration: 15,
-    filterCss: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)',
-    motionType: 'shake'
+    motionType: 'slow-zoom',
+    filterCss: ''
   },
   {
-    id: 'neon-glow-15',
-    name: 'Neon Glow',
-    description: 'Neon purple + gentle sway. Cyberpunk aesthetic.',
+    id: 'speed-ram',
+    name: 'Speed Ramp',
+    description: 'Start slow, burst fast, end slow. Dynamic energy.',
     duration: 15,
-    filterCss: 'hue-rotate(270deg) saturate(1.6) contrast(1.25) brightness(1.15)',
-    motionType: 'sway'
-  },
-
-  // ─── TRENDING: SLOW MOTION ──────────────────────────────────
-  {
-    id: 'slowmo-dream-15',
-    name: 'Slow-mo Dream',
-    description: 'Dreamy slow zoom + soft glow. Aesthetic reels vibe.',
-    duration: 15,
-    filterCss: 'brightness(1.15) saturate(1.2) contrast(0.95) blur(0.3px)',
-    motionType: 'slow-zoom'
+    motionType: 'speed-ramp',
+    filterCss: ''
   },
   {
-    id: 'slowmo-bw-15',
-    name: 'Slow-mo Noir',
-    description: 'Black & white slow zoom. Dramatic cinematic reels.',
-    duration: 15,
-    filterCss: 'grayscale(1) contrast(1.35) brightness(1.05)',
-    motionType: 'slow-zoom'
-  },
-
-  // ─── TRENDING: BOOMERANG (real-time bounce) ────────────────
-  {
-    id: 'boomerang-bounce-10',
-    name: 'Boomerang Bounce',
-    description: 'Bouncing zoom + warm tone. Instagram boomerang style.',
+    id: 'boomerang',
+    name: 'Boomerang',
+    description: 'Bouncing zoom in and out. Loop-ready for social.',
     duration: 10,
-    filterCss: 'saturate(1.3) contrast(1.1) brightness(1.08)',
-    motionType: 'bounce'
+    motionType: 'bounce',
+    filterCss: ''
   },
   {
-    id: 'boomerang-neon-10',
-    name: 'Boomerang Neon',
-    description: 'Bouncing zoom + neon purple. TikTok trending.',
-    duration: 10,
-    filterCss: 'hue-rotate(280deg) saturate(1.7) contrast(1.3) brightness(1.1)',
-    motionType: 'bounce'
+    id: 'shake',
+    name: 'Shake',
+    description: 'Subtle 8mm film shake. Raw and gritty.',
+    duration: 15,
+    motionType: 'shake',
+    filterCss: ''
   },
 
-  // ─── TRENDING: SHAKE & GLITCH ───────────────────────────────
+  // ─── COMBINED MOTION (2 effects in 1) ────────────────────────
   {
-    id: 'glitch-shake-10',
-    name: 'Glitch Shake',
-    description: 'Aggressive shake + high contrast. EDM/concert reels.',
-    duration: 10,
-    filterCss: 'contrast(1.4) saturate(1.5) hue-rotate(15deg)',
-    motionType: 'glitch'
+    id: 'slowmo-shake',
+    name: 'Slow-mo + Shake',
+    description: 'Slow zoom with film shake. Cinematic documentary.',
+    duration: 15,
+    motionType: 'slow-zoom-shake',
+    filterCss: ''
   },
   {
-    id: 'rave-shake-10',
-    name: 'Rave Shake',
-    description: 'Fast shake + neon strobe. Festival/party reels.',
+    id: 'boomerang-shake',
+    name: 'Boomerang + Shake',
+    description: 'Bouncing zoom + shake. High energy party clip.',
     duration: 10,
-    filterCss: 'hue-rotate(300deg) saturate(1.8) contrast(1.35) brightness(1.2)',
-    motionType: 'rave'
+    motionType: 'bounce-shake',
+    filterCss: ''
+  },
+  {
+    id: 'speedram-shake',
+    name: 'Speed Ramp + Shake',
+    description: 'Speed burst with shake impact. Action movie style.',
+    duration: 15,
+    motionType: 'speed-ramp-shake',
+    filterCss: ''
+  },
+  {
+    id: 'slowmo-boomerang',
+    name: 'Slow-mo + Boomerang',
+    description: 'Slow zoom that bounces back. Mesmerizing loop.',
+    duration: 15,
+    motionType: 'slow-zoom-bounce',
+    filterCss: ''
   },
 
-  // ─── TRENDING: COMBINED EFFECTS ─────────────────────────────
+  // ─── COMBINED MOTION (3 effects in 1) ────────────────────────
   {
-    id: 'aesthetic-sway-15',
-    name: 'Aesthetic Sway',
-    description: 'Slow sway + pastel warm. Cozy aesthetic reels.',
+    id: 'slowmo-shake-boom',
+    name: 'Slow-mo + Shake + Boom',
+    description: 'Slow zoom + shake + bounce ending. Full cinematic.',
     duration: 15,
-    filterCss: 'sepia(0.2) saturate(1.3) brightness(1.12) contrast(0.95)',
-    motionType: 'sway'
+    motionType: 'slow-zoom-shake-bounce',
+    filterCss: ''
   },
   {
-    id: 'portrait-zoom-15',
-    name: 'Portrait Zoom',
-    description: 'Vertical zoom + soft skin tone. Beauty/influencer reels.',
+    id: 'speedram-boom-shake',
+    name: 'Speed Ramp + Boom + Shake',
+    description: 'Burst + bounce + shake. Max energy reels.',
     duration: 15,
-    filterCss: 'saturate(1.1) brightness(1.08) contrast(1.02)',
-    motionType: 'zoom-in'
-  },
-  {
-    id: 'golden-hour-15',
-    name: 'Golden Hour',
-    description: 'Warm sunset + slow zoom. Travel/lifestyle reels.',
-    duration: 15,
-    filterCss: 'sepia(0.35) saturate(1.5) hue-rotate(-15deg) brightness(1.12)',
-    motionType: 'slow-zoom'
-  },
-  {
-    id: 'cool-vibe-15',
-    name: 'Cool Vibe',
-    description: 'Cool blue + sway. Chill/lofi aesthetic.',
-    duration: 15,
-    filterCss: 'hue-rotate(190deg) saturate(1.3) contrast(1.1) brightness(1.02)',
-    motionType: 'sway'
+    motionType: 'speed-ramp-bounce-shake',
+    filterCss: ''
   },
 
-  // ─── TRENDING: PARTY & ENERGY ───────────────────────────────
+  // ─── PULSE / ZOOM COMBOS ─────────────────────────────────────
   {
-    id: 'energy-pulse-10',
-    name: 'Energy Pulse',
-    description: 'Fast zoom pulse + vivid color. High energy reels.',
-    duration: 10,
-    filterCss: 'saturate(1.6) contrast(1.25) brightness(1.1)',
-    motionType: 'pulse-fast'
+    id: 'pulse',
+    name: 'Pulse Zoom',
+    description: 'Rhythmic zoom in/out. Beat-synced feel.',
+    duration: 15,
+    motionType: 'pulse',
+    filterCss: ''
   },
   {
-    id: 'disco-zoom-10',
-    name: 'Disco Zoom',
-    description: 'Zoom + hue shift strobe. Disco/party reels.',
-    duration: 10,
-    filterCss: 'saturate(1.5) contrast(1.2) brightness(1.1)',
-    motionType: 'disco'
+    id: 'pulse-shake',
+    name: 'Pulse + Shake',
+    description: 'Rhythmic zoom + shake. Concert/live energy.',
+    duration: 15,
+    motionType: 'pulse-shake',
+    filterCss: ''
+  },
+  {
+    id: 'zoom-in',
+    name: 'Zoom In',
+    description: 'Gradual zoom 1x to 1.4x. Portrait focus.',
+    duration: 15,
+    motionType: 'zoom-in',
+    filterCss: ''
+  },
+  {
+    id: 'sway',
+    name: 'Sway',
+    description: 'Gentle horizontal sway. Smooth and calm.',
+    duration: 15,
+    motionType: 'sway',
+    filterCss: ''
   }
 ]
 
 /**
  * Draw a single frame with motion effect applied.
- * Called every requestAnimationFrame during recording.
  */
 export function drawMotionFrame(
   ctx: CanvasRenderingContext2D,
@@ -196,97 +169,137 @@ export function drawMotionFrame(
 
   const progress = Math.min(1, elapsed / duration)
 
+  // Helper: apply zoom
+  const applyZoom = (zoom: number, extraX = 0, extraY = 0) => {
+    const sw = w / zoom
+    const sh = h / zoom
+    ctx.drawImage(video, (w - sw) / 2 + extraX, (h - sh) / 2 + extraY, sw, sh, 0, 0, w, h)
+  }
+
+  // Helper: apply shake
+  const shakeXY = (intensity = 2.5, speed = 18) => ({
+    x: Math.sin(elapsed * speed) * intensity,
+    y: Math.cos(elapsed * speed * 0.8) * intensity * 0.8
+  })
+
+  // Helper: speed ramp — returns time multiplier (0.3 = slow, 3 = fast)
+  const speedRampValue = () => {
+    if (progress < 0.3) return 0.3 + progress  // slow start
+    if (progress < 0.5) return 1 + (progress - 0.3) * 10  // burst
+    if (progress < 0.7) return 3 - (progress - 0.5) * 10  // slow down
+    return 1 - (progress - 0.7) * 0.5  // gentle end
+  }
+
   switch (motionType) {
-    case 'pulse': {
-      // Rhythmic zoom in/out (4 cycles over duration)
-      const pulse = 1 + 0.12 * Math.sin(elapsed * Math.PI * 2 * 2)
-      const sw = w / pulse
-      const sh = h / pulse
-      ctx.drawImage(video, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'pulse-fast': {
-      // Fast rhythmic zoom (8 cycles — more energetic)
-      const pulse = 1 + 0.15 * Math.sin(elapsed * Math.PI * 2 * 4)
-      const sw = w / pulse
-      const sh = h / pulse
-      ctx.drawImage(video, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'zoom-in': {
-      // Gradual zoom from 1.0x to 1.4x
-      const zoom = 1 + 0.4 * progress
-      const sw = w / zoom
-      const sh = h / zoom
-      ctx.drawImage(video, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'slow-zoom': {
-      // Very slow zoom from 1.0x to 1.25x (dreamy)
-      const zoom = 1 + 0.25 * progress
-      const sw = w / zoom
-      const sh = h / zoom
-      ctx.drawImage(video, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'shake': {
-      // Subtle 8mm film shake (2-3px)
-      const shakeX = Math.sin(elapsed * 18) * 2.5
-      const shakeY = Math.cos(elapsed * 15) * 2
-      ctx.drawImage(video, shakeX, shakeY, w, h)
-      break
-    }
-    case 'glitch': {
-      // Aggressive shake + occasional offset (glitch effect)
-      const shakeX = Math.sin(elapsed * 25) * 5
-      const shakeY = Math.cos(elapsed * 20) * 3
-      // Random horizontal slice offset
-      const glitchOffset = Math.random() < 0.15 ? (Math.random() - 0.5) * 20 : 0
-      ctx.drawImage(video, shakeX + glitchOffset, shakeY, w, h)
-      break
-    }
-    case 'rave': {
-      // Fast shake + strobe zoom
-      const shakeX = Math.sin(elapsed * 30) * 4
-      const shakeY = Math.cos(elapsed * 28) * 3
-      const strobe = Math.sin(elapsed * 12) > 0 ? 1.08 : 1.0
-      const sw = w / strobe
-      const sh = h / strobe
-      ctx.drawImage(video, (w - sw) / 2 + shakeX, (h - sh) / 2 + shakeY, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'sway': {
-      // Gentle horizontal sway (15px range) + slight zoom
-      const swayX = Math.sin(elapsed * 0.8) * 15
-      const zoom = 1.05
-      const sw = w / zoom
-      const sh = h / zoom
-      ctx.drawImage(video, (w - sw) / 2 + swayX, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'bounce': {
-      // Boomerang-style bouncing zoom (zoom in then out rapidly)
-      const bounce = 1 + 0.2 * Math.abs(Math.sin(elapsed * Math.PI * 1.5))
-      const sw = w / bounce
-      const sh = h / bounce
-      ctx.drawImage(video, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    case 'disco': {
-      // Zoom + hue rotation (simulated via canvas transform only)
-      const zoom = 1 + 0.1 * Math.sin(elapsed * Math.PI * 3)
-      const rotate = Math.sin(elapsed * 2) * 3 // slight rotation
-      ctx.translate(w / 2, h / 2)
-      ctx.rotate(rotate * Math.PI / 180)
-      ctx.translate(-w / 2, -h / 2)
-      const sw = w / zoom
-      const sh = h / zoom
-      ctx.drawImage(video, (w - sw) / 2, (h - sh) / 2, sw, sh, 0, 0, w, h)
-      break
-    }
-    default: {
+    // ─── SINGLE ─────────────────────────────────
+    case 'none':
       ctx.drawImage(video, 0, 0, w, h)
+      break
+    case 'slow-zoom':
+      applyZoom(1 + 0.25 * progress)
+      break
+    case 'zoom-in':
+      applyZoom(1 + 0.4 * progress)
+      break
+    case 'bounce':
+      applyZoom(1 + 0.2 * Math.abs(Math.sin(elapsed * Math.PI * 1.5)))
+      break
+    case 'shake': {
+      const s = shakeXY(2.5, 18)
+      ctx.drawImage(video, s.x, s.y, w, h)
+      break
     }
+    case 'pulse':
+      applyZoom(1 + 0.12 * Math.sin(elapsed * Math.PI * 2 * 2))
+      break
+    case 'sway': {
+      const swayX = Math.sin(elapsed * 0.8) * 15
+      applyZoom(1.05, swayX, 0)
+      break
+    }
+    case 'speed-ramp': {
+      // Visual speed ramp via zoom intensity changes
+      const ramp = speedRampValue()
+      const zoom = 1 + 0.15 * Math.sin(elapsed * ramp * 3)
+      applyZoom(zoom)
+      break
+    }
+
+    // ─── COMBINED (2 motions) ───────────────────
+    case 'slow-zoom-shake': {
+      const s = shakeXY(1.5, 15)
+      applyZoom(1 + 0.2 * progress, s.x, s.y)
+      break
+    }
+    case 'bounce-shake': {
+      const s = shakeXY(3, 22)
+      const zoom = 1 + 0.2 * Math.abs(Math.sin(elapsed * Math.PI * 1.5))
+      applyZoom(zoom, s.x, s.y)
+      break
+    }
+    case 'speed-ramp-shake': {
+      const ramp = speedRampValue()
+      const s = shakeXY(2 + ramp, 15 + ramp * 5)
+      const zoom = 1 + 0.1 * Math.sin(elapsed * ramp * 3)
+      applyZoom(zoom, s.x, s.y)
+      break
+    }
+    case 'slow-zoom-bounce': {
+      // Slow zoom but bounces at the end (last 3 seconds)
+      if (progress < 0.8) {
+        applyZoom(1 + 0.25 * progress)
+      } else {
+        const bounceProgress = (progress - 0.8) / 0.2
+        const bounce = 1 + 0.25 * 0.8 + 0.15 * Math.abs(Math.sin(bounceProgress * Math.PI * 2))
+        applyZoom(bounce)
+      }
+      break
+    }
+    case 'pulse-shake': {
+      const s = shakeXY(2, 20)
+      const zoom = 1 + 0.12 * Math.sin(elapsed * Math.PI * 2 * 2)
+      applyZoom(zoom, s.x, s.y)
+      break
+    }
+
+    // ─── COMBINED (3 motions) ───────────────────
+    case 'slow-zoom-shake-bounce': {
+      // Phase 1 (0-60%): slow zoom + shake
+      // Phase 2 (60-100%): bounce + shake
+      if (progress < 0.6) {
+        const s = shakeXY(1.5, 15)
+        applyZoom(1 + 0.2 * (progress / 0.6), s.x, s.y)
+      } else {
+        const bp = (progress - 0.6) / 0.4
+        const s = shakeXY(3, 20)
+        const zoom = 1.2 + 0.15 * Math.abs(Math.sin(bp * Math.PI * 3))
+        applyZoom(zoom, s.x, s.y)
+      }
+      break
+    }
+    case 'speed-ramp-bounce-shake': {
+      // Phase 1 (0-30%): slow + shake
+      // Phase 2 (30-50%): burst + shake (strong)
+      // Phase 3 (50-100%): bounce + shake
+      if (progress < 0.3) {
+        const s = shakeXY(1.5, 12)
+        applyZoom(1 + 0.1 * progress, s.x, s.y)
+      } else if (progress < 0.5) {
+        const bp = (progress - 0.3) / 0.2
+        const s = shakeXY(5, 25)
+        const zoom = 1.03 + 0.2 * bp
+        applyZoom(zoom, s.x, s.y)
+      } else {
+        const bp = (progress - 0.5) / 0.5
+        const s = shakeXY(3, 20)
+        const zoom = 1.23 + 0.15 * Math.abs(Math.sin(bp * Math.PI * 4))
+        applyZoom(zoom, s.x, s.y)
+      }
+      break
+    }
+
+    default:
+      ctx.drawImage(video, 0, 0, w, h)
   }
 
   ctx.restore()
