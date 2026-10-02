@@ -1,6 +1,6 @@
 /**
  * ARAY Motion Effects — post-processing for video motion styles
- *
+ * 
  * Records raw video first, then replays through canvas with motion effect.
  * This ensures the effect is actually baked into the saved video.
  */
@@ -11,17 +11,12 @@ interface ProcessOptions {
   mirror: boolean
 }
 
-/**
- * Apply motion effect to a raw video blob.
- * Returns new blob with effect applied, or null if style is 'normal' (no processing needed).
- */
 export async function applyMotionEffect(
   rawBlob: Blob,
   options: ProcessOptions
 ): Promise<Blob | null> {
   const { motionStyle, filter, mirror } = options
 
-  // Normal = no processing, use raw video as-is
   if (motionStyle === 'normal') return null
 
   console.log('[Motion] Processing motion effect:', motionStyle)
@@ -32,12 +27,41 @@ export async function applyMotionEffect(
   video.muted = true
   video.playsInline = true
 
+  // Wait for metadata — handle Infinity duration (common with MediaRecorder blobs)
   await new Promise<void>((resolve, reject) => {
-    video.onloadedmetadata = () => resolve()
-    video.onerror = () => reject(new Error('Failed to load raw video for processing'))
+    const timeout = setTimeout(() => {
+      reject(new Error('Video metadata load timeout (5s)'))
+    }, 5000)
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timeout)
+      // If duration is Infinity, try to force it by seeking
+      if (video.duration === Infinity || isNaN(video.duration)) {
+        console.log('[Motion] Duration is Infinity, forcing seek...')
+        video.currentTime = 1e101  // Force seek to end
+        video.ontimeupdate = () => {
+          video.ontimeupdate = null
+          video.currentTime = 0
+          console.log('[Motion] Fixed duration:', video.duration)
+          resolve()
+        }
+      } else {
+        resolve()
+      }
+    }
+    video.onerror = () => {
+      clearTimeout(timeout)
+      reject(new Error('Failed to load raw video for processing'))
+    }
   })
 
-  const duration = video.duration
+  let duration = video.duration
+  if (isNaN(duration) || duration === Infinity || duration <= 0) {
+    console.warn('[Motion] Could not determine video duration, aborting motion effect')
+    URL.revokeObjectURL(video.src)
+    return null  // Fall back to raw video
+  }
+
   const w = video.videoWidth || 1280
   const h = video.videoHeight || 720
   console.log('[Motion] Raw video:', w, 'x', h, 'duration:', duration)
@@ -94,7 +118,7 @@ export async function applyMotionEffect(
       const t = Math.max(0, Math.min(duration - 0.01, time))
       const onSeeked = () => {
         video.removeEventListener('seeked', onSeeked)
-        // Small delay to ensure frame is decoded
+        // Use requestAnimationFrame to ensure frame is decoded
         requestAnimationFrame(() => resolve())
       }
       video.addEventListener('seeked', onSeeked)
@@ -102,45 +126,45 @@ export async function applyMotionEffect(
     })
   }
 
-  // Real-time frame delay (so captureStream picks up frames)
   const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
-  const frameDelay = 1000 / 30 // 33ms per frame at 30fps
+  const frameInterval = 1 / 30  // 30fps
+  const frameDelay = 40  // ms delay between frames for captureStream
 
   recorder.start()
 
   try {
     if (motionStyle === 'boomerang') {
       // Forward pass
-      console.log('[Motion] Boomerang: forward pass')
-      for (let t = 0; t < duration; t += 1 / 30) {
+      console.log('[Motion] Boomerang: forward pass (0 to', duration, 's)')
+      for (let t = 0; t < duration; t += frameInterval) {
         await seekTo(t)
         drawFrame()
         await wait(frameDelay)
       }
       // Reverse pass
       console.log('[Motion] Boomerang: reverse pass')
-      for (let t = duration - 1 / 30; t >= 0; t -= 1 / 30) {
+      for (let t = duration - frameInterval; t >= 0; t -= frameInterval) {
         await seekTo(t)
         drawFrame()
         await wait(frameDelay)
       }
     } else if (motionStyle === 'reverse') {
       console.log('[Motion] Reverse: playing backward')
-      for (let t = duration - 1 / 30; t >= 0; t -= 1 / 30) {
+      for (let t = duration - frameInterval; t >= 0; t -= frameInterval) {
         await seekTo(t)
         drawFrame()
         await wait(frameDelay)
       }
     } else if (motionStyle === 'fast-forward') {
       console.log('[Motion] Fast Forward: 2x speed')
-      for (let t = 0; t < duration; t += 2 / 30) {
+      for (let t = 0; t < duration; t += 2 * frameInterval) {
         await seekTo(t)
         drawFrame()
         await wait(frameDelay)
       }
     } else if (motionStyle === 'zoom-pulse') {
-      console.log('[Motion] Zoom Pulse: zoom in/out')
-      for (let t = 0; t < duration; t += 1 / 30) {
+      console.log('[Motion] Zoom Pulse')
+      for (let t = 0; t < duration; t += frameInterval) {
         await seekTo(t)
         const progress = t / duration
         const scale = 1 + 0.3 * Math.sin(progress * Math.PI * 2)
@@ -153,7 +177,7 @@ export async function applyMotionEffect(
   }
 
   // Stop recording
-  await wait(100) // flush last frame
+  await wait(200) // flush last frame
   recorder.stop()
   URL.revokeObjectURL(video.src)
 

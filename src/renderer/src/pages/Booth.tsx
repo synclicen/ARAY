@@ -410,8 +410,8 @@ export function BoothPage() {
         }
       }
 
-      // Start recording — NO timeslice, all data at stop
-      recorder.start()
+      // Start recording with 100ms timeslice for reliable data collection
+      recorder.start(100)
       mediaRecorderRef.current = recorder
       setIsRecording(true)
       setRecordingTime(0)
