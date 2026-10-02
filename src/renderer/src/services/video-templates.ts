@@ -169,14 +169,35 @@ export function drawMotionFrame(
 
   const progress = Math.min(1, elapsed / duration)
 
-  // Helper: apply zoom
-  const applyZoom = (zoom: number, extraX = 0, extraY = 0) => {
-    const sw = w / zoom
-    const sh = h / zoom
-    ctx.drawImage(video, (w - sw) / 2 + extraX, (h - sh) / 2 + extraY, sw, sh, 0, 0, w, h)
+  // Cover-fit: crop video source to match canvas aspect ratio
+  const vw = video.videoWidth
+  const vh = video.videoHeight
+  const canvasRatio = w / h
+  const videoRatio = vw / vh
+  let srcX = 0, srcY = 0, srcW = vw, srcH = vh
+  if (videoRatio > canvasRatio) {
+    srcW = vh * canvasRatio
+    srcX = (vw - srcW) / 2
+  } else {
+    srcH = vw / canvasRatio
+    srcY = (vh - srcH) / 2
   }
 
-  // Helper: apply shake
+  // Helper: draw video with cover-fit crop + optional zoom/offset
+  const drawCover = (zoom = 1, offsetX = 0, offsetY = 0) => {
+    const zsw = srcW / zoom
+    const zsh = srcH / zoom
+    const zsx = srcX + (srcW - zsw) / 2 + offsetX
+    const zsy = srcY + (srcH - zsh) / 2 + offsetY
+    ctx.drawImage(video, zsx, zsy, zsw, zsh, 0, 0, w, h)
+  }
+
+  // Helper: apply zoom (uses cover-fit source)
+  const applyZoom = (zoom: number, extraX = 0, extraY = 0) => {
+    drawCover(zoom, extraX, extraY)
+  }
+
+  // Helper: apply shake (draws with offset)
   const shakeXY = (intensity = 2.5, speed = 18) => ({
     x: Math.sin(elapsed * speed) * intensity,
     y: Math.cos(elapsed * speed * 0.8) * intensity * 0.8
@@ -193,7 +214,7 @@ export function drawMotionFrame(
   switch (motionType) {
     // ─── SINGLE ─────────────────────────────────
     case 'none':
-      ctx.drawImage(video, 0, 0, w, h)
+      drawCover()
       break
     case 'slow-zoom':
       applyZoom(1 + 0.25 * progress)
@@ -206,7 +227,7 @@ export function drawMotionFrame(
       break
     case 'shake': {
       const s = shakeXY(2.5, 18)
-      ctx.drawImage(video, s.x, s.y, w, h)
+      drawCover(1, s.x, s.y)
       break
     }
     case 'pulse':
@@ -299,7 +320,7 @@ export function drawMotionFrame(
     }
 
     default:
-      ctx.drawImage(video, 0, 0, w, h)
+      drawCover()
   }
 
   ctx.restore()

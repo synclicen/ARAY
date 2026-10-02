@@ -161,20 +161,38 @@ export function BoothPage() {
     }
     // Mirror
     if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1) }
-    ctx.drawImage(video, 0, 0, w, h)
+
+    // Cover-fit: crop video to match canvas aspect ratio (no stretching)
+    const vw = video.videoWidth
+    const vh = video.videoHeight
+    const canvasRatio = w / h
+    const videoRatio = vw / vh
+    let sx = 0, sy = 0, sw = vw, sh = vh
+    if (videoRatio > canvasRatio) {
+      // Video wider than canvas — crop sides
+      sw = vh * canvasRatio
+      sx = (vw - sw) / 2
+    } else {
+      // Video taller than canvas — crop top/bottom
+      sh = vw / canvasRatio
+      sy = (vh - sh) / 2
+    }
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h)
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.filter = 'none'
 
     const full = canvas.toDataURL('image/jpeg', 0.92)
 
-    // Thumbnail
+    // Thumbnail — same aspect ratio, smaller
     const tc = document.createElement('canvas')
-    tc.width = 320; tc.height = 240
+    const thumbW = 320
+    const thumbH = Math.round(320 * h / w)
+    tc.width = thumbW; tc.height = thumbH
     const tctx = tc.getContext('2d')
     if (!tctx) return { full, thumb: full }
     if (activeFilter.canvasFilter !== 'none') tctx.filter = activeFilter.canvasFilter
-    if (mirror) { tctx.translate(320, 0); tctx.scale(-1, 1) }
-    tctx.drawImage(video, 0, 0, 320, 240)
+    if (mirror) { tctx.translate(thumbW, 0); tctx.scale(-1, 1) }
+    tctx.drawImage(video, sx, sy, sw, sh, 0, 0, thumbW, thumbH)
     tctx.setTransform(1, 0, 0, 1, 0, 0)
     const thumb = tc.toDataURL('image/jpeg', 0.8)
     return { full, thumb }
