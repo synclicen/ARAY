@@ -767,7 +767,7 @@ export function BoothPage() {
                   <Video className="w-10 h-10 text-purple-haze-950" />
                 </button>
               )
-            )}
+            ) : null}
           </motion.div>
         )}
 
