@@ -786,9 +786,9 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Text below video: photo mode only, hidden during video recording */}
+            {/* Text above shutter button: photo mode only, hidden during video recording */}
             {!(mode === 'video' && isRecording) && (
-              <div className="text-center mb-8">
+              <div className="text-center mb-32">
                 {mode === 'photo' ? (
                   <>
                     <p className="text-silver-200 text-2xl font-semibold mb-1">
