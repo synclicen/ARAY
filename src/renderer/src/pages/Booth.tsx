@@ -196,7 +196,7 @@ export function BoothPage() {
     tctx.setTransform(1, 0, 0, 1, 0, 0)
     const thumb = tc.toDataURL('image/jpeg', 0.8)
     return { full, thumb }
-  }, [mirror, activeFilter])
+  }, [mirror, activeFilter, aspectRatio])
 
   const performCapture = useCallback(async () => {
     if (!activeEvent) {
@@ -428,7 +428,7 @@ export function BoothPage() {
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia, selectedVideoTemplate])
+  }, [activeEvent, addMedia, selectedVideoTemplate, aspectRatio])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
