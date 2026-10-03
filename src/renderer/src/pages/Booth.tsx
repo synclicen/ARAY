@@ -904,8 +904,9 @@ export function BoothPage() {
             exit={{ opacity: 0 }}
             className="absolute inset-0 z-10 flex flex-col items-center justify-end pb-12"
           >
-            {/* Shot progress (photo mode only) — hidden saat fullscreen ATAU kiosk */}
-            {mode === 'photo' && !fullscreenBooth && !settings?.kiosk_mode && (
+            {/* Shot progress (photo mode only) — hidden saat fullscreen booth saja.
+                Kiosk mode tetap tampilkan (user perlu tahu progress). */}
+            {mode === 'photo' && !fullscreenBooth && (
               <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2">
                 {Array.from({ length: totalShots }).map((_, i) => (
                   <div
@@ -1029,7 +1030,7 @@ export function BoothPage() {
             {/* "Shot X of Y" info — sekarang digabung dengan shutter button
                 (lihat bottom capture button). Tidak ada teks terpisah lagi. */}
 
-            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && !settings?.kiosk_mode && (
+            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
                   <p className="text-silver-200 text-2xl font-semibold mb-1">
