@@ -35,7 +35,7 @@ export function AppShell({ children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
-  const { settings } = useSettingsStore()
+  const { settings, updateSettings } = useSettingsStore()
   const [showKioskPasswordModal, setShowKioskPasswordModal] = useState(false)
   const [kioskPasswordInput, setKioskPasswordInput] = useState('')
   const [kioskPasswordError, setKioskPasswordError] = useState(false)
@@ -60,9 +60,11 @@ export function AppShell({ children }: AppShellProps) {
         setKioskPasswordInput('')
         setKioskPasswordError(false)
       } else {
-        // Tanpa password — langsung exit
-        window.aray.settings.update({ kiosk_mode: false }).then(() => {
-          window.location.reload()
+        // Tanpa password — langsung exit + navigate ke dashboard
+        // v4.1.6: Pakai store's updateSettings (reactive) + navigate.
+        // JANGAN pakai window.location.reload() — menyebabkan blank screen.
+        updateSettings({ kiosk_mode: false }).then(() => {
+          navigate('/dashboard', { replace: true })
         })
       }
     }
@@ -70,9 +72,12 @@ export function AppShell({ children }: AppShellProps) {
     const verifyKioskPassword = () => {
       const pwd = settings?.booth_fullscreen_password || 'aray'
       if (kioskPasswordInput === pwd) {
-        window.aray.settings.update({ kiosk_mode: false }).then(() => {
+        // v4.1.6: Pakai store's updateSettings agar settings reactively update.
+        // Store update -> isKiosk becomes false -> AppShell re-render normal layout.
+        // Lalu navigate ke dashboard. Tidak ada reload, tidak ada blank screen.
+        updateSettings({ kiosk_mode: false }).then(() => {
           setShowKioskPasswordModal(false)
-          window.location.reload()
+          navigate('/dashboard', { replace: true })
         })
       } else {
         setKioskPasswordError(true)

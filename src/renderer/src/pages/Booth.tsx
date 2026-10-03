@@ -1025,9 +1025,10 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Text above shutter button: photo mode only, hidden during video recording
-                dan hidden saat fullscreen booth (clean view, only palm overlay) */}
-            {!(mode === 'video' && isRecording) && !fullscreenBooth && (
+            {/* Text above shutter button: photo mode only, hidden during video recording,
+                hidden saat fullscreen booth, DAN hidden saat palm trigger aktif
+                (palm overlay sudah beri info, teks Shot akan bertabrakan) */}
+            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
                   <p className="text-silver-200 text-2xl font-semibold mb-1">
