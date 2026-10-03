@@ -22,6 +22,7 @@ import { useMediaStore } from '../stores/media'
 import { useSettingsStore } from '../stores/settings'
 import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
 import { VIDEO_TEMPLATES, drawMotionFrame, type VideoTemplate } from '../services/video-templates'
+import { PalmTrigger } from '../services/palm-trigger'
 
 // Aspect ratio dimensions helper
 const aspectDims: Record<string, { w: number; h: number }> = {
@@ -93,6 +94,9 @@ export function BoothPage() {
   const [recordingTime, setRecordingTime] = useState(0)
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
   const [compositing, setCompositing] = useState(false)
+  const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
+  const [palmTriggerActive, setPalmTriggerActive] = useState(false)
+  const palmTriggerRef = useRef<PalmTrigger | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -549,6 +553,35 @@ export function BoothPage() {
     }
   }, [phase, startCamera])
 
+  // Palm trigger: start when entering preview (photo mode + palm enabled)
+  useEffect(() => {
+    if (phase === 'preview' && mode === 'photo' && settings?.palm_trigger && videoRef.current) {
+      if (!palmTriggerRef.current) {
+        palmTriggerRef.current = new PalmTrigger()
+      }
+      const pt = palmTriggerRef.current
+      pt.onPalmDetected = (progress) => setPalmProgress(progress)
+      pt.onPalmLost = () => setPalmProgress(0)
+      pt.start(videoRef.current, settings.palm_trigger_sensitivity || 0.6, () => {
+        setPalmProgress(0)
+        setPalmTriggerActive(false)
+        // Trigger capture
+        setPhase('countdown')
+        runCountdown()
+      })
+      setPalmTriggerActive(true)
+      console.log('[Booth] Palm trigger activated')
+    }
+
+    return () => {
+      if (palmTriggerRef.current) {
+        palmTriggerRef.current.stop()
+        setPalmTriggerActive(false)
+        setPalmProgress(0)
+      }
+    }
+  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity])
+
   // No active event
   if (!activeEvent) {
     return (
@@ -717,6 +750,32 @@ export function BoothPage() {
                     }`}
                   />
                 ))}
+              </div>
+            )}
+
+            {/* Palm trigger progress overlay */}
+            {palmTriggerActive && palmProgress > 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
+                <div className="text-center">
+                  <div className="text-6xl font-extrabold aray-gradient-text mb-4">
+                    {Math.round(palmProgress * 100)}%
+                  </div>
+                  <div className="w-48 h-2 bg-silver-900/60 rounded-full overflow-hidden mx-auto">
+                    <div
+                      className="h-full bg-gradient-to-r from-gold-400 to-purple-haze-400 transition-all duration-100"
+                      style={{ width: `${palmProgress * 100}%` }}
+                    />
+                  </div>
+                  <div className="text-silver-300 text-sm mt-3">Hold your palm...</div>
+                </div>
+              </div>
+            )}
+
+            {/* Palm trigger ready indicator */}
+            {palmTriggerActive && palmProgress === 0 && (
+              <div className="absolute top-20 right-4 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5 z-20">
+                <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
+                <span className="text-purple-haze-100 text-xs font-medium">Palm Trigger ON</span>
               </div>
             )}
 

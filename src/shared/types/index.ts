@@ -101,6 +101,8 @@ export interface AraySettings {
   camera_effect: string
   aspect_ratio: string
   video_template: string
+  palm_trigger: boolean
+  palm_trigger_sensitivity: number
 }
 
 export interface StorageInfo {

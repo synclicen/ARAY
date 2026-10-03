@@ -187,6 +187,33 @@ export function SettingsPage() {
               <option value="sway">Sway — Gentle (15s)</option>
             </select>
           </SettingRow>
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Palm trigger (hands-free)"
+            hint="Angkat telapak tangan ke kamera untuk capture otomatis"
+          >
+            <Toggle
+              value={settings.palm_trigger || false}
+              onChange={(v) => updateSettings({ palm_trigger: v })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Palm trigger sensitivity"
+            hint="Semakin tinggi = semakin mudah mendeteksi telapak tangan"
+          >
+            <select
+              className="aray-input max-w-[160px]"
+              value={settings.palm_trigger_sensitivity || 0.6}
+              onChange={(e) => updateSettings({ palm_trigger_sensitivity: parseFloat(e.target.value) })}
+              disabled={!settings.palm_trigger}
+            >
+              <option value={0.4}>Low (jarang trigger)</option>
+              <option value={0.6}>Medium (seimbang)</option>
+              <option value={0.8}>High (mudah trigger)</option>
+            </select>
+          </SettingRow>
         </div>
       </ArayCard>
 
