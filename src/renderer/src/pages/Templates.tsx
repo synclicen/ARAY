@@ -48,16 +48,33 @@ export function TemplatesPage() {
     reader.readAsDataURL(file)
   }
 
-  const handleSaveCustom = () => {
+  const handleSaveCustom = async () => {
     if (!uploadName.trim() || !uploadFrameData) return
+
+    // Get PNG natural dimensions for pixel-perfect composite
+    let pngWidth = 1080
+    let pngHeight = 1920
+    try {
+      const img = new Image()
+      img.src = uploadFrameData
+      await new Promise<void>((resolve) => {
+        img.onload = () => {
+          pngWidth = img.naturalWidth || 1080
+          pngHeight = img.naturalHeight || 1920
+          resolve()
+        }
+        img.onerror = () => resolve()
+      })
+    } catch {}
+
     const custom: CustomTemplate = {
       id: 'custom-' + Date.now(),
       name: uploadName.trim(),
       frameDataUrl: uploadFrameData,
       shotCount: getLayoutShotCount(uploadLayout),
       layout: uploadLayout as any,
-      canvasWidth: 600,
-      canvasHeight: 1800
+      canvasWidth: pngWidth,
+      canvasHeight: pngHeight
     }
     saveCustomTemplate(custom)
     setCustomTemplates(getCustomTemplates())

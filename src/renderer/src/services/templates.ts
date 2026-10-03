@@ -406,18 +406,21 @@ export function getCompositeDims(aspectRatio: string): { w: number; h: number } 
 export async function compositeCustomTemplate(
   custom: CustomTemplate,
   photoDataUrls: string[],
-  aspectRatio?: string
+  _aspectRatio?: string  // ignored for custom templates — PNG dimensions take priority
 ): Promise<string | null> {
   try {
     const info = getLayoutInfo(custom.layout)
-    // If aspectRatio provided, override canvas dimensions to match
-    // PNG frame will be stretched to fit — so user should design PNG
-    // with the same aspect ratio for best results
-    const dims = aspectRatio ? getCompositeDims(aspectRatio) : info.dims
     const slots = info.slots
+
+    // Load the PNG frame FIRST to get its natural dimensions
+    const frameImg = await loadImage(custom.frameDataUrl)
+    if (!frameImg) throw new Error('Failed to load frame image')
+
+    // Use PNG frame's natural dimensions as canvas size
+    // This ensures the frame is NOT stretched — it's pixel-perfect
     const canvas = document.createElement('canvas')
-    canvas.width = dims.w
-    canvas.height = dims.h
+    canvas.width = frameImg.naturalWidth || custom.canvasWidth || 1080
+    canvas.height = frameImg.naturalHeight || custom.canvasHeight || 1920
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
 
@@ -425,7 +428,8 @@ export async function compositeCustomTemplate(
     ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Draw photos into slots (slots are percentage-based, work with any canvas size)
+    // Draw photos into slots (percentage-based, works at any canvas size)
+    // Photos are cover-fit (cropped) to match slot aspect ratio — NOT stretched
     const photos = photoDataUrls.slice(0, slots.length)
     for (let i = 0; i < slots.length && i < photos.length; i++) {
       const slot = slots[i]
@@ -438,12 +442,8 @@ export async function compositeCustomTemplate(
       drawImageCover(ctx, img, sx, sy, sw, sh)
     }
 
-    // Overlay custom frame image — stretched to canvas dimensions
-    // User should design PNG with same aspect ratio for pixel-perfect match
-    const frameImg = await loadImage(custom.frameDataUrl)
-    if (frameImg) {
-      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height)
-    }
+    // Overlay PNG frame at NATURAL size — no stretching!
+    ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height)
 
     return canvas.toDataURL('image/jpeg', 0.92)
   } catch (err) {
