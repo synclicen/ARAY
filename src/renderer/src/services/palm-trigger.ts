@@ -69,10 +69,15 @@ export class PalmTrigger {
 
   // Debug
   private readonly debug = false
+  private frameCount = 0
 
   // Public callbacks for UI feedback
   public onPalmDetected: ((state: PalmState, progress: number) => void) | null = null
   public onPalmLost: (() => void) | null = null
+  // v2.1: debug callback — fires every frame with current delta/threshold.
+  // UI uses this to show a live "palm detection meter" so user can see
+  // if detection is working (delta bar moves when hand enters frame).
+  public onDebug: ((info: { ratio: number; baseline: number; delta: number; threshold: number; isPalm: boolean; state: PalmState }) => void) | null = null
 
   start(video: HTMLVideoElement, sensitivity: number, onTrigger: () => void): void {
     this.video = video
@@ -87,6 +92,7 @@ export class PalmTrigger {
     this.baselineRatio = 0
     this.calibrated = false
     this.lastPalmSeenAt = 0
+    this.frameCount = 0
 
     this.canvas = document.createElement('canvas')
     this.canvas.width = 160
@@ -114,10 +120,17 @@ export class PalmTrigger {
 
   /**
    * Delta above baseline required to consider palm "present".
-   * 0.4 → 0.14, 0.6 → 0.10, 0.8 → 0.06
+   * v2.1: MUCH lower thresholds — old 0.06-0.14 was too high.
+   * With user's face already in frame (baseline ~30% skin), adding a palm
+   * only increases skin ratio by ~3-5%. Old threshold of 0.10 (Medium)
+   * meant palm was never detected.
+   *
+   * 0.4 (Low)    → delta 0.06 (need clear, close palm)
+   * 0.6 (Medium) → delta 0.04 (moderate palm)
+   * 0.8 (High)   → delta 0.025 (small/distant palm enough)
    */
   private deltaThreshold(): number {
-    return 0.18 - this.sensitivity * 0.15
+    return 0.085 - this.sensitivity * 0.075
   }
 
   private setState(newState: PalmState): void {
@@ -205,10 +218,27 @@ export class PalmTrigger {
     const isPalm = delta > threshold
     const now = Date.now()
 
-    if (this.debug) {
-      console.log('[PalmTrigger v2] state=', this.state,
-        'delta=', delta.toFixed(3), 'thr=', threshold.toFixed(3),
-        'palm=', isPalm)
+    // v2.1: Always emit debug info so UI can show live detection meter
+    if (this.onDebug) {
+      this.onDebug({
+        ratio: smoothed,
+        baseline: this.baselineRatio,
+        delta,
+        threshold,
+        isPalm,
+        state: this.state
+      })
+    }
+
+    // Periodic console log (every ~30 frames ≈ 1s) so user can see detection working
+    this.frameCount = (this.frameCount || 0) + 1
+    if (this.frameCount % 30 === 0) {
+      console.log('[PalmTrigger v2.1] state=', this.state,
+        'ratio=', smoothed.toFixed(3),
+        'baseline=', this.baselineRatio.toFixed(3),
+        'delta=', delta.toFixed(3),
+        'thr=', threshold.toFixed(3),
+        'palm=', isPalm ? 'YES' : 'no')
     }
 
     // ─── STATE MACHINE ───────────────────────────────────────────

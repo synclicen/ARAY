@@ -11,7 +11,10 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Wand2
+  Wand2,
+  CheckSquare,
+  Square,
+  Check
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayLogo, AraySyncStatus } from '../components/ui'
 import { useMediaStore } from '../stores/media'
@@ -39,6 +42,10 @@ export function GalleryPage() {
   const [eventId, setEventId] = useState<string>('')
   const [selected, setSelected] = useState<ArayMedia | null>(null)
   const [cleaningUp, setCleaningUp] = useState(false)
+  // v4.0.6: Select mode for bulk delete
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   useEffect(() => {
     loadMedia({ event_id: eventId || undefined, type: typeFilter === 'all' ? undefined : typeFilter })
@@ -92,6 +99,53 @@ export function GalleryPage() {
     }
   }
 
+  // v4.0.6: Select mode handlers
+  const toggleSelectMode = () => {
+    if (selectMode) {
+      // Exiting select mode — clear selection
+      setSelectedIds(new Set())
+    }
+    setSelectMode(!selectMode)
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  const selectAll = () => {
+    setSelectedIds(new Set(deduped.map((m) => m.id)))
+  }
+
+  const deselectAll = () => {
+    setSelectedIds(new Set())
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+    const msg = `This will permanently delete ${selectedIds.size} item(s) from your gallery and disk.\n\nProceed?`
+    if (!confirm(msg)) return
+    setBulkDeleting(true)
+    try {
+      const ids = Array.from(selectedIds)
+      for (const id of ids) {
+        await removeMedia(id)
+      }
+      setSelectedIds(new Set())
+      setSelectMode(false)
+      await loadMedia({ event_id: eventId || undefined, type: typeFilter === 'all' ? undefined : typeFilter })
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -101,8 +155,8 @@ export function GalleryPage() {
             Every memory, in one place. <span className="italic">That was cute.</span>
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {rawShots.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          {rawShots.length > 0 && !selectMode && (
             <ArayButton
               variant="ghost"
               icon={<Wand2 className="w-4 h-4" />}
@@ -112,6 +166,39 @@ export function GalleryPage() {
             >
               {cleaningUp ? 'Cleaning…' : `Clean up raw shots (${rawShots.length})`}
             </ArayButton>
+          )}
+          {/* v4.0.6: Select mode toggle */}
+          <ArayButton
+            variant={selectMode ? "gold" : "ghost"}
+            icon={<CheckSquare className="w-4 h-4" />}
+            onClick={toggleSelectMode}
+            className={selectMode ? '' : 'text-silver-200 border border-silver-300/20'}
+          >
+            {selectMode ? 'Exit Select' : 'Select'}
+          </ArayButton>
+          {selectMode && (
+            <>
+              <ArayButton
+                variant="ghost"
+                icon={<CheckSquare className="w-4 h-4" />}
+                onClick={selectedIds.size === deduped.length ? deselectAll : selectAll}
+                className="text-silver-200 border border-silver-300/20"
+              >
+                {selectedIds.size === deduped.length && deduped.length > 0
+                  ? `Deselect All (${deduped.length})`
+                  : `Select All (${deduped.length})`}
+              </ArayButton>
+              {selectedIds.size > 0 && (
+                <ArayButton
+                  variant="danger"
+                  icon={<Trash2 className="w-4 h-4" />}
+                  disabled={bulkDeleting}
+                  onClick={handleBulkDelete}
+                >
+                  {bulkDeleting ? 'Deleting…' : `Delete (${selectedIds.size})`}
+                </ArayButton>
+              )}
+            </>
           )}
           <ArayButton variant="silver" icon={<RefreshCw className="w-4 h-4" />} onClick={() => loadMedia()}>
             Refresh
@@ -187,7 +274,14 @@ export function GalleryPage() {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
           {deduped.map((m) => (
-            <MediaTile key={m.id} media={m} onClick={() => setSelected(m)} />
+            <MediaTile
+              key={m.id}
+              media={m}
+              onClick={() => setSelected(m)}
+              selectMode={selectMode}
+              isSelected={selectedIds.has(m.id)}
+              onToggleSelect={() => toggleSelect(m.id)}
+            />
           ))}
         </div>
       )}
@@ -213,7 +307,19 @@ export function GalleryPage() {
   )
 }
 
-function MediaTile({ media, onClick }: { media: ArayMedia; onClick: () => void }) {
+function MediaTile({
+  media,
+  onClick,
+  selectMode = false,
+  isSelected = false,
+  onToggleSelect
+}: {
+  media: ArayMedia
+  onClick: () => void
+  selectMode?: boolean
+  isSelected?: boolean
+  onToggleSelect?: () => void
+}) {
   const [imgError, setImgError] = useState(false)
   const [imgSrc, setImgSrc] = useState<string | null>(null)
 
@@ -239,11 +345,25 @@ function MediaTile({ media, onClick }: { media: ArayMedia; onClick: () => void }
     }
   }, [media.thumbnail_path])
 
+  const handleClick = () => {
+    if (selectMode && onToggleSelect) {
+      onToggleSelect()
+    } else {
+      onClick()
+    }
+  }
+
   return (
     <motion.button
       whileHover={{ y: -2 }}
-      onClick={onClick}
-      className="relative aspect-[3/2] rounded-xl overflow-hidden border border-silver-300/10 hover:border-purple-haze-500/40 transition-all group"
+      onClick={handleClick}
+      className={`relative aspect-[3/2] rounded-xl overflow-hidden transition-all group ${
+        selectMode && isSelected
+          ? 'border-4 border-gold-400 shadow-glow-gold'
+          : selectMode
+            ? 'border-2 border-silver-300/20 hover:border-gold-400/50'
+            : 'border border-silver-300/10 hover:border-purple-haze-500/40'
+      }`}
     >
       {imgSrc && !imgError ? (
         <img src={imgSrc} alt={media.id} className="w-full h-full object-cover" />
@@ -252,9 +372,23 @@ function MediaTile({ media, onClick }: { media: ArayMedia; onClick: () => void }
           <Images className="w-8 h-8 text-silver-600" />
         </div>
       )}
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <AraySyncStatus status={media.sync_status} compact />
-      </div>
+
+      {/* Select mode checkbox overlay */}
+      {selectMode && (
+        <div className={`absolute top-2 left-2 z-10 w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+          isSelected
+            ? 'bg-gold-400 text-purple-haze-950'
+            : 'bg-black/60 text-silver-300 border-2 border-silver-300/40'
+        }`}>
+          {isSelected ? <Check className="w-5 h-5" /> : <Square className="w-4 h-4" />}
+        </div>
+      )}
+
+      {!selectMode && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <AraySyncStatus status={media.sync_status} compact />
+        </div>
+      )}
       <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
         <div className="text-[10px] text-silver-300 font-mono">
           {new Date(media.created_at).toLocaleString()}

@@ -98,6 +98,7 @@ export function BoothPage() {
   const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
   const [palmTriggerActive, setPalmTriggerActive] = useState(false)
   const [palmState, setPalmState] = useState<'IDLE' | 'ARMING' | 'ARMED' | 'TRIGGERED'>('IDLE')
+  const [palmDebug, setPalmDebug] = useState<{ ratio: number; baseline: number; delta: number; threshold: number; isPalm: boolean } | null>(null)
   const palmTriggerRef = useRef<PalmTrigger | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -563,13 +564,31 @@ export function BoothPage() {
 
   // Palm trigger: start when entering preview (photo mode + palm enabled)
   // v2 (Saatiril-style): detect palm → "SIAP" → pull hand away → shutter
+  // v2.1: lower thresholds + debug meter so user can see detection working
   useEffect(() => {
-    if (phase === 'preview' && mode === 'photo' && settings?.palm_trigger && videoRef.current) {
+    if (phase !== 'preview' || mode !== 'photo' || !settings?.palm_trigger) return
+
+    // Video element might not be ready immediately — retry until it is
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
+    const startPalmTrigger = () => {
+      if (cancelled) return
+      const video = videoRef.current
+      if (!video) {
+        retryTimer = setTimeout(startPalmTrigger, 200)
+        return
+      }
+      // Wait until video has real dimensions and is playing
+      if (video.videoWidth === 0 || video.readyState < 2) {
+        retryTimer = setTimeout(startPalmTrigger, 200)
+        return
+      }
+
       if (!palmTriggerRef.current) {
         palmTriggerRef.current = new PalmTrigger()
       }
       const pt = palmTriggerRef.current
-      // v2: onPalmDetected now passes (state, progress) — we track state for UI
       pt.onPalmDetected = (state, progress) => {
         setPalmState(state)
         setPalmProgress(progress)
@@ -578,8 +597,16 @@ export function BoothPage() {
         setPalmState('IDLE')
         setPalmProgress(0)
       }
-      pt.start(videoRef.current, settings.palm_trigger_sensitivity || 0.6, () => {
-        // Palm pulled away after ARMED → trigger shutter
+      pt.onDebug = (info) => {
+        setPalmDebug({
+          ratio: info.ratio,
+          baseline: info.baseline,
+          delta: info.delta,
+          threshold: info.threshold,
+          isPalm: info.isPalm
+        })
+      }
+      pt.start(video, settings.palm_trigger_sensitivity || 0.6, () => {
         setPalmState('TRIGGERED')
         setPalmProgress(0)
         setPalmTriggerActive(false)
@@ -587,15 +614,22 @@ export function BoothPage() {
         runCountdownRef.current()
       })
       setPalmTriggerActive(true)
-      console.log('[Booth] Palm trigger v2 activated (Saatiril-style: detect → SIAP → release → shutter)')
+      console.log('[Booth] Palm trigger v2.1 activated — sensitivity:',
+        settings.palm_trigger_sensitivity || 0.6,
+        '(Saatiril-style: detect → SIAP → release → shutter)')
     }
 
+    startPalmTrigger()
+
     return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
       if (palmTriggerRef.current) {
         palmTriggerRef.current.stop()
         setPalmTriggerActive(false)
         setPalmProgress(0)
         setPalmState('IDLE')
+        setPalmDebug(null)
       }
     }
   }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity])
@@ -816,13 +850,52 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Palm trigger ready indicator (IDLE state) */}
+            {/* Palm trigger ready indicator (IDLE state) + debug meter */}
             {palmTriggerActive && palmState === 'IDLE' && (
-              <div className="absolute top-20 right-4 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5 z-20">
-                <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
-                <span className="text-purple-haze-100 text-xs font-medium">
-                  Palm Trigger ON · Angkat tangan
-                </span>
+              <div className="absolute top-20 right-4 z-20">
+                <div className="flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5">
+                  <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
+                  <span className="text-purple-haze-100 text-xs font-medium">
+                    Palm Trigger ON · Angkat tangan
+                  </span>
+                </div>
+                {/* v2.1: Debug meter — shows live palm detection so user can verify it works */}
+                {palmDebug && (
+                  <div className="mt-2 bg-black/70 border border-purple-haze-500/30 rounded-lg px-3 py-2 text-xs font-mono space-y-1 min-w-[180px]">
+                    <div className="flex justify-between text-silver-300">
+                      <span>Skin ratio</span>
+                      <span>{(palmDebug.ratio * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between text-silver-400">
+                      <span>Baseline</span>
+                      <span>{(palmDebug.baseline * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between text-silver-300">
+                      <span>Delta</span>
+                      <span className={palmDebug.isPalm ? 'text-green-400 font-bold' : 'text-silver-200'}>
+                        +{(palmDebug.delta * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-silver-400">
+                      <span>Threshold</span>
+                      <span>{(palmDebug.threshold * 100).toFixed(1)}%</span>
+                    </div>
+                    {/* Delta bar — fills green when delta > threshold (palm detected) */}
+                    <div className="w-full h-1.5 bg-silver-900/60 rounded-full overflow-hidden mt-1">
+                      <div
+                        className={`h-full transition-all duration-100 ${
+                          palmDebug.isPalm ? 'bg-green-400' : 'bg-purple-haze-400'
+                        }`}
+                        style={{
+                          width: `${Math.min(100, (palmDebug.delta / Math.max(palmDebug.threshold * 2, 0.001)) * 100)}%`
+                        }}
+                      />
+                    </div>
+                    <div className="text-[10px] text-silver-500 text-center mt-1">
+                      {palmDebug.isPalm ? '🟢 PALM DETECTED' : '⚪ no palm — raise hand'}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
