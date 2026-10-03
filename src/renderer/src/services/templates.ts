@@ -409,9 +409,6 @@ export async function compositeCustomTemplate(
   _aspectRatio?: string  // ignored for custom templates — PNG dimensions take priority
 ): Promise<string | null> {
   try {
-    const info = getLayoutInfo(custom.layout)
-    const slots = info.slots
-
     // Load the PNG frame FIRST to get its natural dimensions
     const frameImg = await loadImage(custom.frameDataUrl)
     if (!frameImg) throw new Error('Failed to load frame image')
@@ -424,6 +421,41 @@ export async function compositeCustomTemplate(
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
 
+    // ---- SMART SLOT DETECTION (new in v4.0.3) ----
+    // Draw PNG to canvas, scan alpha channel for transparent holes
+    // (connected-component labeling). If holes found, use them as slot positions
+    // instead of the hardcoded percentages from `custom.layout`.
+    // This lets users design template PNGs with arbitrary slot layouts —
+    // the system reads the PNG and figures out where to put photos.
+    ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height)
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const detectedSlots = detectHolesFromAlpha(imageData, 128, Math.max(1000, Math.floor((canvas.width * canvas.height) * 0.005)))
+
+    // Decide which slot list to use
+    let slots: { x: number; y: number; w: number; h: number }[]
+    let usingDetected = false
+    if (detectedSlots.length >= Math.min(photoDataUrls.length, 1)) {
+      // Smart detection found usable holes — use them (pixel coords)
+      slots = detectedSlots
+      usingDetected = true
+      console.log('[compositeCustomTemplate] Smart slot detection:',
+        detectedSlots.length, 'slots found in PNG →',
+        detectedSlots.map(s => `${s.w}x${s.h} @(${s.x},${s.y})`).join(', '))
+    } else {
+      // Fallback: use hardcoded percentages from layout
+      const info = getLayoutInfo(custom.layout)
+      slots = info.slots.map(s => ({
+        x: (s.x / 100) * canvas.width,
+        y: (s.y / 100) * canvas.height,
+        w: (s.width / 100) * canvas.width,
+        h: (s.height / 100) * canvas.height
+      }))
+      console.log('[compositeCustomTemplate] No transparent holes detected in PNG —',
+        'falling back to layout', custom.layout, 'with', slots.length, 'slots',
+        '(percentages → pixel coords)')
+    }
+
+    // Clear canvas (we'll redraw photo + frame)
     // Black background
     ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -435,10 +467,13 @@ export async function compositeCustomTemplate(
       const slot = slots[i]
       const img = await loadImage(photos[i])
       if (!img) continue
-      const sx = (slot.x / 100) * canvas.width
-      const sy = (slot.y / 100) * canvas.height
-      const sw = (slot.width / 100) * canvas.width
-      const sh = (slot.height / 100) * canvas.height
+      const sx = usingDetected ? slot.x : (slot.x / 100) * canvas.width
+      const sy = usingDetected ? slot.y : (slot.y / 100) * canvas.height
+      const sw = usingDetected ? slot.w : (slot.w / 100) * canvas.width
+      const sh = usingDetected ? slot.h : (slot.h / 100) * canvas.height
+      console.log(`[compositeCustomTemplate] Photo ${i + 1}:`,
+        `slot ${sw.toFixed(0)}x${sh.toFixed(0)} @ (${sx.toFixed(0)},${sy.toFixed(0)})`,
+        `— contain-fit, no crop`)
       drawImageContain(ctx, img, sx, sy, sw, sh)
     }
 
@@ -579,4 +614,136 @@ function drawImageContain(
 
   // Draw image centered in slot
   ctx.drawImage(img, dx + offsetX, dy + offsetY, drawW, drawH)
+}
+
+// ─── SMART SLOT DETECTION (v4.0.3) ─────────────────────────────
+// Detect transparent regions in a PNG via connected-component labeling
+// on the alpha channel. Each connected transparent region = one slot.
+//
+// Returns bounding boxes in PIXEL coordinates, sorted in reading order:
+// top-to-bottom (with row tolerance), then left-to-right within a row.
+//
+// This lets users design template PNGs with arbitrary slot layouts
+// (2 holes, 3 holes, asymmetric, etc.) without needing to specify
+// slot positions in code. The system reads the PNG and figures out
+// where photos should go.
+//
+// @param imageData      RGBA ImageData of the template (already drawn to canvas)
+// @param alphaThreshold pixels with alpha < this are "hole" (0-255, default 128)
+// @param minArea        ignore regions smaller than this (noise filter)
+// @returns              bounding boxes sorted in reading order
+function detectHolesFromAlpha(
+  imageData: ImageData,
+  alphaThreshold = 128,
+  minArea = 1000
+): { x: number; y: number; w: number; h: number }[] {
+  const W = imageData.width
+  const H = imageData.height
+  const data = imageData.data
+
+  // Build binary mask: 1 = hole (transparent), 0 = opaque
+  const mask = new Uint8Array(W * H)
+  for (let i = 0; i < W * H; i++) {
+    const a = data[i * 4 + 3]
+    mask[i] = a < alphaThreshold ? 1 : 0
+  }
+
+  // Connected-component labeling via iterative flood fill (4-connectivity)
+  // Iterative (stack-based) to avoid stack overflow on large templates.
+  const labels = new Int32Array(W * H) // 0 = unlabeled
+  const holes: { x: number; y: number; w: number; h: number; area: number }[] = []
+  let nextLabel = 1
+
+  for (let seed = 0; seed < W * H; seed++) {
+    if (mask[seed] !== 1 || labels[seed] !== 0) continue
+
+    const label = nextLabel++
+    let minX = W, minY = H, maxX = 0, maxY = 0, area = 0
+    const stack: number[] = [seed]
+    labels[seed] = label
+
+    while (stack.length > 0) {
+      const idx = stack.pop()!
+      const x = idx % W
+      const y = (idx / W) | 0
+
+      area++
+      if (x < minX) minX = x
+      if (y < minY) minY = y
+      if (x > maxX) maxX = x
+      if (y > maxY) maxY = y
+
+      // 4-connectivity neighbors
+      if (x > 0) {
+        const n = idx - 1
+        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
+      }
+      if (x < W - 1) {
+        const n = idx + 1
+        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
+      }
+      if (y > 0) {
+        const n = idx - W
+        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
+      }
+      if (y < H - 1) {
+        const n = idx + W
+        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
+      }
+    }
+
+    if (area >= minArea) {
+      holes.push({
+        x: minX,
+        y: minY,
+        w: maxX - minX + 1,
+        h: maxY - minY + 1,
+        area
+      })
+    }
+  }
+
+  // Sort in READING ORDER:
+  // Group by row (using tolerance = max(8px, avgH/3)), then left-to-right within row.
+  if (holes.length > 0) {
+    const avgH = holes.reduce((s, h) => s + h.h, 0) / holes.length
+    const rowTol = Math.max(8, avgH / 3)
+    holes.sort((a, b) => {
+      const rowA = Math.floor(a.y / rowTol)
+      const rowB = Math.floor(b.y / rowTol)
+      if (rowA !== rowB) return rowA - rowB
+      return a.x - b.x
+    })
+  }
+
+  return holes.map(h => ({ x: h.x, y: h.y, w: h.w, h: h.h }))
+}
+
+// Public helper: detect slots in a PNG and return detailed info.
+// Useful for UI: "Template has 2 slots: 800x600 (1.33:1), 800x600 (1.33:1)"
+export async function detectTemplateSlots(
+  pngDataUrl: string
+): Promise<{ x: number; y: number; w: number; h: number; aspectRatio: number }[]> {
+  const img = await loadImage(pngDataUrl)
+  if (!img) return []
+  const W = img.naturalWidth
+  const H = img.naturalHeight
+  if (W === 0 || H === 0) return []
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return []
+  ctx.drawImage(img, 0, 0)
+
+  const imageData = ctx.getImageData(0, 0, W, H)
+  const holes = detectHolesFromAlpha(imageData, 128, Math.max(1000, Math.floor((W * H) * 0.005)))
+  return holes.map(h => ({
+    x: h.x,
+    y: h.y,
+    w: h.w,
+    h: h.h,
+    aspectRatio: h.w / h.h
+  }))
 }
