@@ -301,9 +301,19 @@ function MediaDetailModal({
             <ArayButton
               variant="ghost"
               icon={<FolderOpen className="w-4 h-4" />}
-              onClick={() => {
-                const folder = media.original_path.substring(0, media.original_path.lastIndexOf('/'))
-                window.aray.storage.openFolder(folder)
+              onClick={async () => {
+                // Open the event folder that contains this media
+                if (media.event_id) {
+                  await window.aray.events.openFolder(media.event_id)
+                } else {
+                  // Fallback: try to open parent folder of the file
+                  const sep = media.original_path.includes('\\') ? '\\' : '/'
+                  const parts = media.original_path.split(sep)
+                  // Go up to the event folder (usually 3 levels: Photos/Original/file)
+                  let folder = parts.slice(0, -3).join(sep)
+                  if (!folder) folder = parts.slice(0, -1).join(sep)
+                  window.aray.storage.openFolder(folder)
+                }
               }}
             >
               Open Folder
