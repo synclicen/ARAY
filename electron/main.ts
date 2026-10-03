@@ -3,7 +3,7 @@
  * Photo + Video + Template composite. Pure JS, no native modules.
  */
 
-import { app, BrowserWindow, shell, dialog, ipcMain, globalShortcut } from 'electron'
+import { app, BrowserWindow, shell, dialog, ipcMain, globalShortcut, protocol, net } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as crypto from 'crypto'
@@ -350,8 +350,15 @@ function createWindow(): void {
   mainWindow.webContents.on('render-process-gone', (_e, d) => log(`Renderer CRASH: ${d.reason}`))
   mainWindow.on('closed', () => { mainWindow = null })
 
-  if (process.env.ELECTRON_RENDERER_URL) mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  else mainWindow.loadFile(rendererPath)
+  if (process.env.ELECTRON_RENDERER_URL) {
+    // Dev mode: Vite dev server (http://localhost:5173)
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+  } else {
+    // Production: load via custom `app://` protocol (NOT file://).
+    // This is critical — MediaPipe Hands uses fetch() to load WASM/data files,
+    // and fetch() is blocked on file:// protocol. app:// supports fetch.
+    mainWindow.loadURL('app://./index.html')
+  }
   log('Main window created')
 }
 
@@ -558,6 +565,36 @@ function registerIPC() {
 }
 
 // ─── APP LIFECYCLE ──────────────────────────────────────────────
+
+// v4.0.9: Register custom `app://` protocol BEFORE app is ready.
+// This is critical for MediaPipe Hands (palm trigger) to work in production.
+//
+// WHY: In production, Electron loads the renderer via `file://` protocol
+// (loadFile). MediaPipe's WASM loader uses `fetch()` internally to load
+// `.wasm` and `.data` files. `fetch()` on `file://` is blocked/restricted
+// in Chromium, so MediaPipe fails silently — palm trigger never starts.
+//
+// Saatiril (web app) works because it serves via `http://`, where fetch
+// works fine. We replicate that by registering `app://` with:
+//   - supportFetchAPI: true  → fetch() works
+//   - corsEnabled: true      → no CORS errors
+//   - secure: true           → treated as secure origin (no mixed-content)
+//   - standard: true         → behaves like https:// for relative URLs
+//
+// Then we load the renderer via `app://./index.html` instead of `loadFile()`.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true
+    }
+  }
+])
+
 app.whenReady().then(() => {
   log('========================================')
   log('ARAY starting up (v2.0.0 — Photo + Video + Templates)')
@@ -568,6 +605,63 @@ app.whenReady().then(() => {
   log(`__dirname: ${__dirname}`)
   log(`userData: ${app.getPath('userData')}`)
   log('========================================')
+
+  // v4.0.9: Register `app://` protocol handler — serves renderer files
+  // with proper fetch/CORS support so MediaPipe WASM can load.
+  const rendererDir = path.join(__dirname, '..', 'out', 'renderer')
+  protocol.handle('app', (request) => {
+    try {
+      // Parse the URL: app://./index.html → path = index.html
+      // app://./mediapipe/hands.js → path = mediapipe/hands.js
+      let urlPath = request.url.replace(/^app:\/\/\.?\//, '')
+      // Decode URI component for filenames with spaces
+      urlPath = decodeURIComponent(urlPath)
+      // Resolve against renderer dir, prevent path traversal
+      const filePath = path.resolve(rendererDir, urlPath)
+      if (!filePath.startsWith(path.resolve(rendererDir))) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      // Read file and return with correct MIME type
+      if (!fs.existsSync(filePath)) {
+        log(`[app://] 404: ${urlPath}`)
+        return new Response('Not Found', { status: 404 })
+      }
+      const buffer = fs.readFileSync(filePath)
+      const ext = path.extname(filePath).toLowerCase()
+      const mimeTypes: Record<string, string> = {
+        '.html': 'text/html',
+        '.js': 'application/javascript',
+        '.mjs': 'application/javascript',
+        '.css': 'text/css',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.woff': 'font/woff',
+        '.woff2': 'font/woff2',
+        '.ttf': 'font/ttf',
+        '.wasm': 'application/wasm',
+        '.data': 'application/octet-stream',
+        '.tflite': 'application/octet-stream',
+        '.binarypb': 'application/octet-stream'
+      }
+      const mime = mimeTypes[ext] || 'application/octet-stream'
+      // Add CORS headers so fetch() from the page works
+      const headers = new Headers({
+        'Content-Type': mime,
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache'
+      })
+      return new Response(buffer, { status: 200, headers })
+    } catch (e: any) {
+      log(`[app://] Error serving ${request.url}: ${e.message}`)
+      return new Response('Internal Error', { status: 500 })
+    }
+  })
+  log(`app:// protocol registered — serving from ${rendererDir}`)
 
   try {
     ensureStoragePath(); log('Storage path ensured')

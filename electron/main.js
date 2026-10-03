@@ -423,8 +423,11 @@ function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
-  if (process.env.ELECTRON_RENDERER_URL) mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-  else mainWindow.loadFile(rendererPath);
+  if (process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+  } else {
+    mainWindow.loadURL("app://./index.html");
+  }
   log("Main window created");
 }
 function ok(data) {
@@ -666,6 +669,18 @@ function registerIPC() {
   import_electron.ipcMain.handle("sync.summary", (_e, eventId) => wrap(() => getMediaStats(eventId)));
   log("All IPC handlers registered");
 }
+import_electron.protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "app",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true
+    }
+  }
+]);
 import_electron.app.whenReady().then(() => {
   log("========================================");
   log("ARAY starting up (v2.0.0 \u2014 Photo + Video + Templates)");
@@ -676,6 +691,54 @@ import_electron.app.whenReady().then(() => {
   log(`__dirname: ${__dirname}`);
   log(`userData: ${import_electron.app.getPath("userData")}`);
   log("========================================");
+  const rendererDir = path.join(__dirname, "..", "out", "renderer");
+  import_electron.protocol.handle("app", (request) => {
+    try {
+      let urlPath = request.url.replace(/^app:\/\/\.?\//, "");
+      urlPath = decodeURIComponent(urlPath);
+      const filePath = path.resolve(rendererDir, urlPath);
+      if (!filePath.startsWith(path.resolve(rendererDir))) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      if (!fs.existsSync(filePath)) {
+        log(`[app://] 404: ${urlPath}`);
+        return new Response("Not Found", { status: 404 });
+      }
+      const buffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes = {
+        ".html": "text/html",
+        ".js": "application/javascript",
+        ".mjs": "application/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+        ".ico": "image/x-icon",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf": "font/ttf",
+        ".wasm": "application/wasm",
+        ".data": "application/octet-stream",
+        ".tflite": "application/octet-stream",
+        ".binarypb": "application/octet-stream"
+      };
+      const mime = mimeTypes[ext] || "application/octet-stream";
+      const headers = new Headers({
+        "Content-Type": mime,
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache"
+      });
+      return new Response(buffer, { status: 200, headers });
+    } catch (e) {
+      log(`[app://] Error serving ${request.url}: ${e.message}`);
+      return new Response("Internal Error", { status: 500 });
+    }
+  });
+  log(`app:// protocol registered \u2014 serving from ${rendererDir}`);
   try {
     ensureStoragePath();
     log("Storage path ensured");
