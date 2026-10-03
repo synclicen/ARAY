@@ -181,7 +181,8 @@ function getVideoPath(event, sessionId, ext = "webm") {
 function getCompositePath(event, sessionId) {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
-  return path.join(eventPath, "Photos", "Prints", `${eventName}_composite.jpg`);
+  const sid = (sessionId || "").slice(0, 8);
+  return path.join(eventPath, "Photos", "Prints", `${eventName}_${sid}_composite.jpg`);
 }
 function calculateChecksum(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");

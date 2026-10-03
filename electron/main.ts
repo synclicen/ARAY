@@ -145,7 +145,12 @@ function getVideoPath(event: any, sessionId: string, ext = 'webm'): string {
 function getCompositePath(event: any, sessionId: string): string {
   const eventPath = ensureEventStorage(event)
   const eventName = sanitizeFilename(event.name || 'ARAY')
-  return path.join(eventPath, 'Photos', 'Prints', `${eventName}_composite.jpg`)
+  // v4.0.5: include sessionId in filename so each session gets a unique file.
+  // Before this, all composites in the same event overwrote the same file
+  // (`{eventName}_composite.jpg`), causing the Gallery to show N identical
+  // thumbnails pointing to 1 file on disk.
+  const sid = (sessionId || '').slice(0, 8)
+  return path.join(eventPath, 'Photos', 'Prints', `${eventName}_${sid}_composite.jpg`)
 }
 
 function calculateChecksum(filePath: string): string {

@@ -97,6 +97,7 @@ export function BoothPage() {
   const [compositeMediaId, setCompositeMediaId] = useState<string | null>(null)
   const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
   const [palmTriggerActive, setPalmTriggerActive] = useState(false)
+  const [palmState, setPalmState] = useState<'IDLE' | 'ARMING' | 'ARMED' | 'TRIGGERED'>('IDLE')
   const palmTriggerRef = useRef<PalmTrigger | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -561,24 +562,32 @@ export function BoothPage() {
   }, [phase, startCamera])
 
   // Palm trigger: start when entering preview (photo mode + palm enabled)
+  // v2 (Saatiril-style): detect palm → "SIAP" → pull hand away → shutter
   useEffect(() => {
     if (phase === 'preview' && mode === 'photo' && settings?.palm_trigger && videoRef.current) {
       if (!palmTriggerRef.current) {
         palmTriggerRef.current = new PalmTrigger()
       }
       const pt = palmTriggerRef.current
-      pt.onPalmDetected = (progress) => setPalmProgress(progress)
-      pt.onPalmLost = () => setPalmProgress(0)
+      // v2: onPalmDetected now passes (state, progress) — we track state for UI
+      pt.onPalmDetected = (state, progress) => {
+        setPalmState(state)
+        setPalmProgress(progress)
+      }
+      pt.onPalmLost = () => {
+        setPalmState('IDLE')
+        setPalmProgress(0)
+      }
       pt.start(videoRef.current, settings.palm_trigger_sensitivity || 0.6, () => {
+        // Palm pulled away after ARMED → trigger shutter
+        setPalmState('TRIGGERED')
         setPalmProgress(0)
         setPalmTriggerActive(false)
-        // Trigger capture — use ref so we always call the latest runCountdown
-        // (otherwise shot 2+ would re-run shot 1's countdown closure)
         setPhase('countdown')
         runCountdownRef.current()
       })
       setPalmTriggerActive(true)
-      console.log('[Booth] Palm trigger activated')
+      console.log('[Booth] Palm trigger v2 activated (Saatiril-style: detect → SIAP → release → shutter)')
     }
 
     return () => {
@@ -586,6 +595,7 @@ export function BoothPage() {
         palmTriggerRef.current.stop()
         setPalmTriggerActive(false)
         setPalmProgress(0)
+        setPalmState('IDLE')
       }
     }
   }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity])
@@ -762,29 +772,57 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Palm trigger progress overlay */}
-            {palmTriggerActive && palmProgress > 0 && (
+            {/* Palm trigger v2 — Saatiril-style overlay */}
+            {/* ARMED state: big "SIAP" overlay — pull hand away to trigger shutter */}
+            {palmTriggerActive && palmState === 'ARMED' && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="absolute inset-0 flex items-center justify-center pointer-events-none z-15"
+              >
+                <div className="text-center">
+                  <motion.div
+                    animate={{ scale: [1, 1.08, 1] }}
+                    transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+                    className="text-[180px] font-extrabold aray-gradient-text leading-none"
+                    style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.7)' }}
+                  >
+                    SIAP
+                  </motion.div>
+                  <div className="text-silver-200 text-2xl font-semibold mt-4">
+                    Tarik tangan untuk capture
+                  </div>
+                  <div className="text-silver-400 text-sm mt-2 italic">
+                    Pull your hand away to trigger the shutter
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ARMING state: brief "Detecting..." while palm stabilizes (600ms) */}
+            {palmTriggerActive && palmState === 'ARMING' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
                 <div className="text-center">
-                  <div className="text-6xl font-extrabold aray-gradient-text mb-4">
-                    {Math.round(palmProgress * 100)}%
-                  </div>
-                  <div className="w-48 h-2 bg-silver-900/60 rounded-full overflow-hidden mx-auto">
-                    <div
-                      className="h-full bg-gradient-to-r from-gold-400 to-purple-haze-400 transition-all duration-100"
-                      style={{ width: `${palmProgress * 100}%` }}
-                    />
-                  </div>
-                  <div className="text-silver-300 text-sm mt-3">Hold your palm...</div>
+                  <motion.div
+                    animate={{ opacity: [0.4, 1, 0.4] }}
+                    transition={{ duration: 0.6, repeat: Infinity }}
+                    className="text-5xl font-bold text-purple-haze-200"
+                  >
+                    Mendeteksi...
+                  </motion.div>
+                  <div className="text-silver-400 text-sm mt-3">Tahan tangan di depan kamera</div>
                 </div>
               </div>
             )}
 
-            {/* Palm trigger ready indicator */}
-            {palmTriggerActive && palmProgress === 0 && (
+            {/* Palm trigger ready indicator (IDLE state) */}
+            {palmTriggerActive && palmState === 'IDLE' && (
               <div className="absolute top-20 right-4 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5 z-20">
                 <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
-                <span className="text-purple-haze-100 text-xs font-medium">Palm Trigger ON</span>
+                <span className="text-purple-haze-100 text-xs font-medium">
+                  Palm Trigger ON · Angkat tangan
+                </span>
               </div>
             )}
 

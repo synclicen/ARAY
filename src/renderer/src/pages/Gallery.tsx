@@ -49,6 +49,21 @@ export function GalleryPage() {
     return sort === 'newest' ? -cmp : cmp
   })
 
+  // v4.0.5: Deduplicate by original_path.
+  // Before v4.0.5, all composites in the same event overwrote the same file
+  // (`{eventName}_composite.jpg`), so multiple media entries pointed to the
+  // same file. Gallery showed N identical thumbnails for 1 file on disk.
+  // Even after the filename fix, old media entries still point to the same
+  // path. Dedupe here: keep the LATEST entry per unique path, hide the rest.
+  const seenPaths = new Set<string>()
+  const deduped = sorted.filter((m) => {
+    const p = m.original_path || ''
+    if (!p) return true  // keep entries without path (shouldn't happen)
+    if (seenPaths.has(p)) return false  // duplicate — skip
+    seenPaths.add(p)
+    return true
+  })
+
   // v4.0.4: Clean up raw shots — delete all media entries whose original_path
   // points to a raw shot file (path contains /Original/ or \Original\).
   // Composite files live in /Prints/ with "_composite" in the name, so they're safe.
@@ -161,7 +176,7 @@ export function GalleryPage() {
       </ArayCard>
 
       {/* Grid */}
-      {sorted.length === 0 ? (
+      {deduped.length === 0 ? (
         <ArayCard className="text-center py-16">
           <ArayLogo size="md" showTagline={false} className="mb-4 opacity-50" />
           <h3 className="text-lg font-semibold mb-2">No memories yet</h3>
@@ -171,7 +186,7 @@ export function GalleryPage() {
         </ArayCard>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          {sorted.map((m) => (
+          {deduped.map((m) => (
             <MediaTile key={m.id} media={m} onClick={() => setSelected(m)} />
           ))}
         </div>
@@ -184,12 +199,12 @@ export function GalleryPage() {
             media={selected}
             onClose={() => setSelected(null)}
             onPrev={() => {
-              const idx = sorted.findIndex((m) => m.id === selected.id)
-              if (idx > 0) setSelected(sorted[idx - 1])
+              const idx = deduped.findIndex((m) => m.id === selected.id)
+              if (idx > 0) setSelected(deduped[idx - 1])
             }}
             onNext={() => {
-              const idx = sorted.findIndex((m) => m.id === selected.id)
-              if (idx < sorted.length - 1) setSelected(sorted[idx + 1])
+              const idx = deduped.findIndex((m) => m.id === selected.id)
+              if (idx < deduped.length - 1) setSelected(deduped[idx + 1])
             }}
           />
         )}
