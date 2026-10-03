@@ -435,10 +435,6 @@ export async function compositeCustomTemplate(
   }
 }
 
-export function getLayoutShotCount(layout: string): number {
-  return LAYOUT_SHOT_COUNT[layout] || 4
-}
-
 export async function compositeTemplate(
   template: ArayTemplateDef,
   photoDataUrls: string[]
