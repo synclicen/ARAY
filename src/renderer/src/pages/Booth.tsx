@@ -1025,23 +1025,14 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* "Shot X of Y" info — posisi adaptif:
-                - Palm trigger AKTIF: badge kecil di pojok kiri atas (tidak tabrakan dengan palm overlay di tengah)
-                - Palm trigger NONAKTIF / video mode: teks besar di tengah-bawah (seperti biasa)
-                - Hidden saat fullscreen booth (kiosk mode fokus camera saja) */}
-            {!(mode === 'video' && isRecording) && !fullscreenBooth && palmTriggerActive && mode === 'photo' && (
-              <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-full px-4 py-2 border border-silver-300/20">
-                <span className="text-gold-400 text-sm font-bold">Shot {currentShot}</span>
-                <span className="text-silver-500 text-xs">/</span>
-                <span className="text-silver-300 text-sm">{totalShots}</span>
-              </div>
-            )}
+            {/* "Shot X of Y" info — sekarang digabung dengan shutter button
+                (lihat bottom capture button). Tidak ada teks terpisah lagi. */}
 
             {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
                   <p className="text-silver-200 text-2xl font-semibold mb-1">
-                    Shot {currentShot} of {totalShots}
+                    Ready
                   </p>
                 ) : (
                   <>
@@ -1273,17 +1264,21 @@ export function BoothPage() {
       </AnimatePresence>
 
       {/* Capture button (visible during preview, PHOTO mode only)
-          Hidden saat fullscreen booth (palm trigger only, no manual button) */}
-      {phase === 'preview' && mode === 'photo' && !fullscreenBooth && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20">
+          v4.1.8: SELALU tampil termasuk saat fullscreen booth.
+          Shot count "1/2" digabung di dalam lingkaran shutter (compact format). */}
+      {phase === 'preview' && mode === 'photo' && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
           <button
             onClick={() => {
               setPhase('countdown')
               runCountdown()
             }}
-            className="w-24 h-24 rounded-full bg-gradient-to-br from-gold-300 to-gold-500 border-4 border-white/80 shadow-glow-gold hover:scale-105 transition-transform flex items-center justify-center"
+            className="relative w-24 h-24 rounded-full bg-gradient-to-br from-gold-300 to-gold-500 border-4 border-white/80 shadow-glow-gold hover:scale-105 transition-transform flex flex-col items-center justify-center"
           >
-            <Camera className="w-10 h-10 text-purple-haze-950" />
+            <Camera className="w-7 h-7 text-purple-haze-950" />
+            <span className="text-purple-haze-950 text-sm font-extrabold leading-none mt-1">
+              {currentShot}/{totalShots}
+            </span>
           </button>
         </div>
       )}
