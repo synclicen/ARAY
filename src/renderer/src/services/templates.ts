@@ -428,8 +428,8 @@ export async function compositeCustomTemplate(
     ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Draw photos into slots (percentage-based, works at any canvas size)
-    // Photos are cover-fit (cropped) to match slot aspect ratio — NOT stretched
+    // Draw photos into slots — contain-fit (FULL photo visible, no crop)
+    // Photos maintain their aspect ratio, centered in slot with black bars
     const photos = photoDataUrls.slice(0, slots.length)
     for (let i = 0; i < slots.length && i < photos.length; i++) {
       const slot = slots[i]
@@ -439,7 +439,7 @@ export async function compositeCustomTemplate(
       const sy = (slot.y / 100) * canvas.height
       const sw = (slot.width / 100) * canvas.width
       const sh = (slot.height / 100) * canvas.height
-      drawImageCover(ctx, img, sx, sy, sw, sh)
+      drawImageContain(ctx, img, sx, sy, sw, sh)
     }
 
     // Overlay PNG frame at NATURAL size — no stretching!
@@ -544,4 +544,39 @@ function drawImageCover(
   }
 
   ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh)
+}
+
+// Contain-fit: scale image to fit INSIDE the slot, no cropping.
+// Image maintains aspect ratio. Empty area filled with black.
+function drawImageContain(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  dx: number, dy: number, dw: number, dh: number
+) {
+  const imgRatio = img.width / img.height
+  const slotRatio = dw / dh
+
+  let drawW = dw
+  let drawH = dh
+  let offsetX = 0
+  let offsetY = 0
+
+  if (imgRatio > slotRatio) {
+    // Image wider than slot — fit to width, center vertically
+    drawW = dw
+    drawH = dw / imgRatio
+    offsetY = (dh - drawH) / 2
+  } else {
+    // Image taller than slot — fit to height, center horizontally
+    drawH = dh
+    drawW = dh * imgRatio
+    offsetX = (dw - drawW) / 2
+  }
+
+  // Fill slot with black background first
+  ctx.fillStyle = '#000000'
+  ctx.fillRect(dx, dy, dw, dh)
+
+  // Draw image centered in slot
+  ctx.drawImage(img, dx + offsetX, dy + offsetY, drawW, drawH)
 }
