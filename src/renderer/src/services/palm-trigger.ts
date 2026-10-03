@@ -145,8 +145,10 @@ export class PalmTrigger {
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.3,  // Very responsive (sama dengan Saatiril)
-        minTrackingConfidence: 0.3
+        // v3.2: Raised from 0.3 → 0.6 to reduce false positives.
+        // At 0.3, MediaPipe sometimes misdetected faces/objects as hands.
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
       })
 
       hands.onResults((results: any) => this.processResults(results))
@@ -247,7 +249,12 @@ export class PalmTrigger {
 
     const multiHandLandmarks = results.multiHandLandmarks || []
     const now = Date.now()
-    const handDetected = multiHandLandmarks.length > 0
+
+    // v3.2: OPEN PALM VALIDATION — only accept hand if 5 fingers extended.
+    // This prevents false positives where faces/objects get misclassified as hands,
+    // and ensures user must show an OPEN palm (5 fingers visible) to trigger.
+    // Fists or partial hands don't count.
+    const handDetected = multiHandLandmarks.length > 0 && this.isOpenPalm(multiHandLandmarks[0])
 
     // Cooldown check
     if (this.lastTriggerTime > 0 && now - this.lastTriggerTime < TRIGGER_COOLDOWN_MS) {
@@ -257,36 +264,106 @@ export class PalmTrigger {
 
     if (handDetected) {
       if (this.handVisibleSince === 0) {
-        // Hand just appeared
+        // Open palm just appeared
         this.handVisibleSince = now
         this.isConfirmed = false
         this.triggerFired = false
         this.setState('hand_detected')
-        console.log('[ARAY Palm v3] Hand appeared — waiting for 500ms sustain')
+        console.log('[ARAY Palm v3] Open palm appeared — waiting for 500ms sustain')
       } else if (!this.isConfirmed && now - this.handVisibleSince >= HAND_CONFIRM_SUSTAIN_MS) {
-        // Hand sustained long enough → confirmed
+        // Open palm sustained long enough → confirmed
         this.isConfirmed = true
         this.setState('confirmed')
-        console.log('[ARAY Palm v3] Hand confirmed ✓ — remove hand to trigger timer')
+        console.log('[ARAY Palm v3] Open palm confirmed ✓ — remove hand to trigger timer')
         this.callbacks?.onPalmConfirmed?.()
       }
-      // else: hand still visible, waiting for sustain or waiting to leave
+      // else: palm still visible, waiting for sustain or waiting to leave
     } else {
-      // No hand in frame
+      // No open palm in frame (either no hand, or hand but not open palm)
       if (this.isConfirmed && !this.triggerFired) {
-        // Hand was confirmed and now left → TRIGGER!
+        // Open palm was confirmed and now left → TRIGGER!
         this.triggerFired = true
         this.lastTriggerTime = now
         this.setState('triggered')
-        console.log('[ARAY Palm v3] Hand left frame → TIMER STARTED! (photobooth trigger)')
+        console.log('[ARAY Palm v3] Open palm left frame → TIMER STARTED! (photobooth trigger)')
         this.callbacks?.onPalmLeft?.()
       } else {
-        // Hand was not confirmed or already triggered — just reset
+        // Open palm was not confirmed or already triggered — just reset
         this.setState('none')
       }
       this.handVisibleSince = 0
       this.isConfirmed = false
     }
+  }
+
+  /**
+   * v3.2: OPEN PALM VALIDATOR
+   *
+   * MediaPipe Hands landmark indices (21 landmarks per hand):
+   *   0: wrist
+   *   1-4: thumb (CMC, MCP, IP, TIP)
+   *   5-8: index (MCP, PIP, DIP, TIP)
+   *   9-12: middle (MCP, PIP, DIP, TIP)
+   *   13-16: ring (MCP, PIP, DIP, TIP)
+   *   17-20: pinky (MCP, PIP, DIP, TIP)
+   *
+   * A finger is "extended" if its TIP is farther from the wrist than its PIP joint.
+   * (When you make a fist, fingertips curl back toward palm, closer to wrist than PIP.)
+   *
+   * For thumb, we use a different test: thumb TIP should be farther from index MCP
+   * than thumb MCP — meaning thumb is spread out, not tucked across palm.
+   *
+   * Returns true only if ALL 5 fingers are extended (open palm pose).
+   * This prevents:
+   *   - Faces misclassified as hands (no finger geometry)
+   *   - Fists (no fingers extended)
+   *   - Partial hands (only some fingers extended)
+   */
+  private isOpenPalm(landmarks: any[]): boolean {
+    if (!landmarks || landmarks.length < 21) return false
+
+    const wrist = landmarks[0]
+    const dist = (a: any, b: any) => Math.hypot(a.x - b.x, a.y - b.y)
+
+    // Helper: is finger extended? (TIP farther from wrist than PIP joint)
+    // For fingers with PIP at indices 6, 10, 14, 18 and TIP at 8, 12, 16, 20
+    const isFingerExtended = (pipIdx: number, tipIdx: number): boolean => {
+      const pip = landmarks[pipIdx]
+      const tip = landmarks[tipIdx]
+      const distPipToWrist = dist(pip, wrist)
+      const distTipToWrist = dist(tip, wrist)
+      // TIP must be at least 5% farther from wrist than PIP (tolerance for noise)
+      return distTipToWrist > distPipToWrist * 1.05
+    }
+
+    // Index, middle, ring, pinky — all must be extended
+    const indexExtended = isFingerExtended(6, 8)
+    const middleExtended = isFingerExtended(10, 12)
+    const ringExtended = isFingerExtended(14, 16)
+    const pinkyExtended = isFingerExtended(18, 20)
+
+    // Thumb — different test. Thumb TIP (4) should be farther from index MCP (5)
+    // than thumb MCP (2) is. This means thumb is spread out, not tucked across.
+    const thumbMcp = landmarks[2]
+    const thumbTip = landmarks[4]
+    const indexMcp = landmarks[5]
+    const thumbSpread = dist(thumbTip, indexMcp) > dist(thumbMcp, indexMcp) * 1.1
+
+    const extendedCount = [indexExtended, middleExtended, ringExtended, pinkyExtended, thumbSpread]
+      .filter(Boolean).length
+
+    // Require ALL 5 fingers extended for a clean open palm.
+    // This is strict — user must clearly show open hand, not fist or partial.
+    const isOpen = extendedCount === 5
+
+    if (isOpen) {
+      // Log occasionally for debugging
+      if (Math.floor(Date.now() / 1000) % 3 === 0) {
+        console.log('[ARAY Palm v3] Open palm validated — 5 fingers extended')
+      }
+    }
+
+    return isOpen
   }
 
   private detectFrame = async (): Promise<void> => {

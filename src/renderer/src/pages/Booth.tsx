@@ -845,13 +845,13 @@ export function BoothPage() {
                     Tarik tangan untuk capture
                   </div>
                   <div className="text-silver-400 text-sm mt-2 italic">
-                    Pull your hand away to trigger the shutter
+                    Pull your open hand away to trigger the shutter
                   </div>
                 </div>
               </motion.div>
             )}
 
-            {/* HAND_DETECTED state: brief "Mendeteksi..." while hand sustains 500ms */}
+            {/* HAND_DETECTED state: brief "Mendeteksi..." while open palm sustains 500ms */}
             {palmTriggerActive && palmState === 'hand_detected' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
                 <div className="text-center">
@@ -862,7 +862,9 @@ export function BoothPage() {
                   >
                     Mendeteksi...
                   </motion.div>
-                  <div className="text-silver-400 text-sm mt-3">Tahan tangan di depan kamera</div>
+                  <div className="text-silver-400 text-sm mt-3">
+                    Tahan telapak terbuka (5 jari) di depan kamera
+                  </div>
                 </div>
               </div>
             )}
@@ -873,7 +875,7 @@ export function BoothPage() {
               <div className="absolute top-20 right-4 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5 z-20">
                 <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
                 <span className="text-purple-haze-100 text-xs font-medium">
-                  Palm Trigger ON · Angkat tangan
+                  Palm Trigger ON · Angkat telapak (5 jari)
                 </span>
               </div>
             )}
