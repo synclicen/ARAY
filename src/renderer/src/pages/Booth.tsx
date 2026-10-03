@@ -1003,7 +1003,7 @@ export function BoothPage() {
                   </motion.svg>
                   {/* SATU teks singkat saja — ganti sesuai state */}
                   <div className="mt-4 text-silver-200 text-lg font-medium">
-                    {palmState === 'hand_detected' ? 'Tahan...' : 'Align tangan ke outline'}
+                    {palmState === 'hand_detected' ? 'Tahan...' : 'Arahkan tangan ke layar, tahan, dan lepaskan'}
                   </div>
                 </div>
               </div>
@@ -1030,12 +1030,9 @@ export function BoothPage() {
             {!(mode === 'video' && isRecording) && !fullscreenBooth && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
-                  <>
-                    <p className="text-silver-200 text-2xl font-semibold mb-1">
-                      Shot {currentShot} of {totalShots}
-                    </p>
-                    <p className="text-silver-400 text-sm italic">Strike a pose. Don't blink.</p>
-                  </>
+                  <p className="text-silver-200 text-2xl font-semibold mb-1">
+                    Shot {currentShot} of {totalShots}
+                  </p>
                 ) : (
                   <>
                     <p className="text-silver-200 text-2xl font-semibold mb-1">
