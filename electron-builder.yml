@@ -1,0 +1,46 @@
+appId: "com.aray.booth"
+productName: "ARAY"
+copyright: "Copyright © 2026 ARAY"
+
+directories:
+  output: release
+  buildResources: resources
+
+asar: true
+
+files:
+  - electron/main.js
+  - electron/preload.js
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/
+    to: resources/
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  icon: resources/icon/icon.ico
+  artifactName: "ARAY-Setup-${version}.${ext}"
+
+portable:
+  artifactName: "ARAY-Portable-${version}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icon/icon.ico
+  uninstallerIcon: resources/icon/icon.ico
+  shortcutName: ARAY
+  artifactName: "ARAY-Setup-${version}.${ext}"
+  deleteAppDataOnUninstall: false

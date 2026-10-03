@@ -1,0 +1,68 @@
+name: ✨ Feature Request
+description: Suggest a new feature or improvement
+title: '[FEAT] '
+labels: ['enhancement', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Please describe what you'd like ARAY to do.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Feature summary
+      description: One-sentence description
+      placeholder: 'Add QR code sharing after capture'
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem this solves
+      description: What pain point does this address? What can't you do today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How do you imagine this working?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you thought about
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Which phase does this fit?
+      options:
+        - Phase 1 — Core
+        - Phase 2 — Photo Booth
+        - Phase 3 — Google Drive
+        - Phase 4 — Media
+        - Phase 5 — Advanced
+        - Future / out of scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: mockup
+    attributes:
+      label: Mockup / sketch
+      description: If you have a visual idea, paste a sketch or describe the UI
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched existing issues and confirmed this is not a duplicate
+          required: true
