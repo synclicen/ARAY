@@ -113,6 +113,13 @@ export function BoothPage() {
       activeFilterRef.current = activeFilter
   mirrorRef.current = mirror
 
+  // Palm trigger needs latest runCountdown (changes when currentShot/totalShots/mode change)
+  // — without this ref, the trigger callback captures a stale runCountdown at the
+  // moment the palm-trigger effect first runs (e.g., on entering preview for shot 1),
+  // and never sees shot 2's countdown logic.
+  // Declaration here; assignment lives further down (after runCountdown is defined).
+  const runCountdownRef = useRef<() => void>(() => {})
+
   useEffect(() => {
     if (events.length === 0) loadEvents()
     // Load booth settings from Settings page
@@ -538,6 +545,10 @@ export function BoothPage() {
     }
   }, [countdownSeconds, performCapture, currentShot, totalShots, mode, startRecording])
 
+  // Keep runCountdownRef in sync so the palm trigger callback always calls the
+  // latest runCountdown (otherwise shot 2+ would re-run shot 1's closure).
+  useEffect(() => { runCountdownRef.current = runCountdown }, [runCountdown])
+
   // Cleanup
   useEffect(() => {
     return () => {
@@ -565,9 +576,10 @@ export function BoothPage() {
       pt.start(videoRef.current, settings.palm_trigger_sensitivity || 0.6, () => {
         setPalmProgress(0)
         setPalmTriggerActive(false)
-        // Trigger capture
+        // Trigger capture — use ref so we always call the latest runCountdown
+        // (otherwise shot 2+ would re-run shot 1's countdown closure)
         setPhase('countdown')
-        runCountdown()
+        runCountdownRef.current()
       })
       setPalmTriggerActive(true)
       console.log('[Booth] Palm trigger activated')
