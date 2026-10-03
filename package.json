@@ -1,6 +1,6 @@
 {
   "name": "aray",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "description": "ARAY — Are you Ready? and....Yapping! Premium Windows Photo Booth & Event Experience Platform",
   "main": "electron/main.js",
   "author": "ARAY",
@@ -17,6 +17,8 @@
     "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/drawing_utils": "^0.3.1675466124",
     "@mediapipe/hands": "^0.4.1675469240",
+    "@types/qrcode": "^1.5.6",
+    "qrcode": "^1.5.4",
     "zustand": "^4.5.5"
   },
   "devDependencies": {

@@ -8,7 +8,9 @@ import {
   Cloud,
   Shield,
   AlertTriangle,
-  HardDrive
+  HardDrive,
+  Share2,
+  Link
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayProgress } from '../components/ui'
 import { useSettingsStore } from '../stores/settings'
@@ -226,6 +228,32 @@ export function SettingsPage() {
               value={settings.booth_fullscreen_password ?? 'aray'}
               onChange={(e) => updateSettings({ booth_fullscreen_password: e.target.value })}
               placeholder="aray"
+            />
+          </SettingRow>
+
+          <SettingRow
+            icon={<Share2 className="w-4 h-4" />}
+            label="Enable Share button (QR code)"
+            hint="Tampilkan tombol Share di result screen. Klik -> popup QR code dari link di bawah."
+          >
+            <Toggle
+              value={settings.share_qr_enabled || false}
+              onChange={(v) => updateSettings({ share_qr_enabled: v })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            icon={<Link className="w-4 h-4" />}
+            label="Share QR link"
+            hint="URL yang akan di-encode ke QR code. Mis. Google Drive folder atau website gallery."
+          >
+            <input
+              type="url"
+              className="aray-input max-w-[280px]"
+              value={settings.share_qr_link || ''}
+              onChange={(e) => updateSettings({ share_qr_link: e.target.value })}
+              disabled={!settings.share_qr_enabled}
+              placeholder="https://drive.google.com/..."
             />
           </SettingRow>
         </div>

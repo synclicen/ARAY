@@ -35,6 +35,7 @@ const aspectDims: Record<string, { w: number; h: number }> = {
 
 
 import type { ArayMedia } from '@shared/types'
+import QRCode from 'qrcode'
 
 type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
 type BoothMode = 'photo' | 'video'
@@ -114,6 +115,9 @@ export function BoothPage() {
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [passwordInput, setPasswordInput] = useState('')
   const [passwordError, setPasswordError] = useState(false)
+  // v4.2.1: Share QR modal — tampilkan QR code dari share_qr_link
+  const [showQrModal, setShowQrModal] = useState(false)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -825,6 +829,47 @@ export function BoothPage() {
         )}
       </AnimatePresence>
 
+      {/* v4.2.1: QR Code modal — untuk Share button.
+          User scan QR → close → Done untuk kembali ke greeting. */}
+      <AnimatePresence>
+        {showQrModal && qrDataUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+            onClick={() => setShowQrModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-surface-raised border border-silver-300/15 rounded-2xl shadow-card p-6 w-full max-w-sm text-center"
+            >
+              <h3 className="text-lg font-semibold mb-2 text-silver-100">Scan QR Code</h3>
+              <p className="text-silver-400 text-sm mb-4">
+                Arahkan kamera HP ke QR code untuk mengakses link share.
+              </p>
+              <div className="bg-white rounded-xl p-4 inline-block mb-4">
+                <img src={qrDataUrl} alt="QR Code" className="w-64 h-64" />
+              </div>
+              <div className="text-xs text-silver-500 font-mono break-all mb-4 px-4">
+                {settings?.share_qr_link}
+              </div>
+              <ArayButton
+                variant="gold"
+                className="w-full"
+                icon={<X className="w-4 h-4" />}
+                onClick={() => setShowQrModal(false)}
+              >
+                Close
+              </ArayButton>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Phases */}
       <AnimatePresence mode="wait">
         {phase === 'greeting' && (
@@ -1194,9 +1239,28 @@ export function BoothPage() {
               <ArayButton variant="silver" icon={<Printer className="w-4 h-4" />} onClick={() => window.aray.print.queue(compositeMediaId ?? capturedShots[0]?.mediaId ?? '')}>
                 Print
               </ArayButton>
-              <ArayButton variant="silver" icon={<Share2 className="w-4 h-4" />}>
-                Share
-              </ArayButton>
+              {settings?.share_qr_enabled && settings?.share_qr_link && (
+                <ArayButton
+                  variant="silver"
+                  icon={<Share2 className="w-4 h-4" />}
+                  onClick={async () => {
+                    try {
+                      const link = settings.share_qr_link!
+                      const dataUrl = await QRCode.toDataURL(link, {
+                        width: 400,
+                        margin: 2,
+                        color: { dark: '#0F0B1A', light: '#FFFFFF' }
+                      })
+                      setQrDataUrl(dataUrl)
+                      setShowQrModal(true)
+                    } catch (e) {
+                      console.error('[Booth] QR generation failed:', e)
+                    }
+                  }}
+                >
+                  Share
+                </ArayButton>
+              )}
               <ArayButton
                 variant="ghost"
                 icon={<RotateCcw className="w-4 h-4" />}

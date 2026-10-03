@@ -109,6 +109,17 @@ export interface AraySettings {
    * Default: 'aray' (user bisa ubah di Settings).
    */
   booth_fullscreen_password?: string
+  /**
+   * Enable Share button di result screen.
+   * Jika true, tombol Share muncul setelah booth selesai.
+   * Klik -> popup QR code dari share_qr_link.
+   */
+  share_qr_enabled?: boolean
+  /**
+   * URL/link yang akan di-encode ke QR code saat user klik Share.
+   * Mis. Google Drive folder, website gallery, dll.
+   */
+  share_qr_link?: string
 }
 
 export interface StorageInfo {
