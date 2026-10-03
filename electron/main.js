@@ -119,6 +119,24 @@ function buildEventFolderName(event) {
   return parts.join("_");
 }
 function ensureEventStorage(event) {
+  if (event.storage_path && fs.existsSync(event.storage_path)) {
+    for (const sub of [
+      "Photos/Original",
+      "Photos/Edited",
+      "Photos/Prints",
+      "Photos/Thumbnails",
+      "Videos/Original",
+      "Videos/Edited",
+      "GIF",
+      "Boomerang",
+      "360",
+      "Metadata"
+    ]) {
+      const p = path.join(event.storage_path, sub);
+      if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+    }
+    return event.storage_path;
+  }
   const base = ensureStoragePath();
   const eventPath = path.join(base, "Events", buildEventFolderName(event));
   for (const sub of [
@@ -136,7 +154,13 @@ function ensureEventStorage(event) {
     const p = path.join(eventPath, sub);
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
   }
-  if (event.storage_path !== eventPath) event.storage_path = eventPath;
+  event.storage_path = eventPath;
+  const db = loadDB();
+  const idx = db.events.findIndex((e) => e.id === event.id);
+  if (idx !== -1) {
+    db.events[idx].storage_path = eventPath;
+    saveDB(db);
+  }
   return eventPath;
 }
 function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
@@ -434,8 +458,13 @@ function registerIPC() {
   import_electron.ipcMain.handle("events.openFolder", (_e, id) => wrap(() => {
     const event = getEventById(id);
     if (!event) throw new Error("Event not found");
-    const folderPath = ensureEventStorage(event);
-    console.log("[ARAY] Opening folder:", folderPath);
+    let folderPath = event.storage_path;
+    if (!folderPath || !fs.existsSync(folderPath)) {
+      folderPath = ensureEventStorage(event);
+    }
+    console.log("[ARAY] Opening event folder:", folderPath);
+    console.log("[ARAY] Event name:", event.name);
+    console.log("[ARAY] Event storage_path:", event.storage_path);
     import_electron.shell.openPath(folderPath);
     return { success: true, path: folderPath };
   }));

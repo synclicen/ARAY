@@ -94,6 +94,18 @@ function buildEventFolderName(event: any): string {
 }
 
 function ensureEventStorage(event: any): string {
+  // If event already has a storage_path and it exists, use it directly
+  if (event.storage_path && fs.existsSync(event.storage_path)) {
+    // Make sure subdirs exist
+    for (const sub of ['Photos/Original', 'Photos/Edited', 'Photos/Prints', 'Photos/Thumbnails',
+      'Videos/Original', 'Videos/Edited', 'GIF', 'Boomerang', '360', 'Metadata']) {
+      const p = path.join(event.storage_path, sub)
+      if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
+    }
+    return event.storage_path
+  }
+
+  // Otherwise compute from storage base + event name
   const base = ensureStoragePath()
   const eventPath = path.join(base, 'Events', buildEventFolderName(event))
   for (const sub of ['Photos/Original', 'Photos/Edited', 'Photos/Prints', 'Photos/Thumbnails',
@@ -101,7 +113,14 @@ function ensureEventStorage(event: any): string {
     const p = path.join(eventPath, sub)
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
   }
-  if (event.storage_path !== eventPath) event.storage_path = eventPath
+  // Persist the path to the event record in DB
+  event.storage_path = eventPath
+  const db = loadDB()
+  const idx = db.events.findIndex((e: any) => e.id === event.id)
+  if (idx !== -1) {
+    db.events[idx].storage_path = eventPath
+    saveDB(db)
+  }
   return eventPath
 }
 
@@ -356,8 +375,18 @@ function registerIPC() {
   }))
   ipcMain.handle('events.openFolder', (_e, id: string) => wrap(() => {
     const event = getEventById(id); if (!event) throw new Error('Event not found')
-    const folderPath = ensureEventStorage(event)
-    console.log('[ARAY] Opening folder:', folderPath)
+    
+    // Use stored storage_path if it exists
+    let folderPath = event.storage_path
+    if (!folderPath || !fs.existsSync(folderPath)) {
+      // Re-compute and create if missing
+      folderPath = ensureEventStorage(event)
+    }
+    
+    console.log('[ARAY] Opening event folder:', folderPath)
+    console.log('[ARAY] Event name:', event.name)
+    console.log('[ARAY] Event storage_path:', event.storage_path)
+    
     shell.openPath(folderPath)
     return { success: true, path: folderPath }
   }))
