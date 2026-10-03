@@ -1025,9 +1025,18 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Text above shutter button: photo mode only, hidden during video recording,
-                hidden saat fullscreen booth, DAN hidden saat palm trigger aktif
-                (palm overlay sudah beri info, teks Shot akan bertabrakan) */}
+            {/* "Shot X of Y" info — posisi adaptif:
+                - Palm trigger AKTIF: badge kecil di pojok kiri atas (tidak tabrakan dengan palm overlay di tengah)
+                - Palm trigger NONAKTIF / video mode: teks besar di tengah-bawah (seperti biasa)
+                - Hidden saat fullscreen booth (kiosk mode fokus camera saja) */}
+            {!(mode === 'video' && isRecording) && !fullscreenBooth && palmTriggerActive && mode === 'photo' && (
+              <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-black/60 backdrop-blur-sm rounded-full px-4 py-2 border border-silver-300/20">
+                <span className="text-gold-400 text-sm font-bold">Shot {currentShot}</span>
+                <span className="text-silver-500 text-xs">/</span>
+                <span className="text-silver-300 text-sm">{totalShots}</span>
+              </div>
+            )}
+
             {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
