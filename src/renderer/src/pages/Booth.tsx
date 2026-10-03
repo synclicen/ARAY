@@ -865,20 +865,114 @@ export function BoothPage() {
               </motion.div>
             )}
 
-            {/* HAND_DETECTED state: brief "Mendeteksi..." while open palm sustains 500ms */}
-            {palmTriggerActive && palmState === 'hand_detected' && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
+            {/* ═══ HAND GUIDE OVERLAY ═══
+                Show open-palm SVG outline. User aligns their hand to this guide.
+                - NONE/SEARCHING state: outline visible (purple, pulsing) — "align your hand here"
+                - HAND_DETECTED state: outline turns green (hand detected, waiting 500ms sustain)
+                - CONFIRMED state: hidden (SIAP overlay takes over) */}
+            {palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
+             palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                 <div className="text-center">
-                  <motion.div
-                    animate={{ opacity: [0.4, 1, 0.4] }}
-                    transition={{ duration: 0.6, repeat: Infinity }}
-                    className="text-5xl font-bold text-purple-haze-200"
+                  {/* Open palm SVG outline — 5 fingers spread */}
+                  <motion.svg
+                    viewBox="0 0 200 220"
+                    className="w-64 h-72 mx-auto drop-shadow-2xl"
+                    animate={{
+                      scale: palmState === 'hand_detected' ? [1, 1.05, 1] : [1, 1.03, 1],
+                      opacity: palmState === 'hand_detected' ? 1 : [0.5, 0.8, 0.5]
+                    }}
+                    transition={{
+                      duration: palmState === 'hand_detected' ? 0.8 : 2,
+                      repeat: Infinity,
+                      ease: 'easeInOut'
+                    }}
                   >
-                    Mendeteksi...
+                    {/* Hand outline — open palm with 5 fingers spread.
+                        Path approximates a hand silhouette. Stroke only (no fill)
+                        so user can see their own hand through it. */}
+                    <path
+                      d="
+                        M 100 210
+                        L 100 160
+                        L 70 160
+                        L 70 90
+                        Q 70 80 80 80
+                        Q 90 80 90 90
+                        L 90 140
+                        L 90 60
+                        Q 90 50 100 50
+                        Q 110 50 110 60
+                        L 110 140
+                        L 110 50
+                        Q 110 40 120 40
+                        Q 130 40 130 50
+                        L 130 140
+                        L 130 70
+                        Q 130 60 140 60
+                        Q 150 60 150 70
+                        L 150 140
+                        L 150 100
+                        Q 150 90 158 90
+                        Q 166 90 166 100
+                        L 166 155
+                        Q 166 170 156 180
+                        L 130 200
+                        Z
+                      "
+                      fill="none"
+                      stroke={palmState === 'hand_detected' ? '#22c55e' : '#a78bfa'}
+                      strokeWidth="4"
+                      strokeLinejoin="round"
+                      strokeLinecap="round"
+                      style={{
+                        filter: palmState === 'hand_detected'
+                          ? 'drop-shadow(0 0 20px rgba(34, 197, 94, 0.8))'
+                          : 'drop-shadow(0 0 15px rgba(167, 139, 250, 0.5))',
+                        transition: 'stroke 0.3s, filter 0.3s'
+                      }}
+                    />
+                    {/* Fingertip dots — visual markers for where each finger should be */}
+                    {[
+                      { cx: 80, cy: 85 },   // thumb tip
+                      { cx: 100, cy: 55 },  // index tip
+                      { cx: 120, cy: 45 },  // middle tip
+                      { cx: 140, cy: 65 },  // ring tip
+                      { cx: 158, cy: 95 }   // pinky tip
+                    ].map((dot, i) => (
+                      <circle
+                        key={i}
+                        cx={dot.cx}
+                        cy={dot.cy}
+                        r="5"
+                        fill={palmState === 'hand_detected' ? '#22c55e' : '#a78bfa'}
+                        opacity="0.8"
+                        style={{ transition: 'fill 0.3s' }}
+                      />
+                    ))}
+                  </motion.svg>
+
+                  {/* Instruction text below the hand guide */}
+                  <motion.div
+                    animate={{ opacity: [0.7, 1, 0.7] }}
+                    transition={{ duration: 1.5, repeat: Infinity }}
+                    className="mt-4"
+                  >
+                    {palmState === 'hand_detected' ? (
+                      <div className="text-green-400 text-2xl font-bold">
+                        ✓ Tahan... jangan gerak
+                      </div>
+                    ) : (
+                      <div className="text-purple-haze-200 text-xl font-semibold">
+                        Align tangan ke outline ini
+                      </div>
+                    )}
+                    <div className="text-silver-400 text-sm mt-1">
+                      {palmState === 'hand_detected'
+                        ? 'Tahan sebentar, lalu tarik tangan'
+                        : 'Buka 5 jari, posisikan pas ke outline'}
+                    </div>
                   </motion.div>
-                  <div className="text-silver-400 text-sm mt-3">
-                    Tahan telapak terbuka (5 jari) di depan kamera
-                  </div>
                 </div>
               </div>
             )}
