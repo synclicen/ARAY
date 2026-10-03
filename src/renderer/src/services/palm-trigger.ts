@@ -54,6 +54,10 @@ const HAND_CONFIRM_SUSTAIN_MS = 500
 const TRIGGER_COOLDOWN_MS = 5000
 
 // ─── Singleton script loader ──────────────────────────────────────────────
+// v3.1: Load MediaPipe from LOCAL bundled assets (public/mediapipe/) instead
+// of CDN. The previous CDN approach failed silently because Electron's CSP
+// (`script-src 'self'`) blocked cross-origin script loading.
+// Local loading also works offline and is more reliable.
 let scriptsLoadPromise: Promise<boolean> | null = null
 
 function loadScript(src: string): Promise<void> {
@@ -75,14 +79,15 @@ async function loadPalmScripts(): Promise<boolean> {
   if (scriptsLoadPromise) return scriptsLoadPromise
   scriptsLoadPromise = (async () => {
     try {
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js')
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js')
-      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js')
+      // Load from local bundled assets (copied to public/mediapipe/ at build time)
+      // Vite serves public/ at root, so paths are /mediapipe/...
+      await loadScript('./mediapipe/hands.js')
       await new Promise((r) => setTimeout(r, 100))
 
       if (typeof (window as any).Hands === 'undefined') {
-        throw new Error('MediaPipe Hands global missing')
+        throw new Error('MediaPipe Hands global missing after script load')
       }
+      console.log('[ARAY Palm v3] MediaPipe scripts loaded from local bundle')
       return true
     } catch (e: any) {
       console.error('[ARAY Palm v3] Script load failed:', e.message)
@@ -132,7 +137,8 @@ export class PalmTrigger {
     try {
       const hands = new (window as any).Hands({
         locateFile: (file: string) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+          // Load WASM/data assets from local bundle (public/mediapipe/)
+          return `./mediapipe/${file}`
         }
       })
 
