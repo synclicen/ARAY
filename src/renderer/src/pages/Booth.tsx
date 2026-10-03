@@ -94,6 +94,7 @@ export function BoothPage() {
   const [recordingTime, setRecordingTime] = useState(0)
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
   const [compositing, setCompositing] = useState(false)
+  const [compositeMediaId, setCompositeMediaId] = useState<string | null>(null)
   const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
   const [palmTriggerActive, setPalmTriggerActive] = useState(false)
   const palmTriggerRef = useRef<PalmTrigger | null>(null)
@@ -234,6 +235,7 @@ export function BoothPage() {
     setTimeout(() => setLastFlash(false), 220)
 
     try {
+      // Create session lazily on first shot (needed for composite save later)
       let sessionId = (window as any).__aray_current_session_id as string | undefined
       if (!sessionId) {
         const sessionResult = await window.aray.sessions.create(activeEvent.id, 'photo', totalShots)
@@ -242,30 +244,21 @@ export function BoothPage() {
         ;(window as any).__aray_current_session_id = sessionId
       }
 
-      const fullBase64 = frames.full.split(',')[1]
-      const thumbBase64 = frames.thumb.split(',')[1]
-      const saveResult = await window.aray.media.saveCapturedFrame({
-        event_id: activeEvent.id,
-        session_id: sessionId,
-        shot_number: currentShot,
-        frame_base64: fullBase64,
-        thumbnail_base64: thumbBase64,
-        mime_type: 'image/jpeg'
-      })
-
-      if (!saveResult.success) throw new Error((saveResult as any).error?.message ?? 'Save failed')
-
-      const media = saveResult.data as ArayMedia
-      addMedia(media)
+      // v4.0.4: Don't save raw shots to disk/media table.
+      // Only keep them in-memory for composite generation.
+      // This saves storage (1 file per session instead of N+1) and
+      // de-clutters the Gallery (only composites show up).
+      // If composite fails, user can retake — raw shots are ephemeral.
       setCapturedShots((prev) => [
         ...prev,
-        { shotNumber: currentShot, mediaId: media.id, dataUrl: frames.full }
+        { shotNumber: currentShot, mediaId: `temp_${currentShot}`, dataUrl: frames.full }
       ])
+      console.log('[Booth] Shot', currentShot, 'captured (in-memory only, not saved to disk)')
     } catch (e: any) {
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, captureFrame, currentShot, totalShots, addMedia])
+  }, [activeEvent, captureFrame, currentShot, totalShots])
 
   // ─── VIDEO RECORDING (canvas-based for filter support) ────────
   const canvasRecordRef = useRef<HTMLCanvasElement | null>(null)
@@ -493,9 +486,12 @@ export function BoothPage() {
           mime_type: 'image/jpeg'
         })
         if (saveResult.success) {
+          const compositeMedia = saveResult.data as ArayMedia
           setCompositeUrl(composite)
-          addMedia(saveResult.data as ArayMedia)
-          console.log('[Booth] Composite saved successfully')
+          setCompositeMediaId(compositeMedia.id)
+          addMedia(compositeMedia)
+          console.log('[Booth] Composite saved successfully — media id:', compositeMedia.id,
+            '(this is the ONLY file saved for this session — raw shots were kept in-memory only)')
         }
       }
     } catch (e: any) {
@@ -728,6 +724,7 @@ export function BoothPage() {
                   setCapturedShots([])
                   setCurrentShot(1)
                   setCompositeUrl(null)
+                  setCompositeMediaId(null)
                   ;(window as any).__aray_current_session_id = undefined
                   setPhase('preview')
                 }}
@@ -972,7 +969,7 @@ export function BoothPage() {
             </div>
 
             <div className="flex items-center gap-3 flex-wrap justify-center">
-              <ArayButton variant="silver" icon={<Printer className="w-4 h-4" />} onClick={() => window.aray.print.queue(capturedShots[0]?.mediaId ?? '')}>
+              <ArayButton variant="silver" icon={<Printer className="w-4 h-4" />} onClick={() => window.aray.print.queue(compositeMediaId ?? capturedShots[0]?.mediaId ?? '')}>
                 Print
               </ArayButton>
               <ArayButton variant="silver" icon={<Share2 className="w-4 h-4" />}>
@@ -985,6 +982,7 @@ export function BoothPage() {
                   setCapturedShots([])
                   setCurrentShot(1)
                   setCompositeUrl(null)
+                  setCompositeMediaId(null)
                   ;(window as any).__aray_current_session_id = undefined
                   setPhase('preview')
                 }}
@@ -998,6 +996,7 @@ export function BoothPage() {
                   setCapturedShots([])
                   setCurrentShot(1)
                   setCompositeUrl(null)
+                  setCompositeMediaId(null)
                   ;(window as any).__aray_current_session_id = undefined
                   setPhase('greeting')
                 }}

@@ -10,7 +10,8 @@ import {
   RefreshCw,
   X,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Wand2
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayLogo, AraySyncStatus } from '../components/ui'
 import { useMediaStore } from '../stores/media'
@@ -31,12 +32,13 @@ const sortOptions = [
 ]
 
 export function GalleryPage() {
-  const { media, loading, loadMedia } = useMediaStore()
+  const { media, loading, loadMedia, removeMedia } = useMediaStore()
   const { events } = useEventStore()
   const [typeFilter, setTypeFilter] = useState<MediaType | 'all'>('all')
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest')
   const [eventId, setEventId] = useState<string>('')
   const [selected, setSelected] = useState<ArayMedia | null>(null)
+  const [cleaningUp, setCleaningUp] = useState(false)
 
   useEffect(() => {
     loadMedia({ event_id: eventId || undefined, type: typeFilter === 'all' ? undefined : typeFilter })
@@ -47,6 +49,34 @@ export function GalleryPage() {
     return sort === 'newest' ? -cmp : cmp
   })
 
+  // v4.0.4: Clean up raw shots — delete all media entries whose original_path
+  // points to a raw shot file (path contains /Original/ or \Original\).
+  // Composite files live in /Prints/ with "_composite" in the name, so they're safe.
+  // This removes the clutter of individual raw shots from previous sessions,
+  // keeping only the final composite per session.
+  const rawShots = media.filter(m => {
+    const p = m.original_path || ''
+    return p.includes('/Original/') || p.includes('\\Original\\')
+  })
+
+  const handleCleanupRawShots = async () => {
+    if (rawShots.length === 0) return
+    const msg = `This will permanently delete ${rawShots.length} raw shot(s) from your gallery and disk.\n\n` +
+      'Composite images will NOT be deleted — only individual raw shots.\n\n' +
+      'Proceed?'
+    if (!confirm(msg)) return
+    setCleaningUp(true)
+    try {
+      for (const shot of rawShots) {
+        await removeMedia(shot.id)
+      }
+      // Reload to reflect changes
+      await loadMedia({ event_id: eventId || undefined, type: typeFilter === 'all' ? undefined : typeFilter })
+    } finally {
+      setCleaningUp(false)
+    }
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -56,9 +86,22 @@ export function GalleryPage() {
             Every memory, in one place. <span className="italic">That was cute.</span>
           </p>
         </div>
-        <ArayButton variant="silver" icon={<RefreshCw className="w-4 h-4" />} onClick={() => loadMedia()}>
-          Refresh
-        </ArayButton>
+        <div className="flex items-center gap-2">
+          {rawShots.length > 0 && (
+            <ArayButton
+              variant="ghost"
+              icon={<Wand2 className="w-4 h-4" />}
+              disabled={cleaningUp}
+              onClick={handleCleanupRawShots}
+              className="text-purple-haze-200 border border-purple-haze-500/30"
+            >
+              {cleaningUp ? 'Cleaning…' : `Clean up raw shots (${rawShots.length})`}
+            </ArayButton>
+          )}
+          <ArayButton variant="silver" icon={<RefreshCw className="w-4 h-4" />} onClick={() => loadMedia()}>
+            Refresh
+          </ArayButton>
+        </div>
       </div>
 
       {/* Filters */}
