@@ -47,6 +47,15 @@ export interface PalmCallbacks {
   onPalmLeft: () => void       // confirmed hand left frame → START TIMER
   onStateChange?: (state: PalmState) => void  // UI feedback
   onStatusChange?: (status: PalmStatus, error?: string | null) => void  // loading/error
+  // v3.3: debug callback — fires every frame with detection details.
+  // UI uses this to show live feedback: "hand detected, 3/5 fingers, ..."
+  onDebug?: (info: {
+    handDetected: boolean       // MediaPipe detected a hand
+    landmarkCount: number       // number of landmarks (should be 21 if hand detected)
+    openPalm: boolean           // validator result (enough fingers extended)
+    fingerStatus: { finger: string; extended: boolean }[]  // per-finger status
+    state: PalmState
+  }) => void
 }
 
 // Tuning constants (sama dengan Saatiril-Andro)
@@ -117,6 +126,7 @@ export class PalmTrigger {
   private isConfirmed = false
   private triggerFired = false
   private lastTriggerTime = 0
+  private frameCount = 0  // for periodic console logging
 
   /**
    * Initialize: load MediaPipe scripts + model.
@@ -144,16 +154,19 @@ export class PalmTrigger {
 
       hands.setOptions({
         maxNumHands: 1,
-        modelComplexity: 1,
-        // v3.2: Raised from 0.3 → 0.6 to reduce false positives.
-        // At 0.3, MediaPipe sometimes misdetected faces/objects as hands.
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
+        // v3.3: modelComplexity 0 (lite) — faster, more reliable on lower-end machines.
+        // modelComplexity 1 (full) sometimes fails to detect on slower CPUs.
+        modelComplexity: 0,
+        // v3.3: Lowered from 0.6 → 0.4. At 0.6, MediaPipe often fails to detect
+        // hands at all (especially in non-ideal lighting). 0.4 is a good balance —
+        // still filters most false positives but actually detects real hands.
+        minDetectionConfidence: 0.4,
+        minTrackingConfidence: 0.4
       })
 
       hands.onResults((results: any) => this.processResults(results))
 
-      // Initialize with dummy frame
+      // Initialize with dummy frame (1x1 is fine for warmup)
       const tempCanvas = document.createElement('canvas')
       tempCanvas.width = 1
       tempCanvas.height = 1
@@ -161,7 +174,7 @@ export class PalmTrigger {
 
       this.hands = hands
       this.setStatus('model_ready')
-      console.log('[ARAY Palm v3] MediaPipe Hands model ready')
+      console.log('[ARAY Palm v3] MediaPipe Hands model ready (complexity: lite, confidence: 0.4)')
       return true
     } catch (e: any) {
       console.error('[ARAY Palm v3] Model init failed:', e)
@@ -250,11 +263,40 @@ export class PalmTrigger {
     const multiHandLandmarks = results.multiHandLandmarks || []
     const now = Date.now()
 
-    // v3.2: OPEN PALM VALIDATION — only accept hand if 5 fingers extended.
-    // This prevents false positives where faces/objects get misclassified as hands,
-    // and ensures user must show an OPEN palm (5 fingers visible) to trigger.
-    // Fists or partial hands don't count.
-    const handDetected = multiHandLandmarks.length > 0 && this.isOpenPalm(multiHandLandmarks[0])
+    // v3.3: OPEN PALM VALIDATION — relaxed to require 4/5 fingers (not all 5).
+    // Strict 5-finger requirement was too hard to achieve — thumb detection
+    // is unreliable in MediaPipe lite model. 4/5 is still strict enough to
+    // filter faces/fists but accepts real open palms.
+    const landmarks = multiHandLandmarks[0]
+    const fingerStatus = this.getFingerStatus(landmarks)
+    const extendedCount = fingerStatus.filter(f => f.extended).length
+    const openPalm = multiHandLandmarks.length > 0 && extendedCount >= 4
+
+    // v3.3: emit debug info every frame so UI can show live detection status
+    if (this.callbacks?.onDebug) {
+      this.callbacks.onDebug({
+        handDetected: multiHandLandmarks.length > 0,
+        landmarkCount: landmarks ? landmarks.length : 0,
+        openPalm,
+        fingerStatus,
+        state: this.state
+      })
+    }
+
+    // Periodic console log (every ~30 frames ≈ 1s)
+    this.frameCount = (this.frameCount || 0) + 1
+    if (this.frameCount % 30 === 0) {
+      if (multiHandLandmarks.length > 0) {
+        console.log('[ARAY Palm v3] Hand detected — landmarks:', landmarks.length,
+          '— fingers extended:', extendedCount + '/5',
+          '(' + fingerStatus.map(f => f.finger + ':' + (f.extended ? 'Y' : 'n')).join(' ') + ')',
+          '— openPalm:', openPalm ? 'YES' : 'no')
+      } else {
+        console.log('[ARAY Palm v3] No hand detected — show open palm to camera')
+      }
+    }
+
+    const handDetected = openPalm
 
     // Cooldown check
     if (this.lastTriggerTime > 0 && now - this.lastTriggerTime < TRIGGER_COOLDOWN_MS) {
@@ -279,7 +321,7 @@ export class PalmTrigger {
       }
       // else: palm still visible, waiting for sustain or waiting to leave
     } else {
-      // No open palm in frame (either no hand, or hand but not open palm)
+      // No open palm in frame (either no hand, or hand but not enough fingers)
       if (this.isConfirmed && !this.triggerFired) {
         // Open palm was confirmed and now left → TRIGGER!
         this.triggerFired = true
@@ -297,7 +339,8 @@ export class PalmTrigger {
   }
 
   /**
-   * v3.2: OPEN PALM VALIDATOR
+   * v3.3: FINGER STATUS — returns per-finger extended status.
+   * Used by processResults to determine open palm (4/5 fingers extended).
    *
    * MediaPipe Hands landmark indices (21 landmarks per hand):
    *   0: wrist
@@ -310,60 +353,54 @@ export class PalmTrigger {
    * A finger is "extended" if its TIP is farther from the wrist than its PIP joint.
    * (When you make a fist, fingertips curl back toward palm, closer to wrist than PIP.)
    *
-   * For thumb, we use a different test: thumb TIP should be farther from index MCP
-   * than thumb MCP — meaning thumb is spread out, not tucked across palm.
-   *
-   * Returns true only if ALL 5 fingers are extended (open palm pose).
-   * This prevents:
-   *   - Faces misclassified as hands (no finger geometry)
-   *   - Fists (no fingers extended)
-   *   - Partial hands (only some fingers extended)
+   * v3.3 changes:
+   * - Threshold lowered from 1.05 → 1.0 (TIP just needs to be farther, not 5% farther)
+   *   This was too strict — many real open palms failed the 5% test.
+   * - Returns per-finger status so UI can show "3/5 fingers: index Y middle Y ring Y pinky n thumb n"
    */
-  private isOpenPalm(landmarks: any[]): boolean {
-    if (!landmarks || landmarks.length < 21) return false
+  private getFingerStatus(landmarks: any): { finger: string; extended: boolean }[] {
+    if (!landmarks || landmarks.length < 21) {
+      return [
+        { finger: 'thumb', extended: false },
+        { finger: 'index', extended: false },
+        { finger: 'middle', extended: false },
+        { finger: 'ring', extended: false },
+        { finger: 'pinky', extended: false }
+      ]
+    }
 
     const wrist = landmarks[0]
     const dist = (a: any, b: any) => Math.hypot(a.x - b.x, a.y - b.y)
 
     // Helper: is finger extended? (TIP farther from wrist than PIP joint)
-    // For fingers with PIP at indices 6, 10, 14, 18 and TIP at 8, 12, 16, 20
+    // v3.3: threshold 1.0 (just farther, no 5% margin) — more lenient
     const isFingerExtended = (pipIdx: number, tipIdx: number): boolean => {
       const pip = landmarks[pipIdx]
       const tip = landmarks[tipIdx]
-      const distPipToWrist = dist(pip, wrist)
-      const distTipToWrist = dist(tip, wrist)
-      // TIP must be at least 5% farther from wrist than PIP (tolerance for noise)
-      return distTipToWrist > distPipToWrist * 1.05
+      return dist(tip, wrist) > dist(pip, wrist)
     }
 
-    // Index, middle, ring, pinky — all must be extended
+    // Index, middle, ring, pinky
     const indexExtended = isFingerExtended(6, 8)
     const middleExtended = isFingerExtended(10, 12)
     const ringExtended = isFingerExtended(14, 16)
     const pinkyExtended = isFingerExtended(18, 20)
 
-    // Thumb — different test. Thumb TIP (4) should be farther from index MCP (5)
-    // than thumb MCP (2) is. This means thumb is spread out, not tucked across.
+    // Thumb — v3.3: more lenient test.
+    // Thumb TIP (4) should be farther from pinky MCP (17) than thumb MCP (2) is.
+    // This means thumb is spread out, not tucked across palm.
     const thumbMcp = landmarks[2]
     const thumbTip = landmarks[4]
-    const indexMcp = landmarks[5]
-    const thumbSpread = dist(thumbTip, indexMcp) > dist(thumbMcp, indexMcp) * 1.1
+    const pinkyMcp = landmarks[17]
+    const thumbSpread = dist(thumbTip, pinkyMcp) > dist(thumbMcp, pinkyMcp)
 
-    const extendedCount = [indexExtended, middleExtended, ringExtended, pinkyExtended, thumbSpread]
-      .filter(Boolean).length
-
-    // Require ALL 5 fingers extended for a clean open palm.
-    // This is strict — user must clearly show open hand, not fist or partial.
-    const isOpen = extendedCount === 5
-
-    if (isOpen) {
-      // Log occasionally for debugging
-      if (Math.floor(Date.now() / 1000) % 3 === 0) {
-        console.log('[ARAY Palm v3] Open palm validated — 5 fingers extended')
-      }
-    }
-
-    return isOpen
+    return [
+      { finger: 'thumb', extended: thumbSpread },
+      { finger: 'index', extended: indexExtended },
+      { finger: 'middle', extended: middleExtended },
+      { finger: 'ring', extended: ringExtended },
+      { finger: 'pinky', extended: pinkyExtended }
+    ]
   }
 
   private detectFrame = async (): Promise<void> => {

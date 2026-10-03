@@ -100,6 +100,12 @@ export function BoothPage() {
   const [palmState, setPalmState] = useState<'none' | 'searching' | 'hand_detected' | 'confirmed' | 'triggered'>('none')
   const [palmStatus, setPalmStatus] = useState<'unloaded' | 'loading_scripts' | 'loading_model' | 'model_ready' | 'detecting' | 'stopped' | 'error'>('unloaded')
   const [palmError, setPalmError] = useState<string | null>(null)
+  const [palmDebug, setPalmDebug] = useState<{
+    handDetected: boolean
+    landmarkCount: number
+    openPalm: boolean
+    fingerStatus: { finger: string; extended: boolean }[]
+  } | null>(null)
   const palmTriggerRef = useRef<PalmTrigger | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -607,6 +613,14 @@ export function BoothPage() {
         onStatusChange: (newStatus, err) => {
           setPalmStatus(newStatus)
           setPalmError(err ?? null)
+        },
+        onDebug: (info) => {
+          setPalmDebug({
+            handDetected: info.handDetected,
+            landmarkCount: info.landmarkCount,
+            openPalm: info.openPalm,
+            fingerStatus: info.fingerStatus
+          })
         }
       })
 
@@ -869,14 +883,61 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* NONE/SEARCHING state: ready indicator badge */}
+            {/* NONE/SEARCHING state: ready indicator badge + live debug meter */}
             {palmTriggerActive && (palmState === 'none' || palmState === 'searching') &&
              palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
-              <div className="absolute top-20 right-4 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5 z-20">
-                <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
-                <span className="text-purple-haze-100 text-xs font-medium">
-                  Palm Trigger ON · Angkat telapak (5 jari)
-                </span>
+              <div className="absolute top-20 right-4 z-20">
+                <div className="flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5">
+                  <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
+                  <span className="text-purple-haze-100 text-xs font-medium">
+                    Palm Trigger ON · Angkat telapak (5 jari)
+                  </span>
+                </div>
+                {/* v3.3: Live debug meter — shows hand detection + finger count */}
+                {palmDebug && (
+                  <div className="mt-2 bg-black/70 border border-purple-haze-500/30 rounded-lg px-3 py-2 text-xs font-mono space-y-1 min-w-[200px]">
+                    <div className="flex justify-between">
+                      <span className="text-silver-400">Hand detected</span>
+                      <span className={palmDebug.handDetected ? 'text-green-400 font-bold' : 'text-silver-500'}>
+                        {palmDebug.handDetected ? 'YES' : 'no'}
+                      </span>
+                    </div>
+                    {palmDebug.handDetected && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-silver-400">Landmarks</span>
+                          <span className="text-silver-200">{palmDebug.landmarkCount}/21</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-silver-400">Fingers</span>
+                          <span className={palmDebug.openPalm ? 'text-green-400 font-bold' : 'text-yellow-400'}>
+                            {palmDebug.fingerStatus.filter(f => f.extended).length}/5
+                          </span>
+                        </div>
+                        {/* Per-finger status */}
+                        <div className="flex gap-1 mt-1">
+                          {palmDebug.fingerStatus.map(f => (
+                            <div key={f.finger} className={`flex-1 text-center px-1 py-0.5 rounded text-[9px] ${
+                              f.extended ? 'bg-green-500/30 text-green-300' : 'bg-silver-700/30 text-silver-500'
+                            }`}>
+                              {f.finger.slice(0, 3)}
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-center mt-1">
+                          {palmDebug.openPalm
+                            ? <span className="text-green-400">✓ Open palm — hold 500ms</span>
+                            : <span className="text-yellow-400">Buka semua jari (4/5 cukup)</span>}
+                        </div>
+                      </>
+                    )}
+                    {!palmDebug.handDetected && (
+                      <div className="text-[10px] text-silver-500 text-center mt-1">
+                        Tunjukkan telapak terbuka ke kamera
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
