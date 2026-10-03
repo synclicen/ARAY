@@ -214,6 +214,20 @@ export function SettingsPage() {
               <option value={0.8}>High (mudah trigger)</option>
             </select>
           </SettingRow>
+
+          <SettingRow
+            icon={<Shield className="w-4 h-4" />}
+            label="Fullscreen booth password"
+            hint="Password untuk keluar dari mode fullscreen booth. Kosongkan untuk tanpa password."
+          >
+            <input
+              type="text"
+              className="aray-input max-w-[200px]"
+              value={settings.booth_fullscreen_password ?? 'aray'}
+              onChange={(e) => updateSettings({ booth_fullscreen_password: e.target.value })}
+              placeholder="aray"
+            />
+          </SettingRow>
         </div>
       </ArayCard>
 

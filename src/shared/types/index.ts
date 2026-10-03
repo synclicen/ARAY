@@ -103,6 +103,12 @@ export interface AraySettings {
   video_template: string
   palm_trigger: boolean
   palm_trigger_sensitivity: number
+  /**
+   * Password untuk exit fullscreen booth mode.
+   * Jika kosong, exit fullscreen tanpa password.
+   * Default: 'aray' (user bisa ubah di Settings).
+   */
+  booth_fullscreen_password?: string
 }
 
 export interface StorageInfo {

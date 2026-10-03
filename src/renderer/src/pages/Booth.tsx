@@ -14,7 +14,8 @@ import {
   AlertTriangle,
   Video,
   Image as ImageIcon,
-  LayoutTemplate
+  LayoutTemplate,
+  Maximize2
 } from 'lucide-react'
 import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
 import { useEventStore } from '../stores/events'
@@ -107,6 +108,12 @@ export function BoothPage() {
     fingerStatus: { finger: string; extended: boolean }[]
   } | null>(null)
   const palmTriggerRef = useRef<PalmTrigger | null>(null)
+  // v4.1.3: Fullscreen booth mode — hide all UI except camera + palm overlay.
+  // Toggle button di pojok kanan atas. Exit butuh password (configurable di Settings).
+  const [fullscreenBooth, setFullscreenBooth] = useState(false)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [passwordInput, setPasswordInput] = useState('')
+  const [passwordError, setPasswordError] = useState(false)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -700,23 +707,122 @@ export function BoothPage() {
         )}
       </AnimatePresence>
 
-      {/* Top bar */}
-      <div className="absolute top-0 left-0 right-0 z-20 p-5 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent">
-        <button
-          onClick={() => {
-            stopCamera()
-            navigate('/dashboard')
-          }}
-          className="text-silver-300 hover:text-white flex items-center gap-2 text-sm"
-        >
-          <ChevronLeft className="w-5 h-5" />
-          Exit Booth
-        </button>
-        <div className="flex items-center gap-3">
-          <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
-          <ArayBadge variant="gold">{activeEvent.name}</ArayBadge>
+      {/* Top bar — hidden saat fullscreenBooth (kecuali toggle button kecil) */}
+      {!fullscreenBooth && (
+        <div className="absolute top-0 left-0 right-0 z-20 p-5 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent">
+          <button
+            onClick={() => {
+              stopCamera()
+              navigate('/dashboard')
+            }}
+            className="text-silver-300 hover:text-white flex items-center gap-2 text-sm"
+          >
+            <ChevronLeft className="w-5 h-5" />
+            Exit Booth
+          </button>
+          <div className="flex items-center gap-3">
+            <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
+            <ArayBadge variant="gold">{activeEvent.name}</ArayBadge>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Fullscreen toggle button — kecil di pojok kanan atas.
+          Saat fullscreen: button visible (untuk exit), klik → password modal.
+          Saat normal: button visible (untuk enter fullscreen), klik → langsung fullscreen. */}
+      <button
+        onClick={() => {
+          if (fullscreenBooth) {
+            // Exit fullscreen — butuh password (jika diset)
+            const pwd = settings?.booth_fullscreen_password
+            if (pwd && pwd.length > 0) {
+              setShowPasswordModal(true)
+              setPasswordInput('')
+              setPasswordError(false)
+            } else {
+              setFullscreenBooth(false)
+            }
+          } else {
+            setFullscreenBooth(true)
+          }
+        }}
+        className={`absolute top-3 right-3 z-50 w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+          fullscreenBooth
+            ? 'bg-black/50 text-silver-300 hover:bg-black/70 hover:text-white opacity-60 hover:opacity-100'
+            : 'bg-purple-haze-500/20 border border-purple-haze-500/30 text-purple-haze-200 hover:bg-purple-haze-500/30'
+        }`}
+        title={fullscreenBooth ? 'Exit fullscreen (butuh password)' : 'Fullscreen booth'}
+      >
+        {fullscreenBooth ? <X className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+      </button>
+
+      {/* Password modal — untuk exit fullscreen */}
+      <AnimatePresence>
+        {showPasswordModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-surface-raised border border-silver-300/15 rounded-2xl shadow-card p-6 w-full max-w-sm"
+            >
+              <h3 className="text-lg font-semibold mb-2 text-silver-100">Exit Fullscreen</h3>
+              <p className="text-silver-400 text-sm mb-4">Masukkan password untuk keluar dari mode fullscreen.</p>
+              <input
+                type="password"
+                autoFocus
+                value={passwordInput}
+                onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false) }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (passwordInput === (settings?.booth_fullscreen_password || 'aray')) {
+                      setFullscreenBooth(false)
+                      setShowPasswordModal(false)
+                      setPasswordInput('')
+                    } else {
+                      setPasswordError(true)
+                    }
+                  }
+                }}
+                className={`aray-input w-full ${passwordError ? 'border-red-500' : ''}`}
+                placeholder="Password"
+              />
+              {passwordError && (
+                <p className="text-red-400 text-xs mt-2">Password salah</p>
+              )}
+              <div className="flex gap-2 mt-4">
+                <ArayButton
+                  variant="ghost"
+                  className="flex-1"
+                  onClick={() => { setShowPasswordModal(false); setPasswordInput(''); setPasswordError(false) }}
+                >
+                  Batal
+                </ArayButton>
+                <ArayButton
+                  variant="gold"
+                  className="flex-1"
+                  onClick={() => {
+                    if (passwordInput === (settings?.booth_fullscreen_password || 'aray')) {
+                      setFullscreenBooth(false)
+                      setShowPasswordModal(false)
+                      setPasswordInput('')
+                    } else {
+                      setPasswordError(true)
+                    }
+                  }}
+                >
+                  Keluar
+                </ArayButton>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Phases */}
       <AnimatePresence mode="wait">
@@ -797,8 +903,8 @@ export function BoothPage() {
             exit={{ opacity: 0 }}
             className="absolute inset-0 z-10 flex flex-col items-center justify-end pb-12"
           >
-            {/* Shot progress (photo mode only) */}
-            {mode === 'photo' && (
+            {/* Shot progress (photo mode only) — hidden saat fullscreen */}
+            {mode === 'photo' && !fullscreenBooth && (
               <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2">
                 {Array.from({ length: totalShots }).map((_, i) => (
                   <div
@@ -816,29 +922,27 @@ export function BoothPage() {
             )}
 
             {/* Palm trigger v2 — Saatiril-style overlay */}
-            {/* ═══ PALM TRIGGER v3 (MediaPipe Hands — Saatiril-style) ═══ */}
+            {/* ═══ PALM TRIGGER OVERLAY (minimal — hanya hand outline di tengah) ═══ */}
 
-            {/* Loading state — MediaPipe scripts/model loading */}
+            {/* Loading state — kecil di pojok, tidak mengganggu */}
             {palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
-              <div className="absolute top-20 right-4 z-20 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5">
+              <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-black/60 rounded-full px-3 py-1.5">
                 <RefreshCw className="w-3 h-3 animate-spin text-purple-haze-200" />
-                <span className="text-purple-haze-100 text-xs font-medium">
-                  {palmStatus === 'loading_scripts' ? 'Loading palm trigger...' : 'Loading hand model...'}
+                <span className="text-purple-haze-100 text-xs">
+                  Loading...
                 </span>
               </div>
             )}
 
-            {/* Error state */}
+            {/* Error state — kecil di pojok */}
             {palmTriggerActive && palmStatus === 'error' && (
-              <div className="absolute top-20 right-4 z-20 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-3 py-1.5">
+              <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-3 py-1.5">
                 <AlertTriangle className="w-3 h-3 text-red-300" />
-                <span className="text-red-100 text-xs font-medium">
-                  Palm trigger error: {palmError || 'unknown'}
-                </span>
+                <span className="text-red-100 text-xs">Palm error</span>
               </div>
             )}
 
-            {/* CONFIRMED state: big "SIAP" overlay — pull hand away to trigger shutter */}
+            {/* CONFIRMED state: big "SIAP" overlay — pull hand away to trigger */}
             {palmTriggerActive && palmState === 'confirmed' && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
@@ -858,29 +962,23 @@ export function BoothPage() {
                   <div className="text-silver-200 text-2xl font-semibold mt-4">
                     Tarik tangan untuk capture
                   </div>
-                  <div className="text-silver-400 text-sm mt-2 italic">
-                    Pull your open hand away to trigger the shutter
-                  </div>
                 </div>
               </motion.div>
             )}
 
-            {/* ═══ HAND GUIDE OVERLAY ═══
-                Show open-palm SVG outline. User aligns their hand to this guide.
-                - NONE/SEARCHING state: outline visible (purple, pulsing) — "align your hand here"
-                - HAND_DETECTED state: outline turns green (hand detected, waiting 500ms sustain)
-                - CONFIRMED state: hidden (SIAP overlay takes over) */}
+            {/* HAND GUIDE OVERLAY — tampil di none/searching/hand_detected.
+                HANYA ini yang muncul di tengah. Tidak ada teks bahasa ganda.
+                Outline ungu (cari) → hijau (hand_detected). */}
             {palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
              palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                 <div className="text-center">
-                  {/* Open palm SVG outline — 5 fingers spread */}
                   <motion.svg
                     viewBox="0 0 200 220"
                     className="w-64 h-72 mx-auto drop-shadow-2xl"
                     animate={{
                       scale: palmState === 'hand_detected' ? [1, 1.05, 1] : [1, 1.03, 1],
-                      opacity: palmState === 'hand_detected' ? 1 : [0.5, 0.8, 0.5]
+                      opacity: palmState === 'hand_detected' ? 1 : [0.6, 0.9, 0.6]
                     }}
                     transition={{
                       duration: palmState === 'hand_detected' ? 0.8 : 2,
@@ -888,38 +986,8 @@ export function BoothPage() {
                       ease: 'easeInOut'
                     }}
                   >
-                    {/* Hand outline — open palm with 5 fingers spread.
-                        Path approximates a hand silhouette. Stroke only (no fill)
-                        so user can see their own hand through it. */}
                     <path
-                      d="
-                        M 100 210
-                        L 100 160
-                        L 70 160
-                        L 70 90
-                        Q 70 80 80 80
-                        Q 90 80 90 90
-                        L 90 140
-                        L 90 60
-                        Q 90 50 100 50
-                        Q 110 50 110 60
-                        L 110 140
-                        L 110 50
-                        Q 110 40 120 40
-                        Q 130 40 130 50
-                        L 130 140
-                        L 130 70
-                        Q 130 60 140 60
-                        Q 150 60 150 70
-                        L 150 140
-                        L 150 100
-                        Q 150 90 158 90
-                        Q 166 90 166 100
-                        L 166 155
-                        Q 166 170 156 180
-                        L 130 200
-                        Z
-                      "
+                      d="M 100 210 L 100 160 L 70 160 L 70 90 Q 70 80 80 80 Q 90 80 90 90 L 90 140 L 90 60 Q 90 50 100 50 Q 110 50 110 60 L 110 140 L 110 50 Q 110 40 120 40 Q 130 40 130 50 L 130 140 L 130 70 Q 130 60 140 60 Q 150 60 150 70 L 150 140 L 150 100 Q 150 90 158 90 Q 166 90 166 100 L 166 155 Q 166 170 156 180 L 130 200 Z"
                       fill="none"
                       stroke={palmState === 'hand_detected' ? '#22c55e' : '#a78bfa'}
                       strokeWidth="4"
@@ -932,106 +1000,12 @@ export function BoothPage() {
                         transition: 'stroke 0.3s, filter 0.3s'
                       }}
                     />
-                    {/* Fingertip dots — visual markers for where each finger should be */}
-                    {[
-                      { cx: 80, cy: 85 },   // thumb tip
-                      { cx: 100, cy: 55 },  // index tip
-                      { cx: 120, cy: 45 },  // middle tip
-                      { cx: 140, cy: 65 },  // ring tip
-                      { cx: 158, cy: 95 }   // pinky tip
-                    ].map((dot, i) => (
-                      <circle
-                        key={i}
-                        cx={dot.cx}
-                        cy={dot.cy}
-                        r="5"
-                        fill={palmState === 'hand_detected' ? '#22c55e' : '#a78bfa'}
-                        opacity="0.8"
-                        style={{ transition: 'fill 0.3s' }}
-                      />
-                    ))}
                   </motion.svg>
-
-                  {/* Instruction text below the hand guide */}
-                  <motion.div
-                    animate={{ opacity: [0.7, 1, 0.7] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                    className="mt-4"
-                  >
-                    {palmState === 'hand_detected' ? (
-                      <div className="text-green-400 text-2xl font-bold">
-                        ✓ Tahan... jangan gerak
-                      </div>
-                    ) : (
-                      <div className="text-purple-haze-200 text-xl font-semibold">
-                        Align tangan ke outline ini
-                      </div>
-                    )}
-                    <div className="text-silver-400 text-sm mt-1">
-                      {palmState === 'hand_detected'
-                        ? 'Tahan sebentar, lalu tarik tangan'
-                        : 'Buka 5 jari, posisikan pas ke outline'}
-                    </div>
-                  </motion.div>
-                </div>
-              </div>
-            )}
-
-            {/* NONE/SEARCHING state: ready indicator badge + live debug meter */}
-            {palmTriggerActive && (palmState === 'none' || palmState === 'searching') &&
-             palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
-              <div className="absolute top-20 right-4 z-20">
-                <div className="flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5">
-                  <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
-                  <span className="text-purple-haze-100 text-xs font-medium">
-                    Palm Trigger ON · Angkat telapak (5 jari)
-                  </span>
-                </div>
-                {/* v3.3: Live debug meter — shows hand detection + finger count */}
-                {palmDebug && (
-                  <div className="mt-2 bg-black/70 border border-purple-haze-500/30 rounded-lg px-3 py-2 text-xs font-mono space-y-1 min-w-[200px]">
-                    <div className="flex justify-between">
-                      <span className="text-silver-400">Hand detected</span>
-                      <span className={palmDebug.handDetected ? 'text-green-400 font-bold' : 'text-silver-500'}>
-                        {palmDebug.handDetected ? 'YES' : 'no'}
-                      </span>
-                    </div>
-                    {palmDebug.handDetected && (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-silver-400">Landmarks</span>
-                          <span className="text-silver-200">{palmDebug.landmarkCount}/21</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-silver-400">Fingers</span>
-                          <span className={palmDebug.openPalm ? 'text-green-400 font-bold' : 'text-yellow-400'}>
-                            {palmDebug.fingerStatus.filter(f => f.extended).length}/5
-                          </span>
-                        </div>
-                        {/* Per-finger status */}
-                        <div className="flex gap-1 mt-1">
-                          {palmDebug.fingerStatus.map(f => (
-                            <div key={f.finger} className={`flex-1 text-center px-1 py-0.5 rounded text-[9px] ${
-                              f.extended ? 'bg-green-500/30 text-green-300' : 'bg-silver-700/30 text-silver-500'
-                            }`}>
-                              {f.finger.slice(0, 3)}
-                            </div>
-                          ))}
-                        </div>
-                        <div className="text-[10px] text-center mt-1">
-                          {palmDebug.openPalm
-                            ? <span className="text-green-400">✓ Open palm — hold 500ms</span>
-                            : <span className="text-yellow-400">Buka semua jari (4/5 cukup)</span>}
-                        </div>
-                      </>
-                    )}
-                    {!palmDebug.handDetected && (
-                      <div className="text-[10px] text-silver-500 text-center mt-1">
-                        Tunjukkan telapak terbuka ke kamera
-                      </div>
-                    )}
+                  {/* SATU teks singkat saja — ganti sesuai state */}
+                  <div className="mt-4 text-silver-200 text-lg font-medium">
+                    {palmState === 'hand_detected' ? 'Tahan...' : 'Align tangan ke outline'}
                   </div>
-                )}
+                </div>
               </div>
             )}
 
@@ -1051,8 +1025,9 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Text above shutter button: photo mode only, hidden during video recording */}
-            {!(mode === 'video' && isRecording) && (
+            {/* Text above shutter button: photo mode only, hidden during video recording
+                dan hidden saat fullscreen booth (clean view, only palm overlay) */}
+            {!(mode === 'video' && isRecording) && !fullscreenBooth && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
                   <>
@@ -1290,8 +1265,9 @@ export function BoothPage() {
         )}
       </AnimatePresence>
 
-      {/* Capture button (visible during preview, PHOTO mode only) */}
-      {phase === 'preview' && mode === 'photo' && (
+      {/* Capture button (visible during preview, PHOTO mode only)
+          Hidden saat fullscreen booth (palm trigger only, no manual button) */}
+      {phase === 'preview' && mode === 'photo' && !fullscreenBooth && (
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20">
           <button
             onClick={() => {
