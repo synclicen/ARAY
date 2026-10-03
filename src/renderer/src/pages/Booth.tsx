@@ -97,8 +97,9 @@ export function BoothPage() {
   const [compositeMediaId, setCompositeMediaId] = useState<string | null>(null)
   const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
   const [palmTriggerActive, setPalmTriggerActive] = useState(false)
-  const [palmState, setPalmState] = useState<'IDLE' | 'ARMING' | 'ARMED' | 'TRIGGERED'>('IDLE')
-  const [palmDebug, setPalmDebug] = useState<{ ratio: number; baseline: number; delta: number; threshold: number; isPalm: boolean } | null>(null)
+  const [palmState, setPalmState] = useState<'none' | 'searching' | 'hand_detected' | 'confirmed' | 'triggered'>('none')
+  const [palmStatus, setPalmStatus] = useState<'unloaded' | 'loading_scripts' | 'loading_model' | 'model_ready' | 'detecting' | 'stopped' | 'error'>('unloaded')
+  const [palmError, setPalmError] = useState<string | null>(null)
   const palmTriggerRef = useRef<PalmTrigger | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const recordedChunksRef = useRef<Blob[]>([])
@@ -562,24 +563,21 @@ export function BoothPage() {
     }
   }, [phase, startCamera])
 
-  // Palm trigger: start when entering preview (photo mode + palm enabled)
-  // v2 (Saatiril-style): detect palm → "SIAP" → pull hand away → shutter
-  // v2.1: lower thresholds + debug meter so user can see detection working
+  // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
+  // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   useEffect(() => {
     if (phase !== 'preview' || mode !== 'photo' || !settings?.palm_trigger) return
 
-    // Video element might not be ready immediately — retry until it is
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
 
-    const startPalmTrigger = () => {
+    const startPalmTrigger = async () => {
       if (cancelled) return
       const video = videoRef.current
       if (!video) {
         retryTimer = setTimeout(startPalmTrigger, 200)
         return
       }
-      // Wait until video has real dimensions and is playing
       if (video.videoWidth === 0 || video.readyState < 2) {
         retryTimer = setTimeout(startPalmTrigger, 200)
         return
@@ -589,34 +587,33 @@ export function BoothPage() {
         palmTriggerRef.current = new PalmTrigger()
       }
       const pt = palmTriggerRef.current
-      pt.onPalmDetected = (state, progress) => {
-        setPalmState(state)
-        setPalmProgress(progress)
-      }
-      pt.onPalmLost = () => {
-        setPalmState('IDLE')
-        setPalmProgress(0)
-      }
-      pt.onDebug = (info) => {
-        setPalmDebug({
-          ratio: info.ratio,
-          baseline: info.baseline,
-          delta: info.delta,
-          threshold: info.threshold,
-          isPalm: info.isPalm
-        })
-      }
-      pt.start(video, settings.palm_trigger_sensitivity || 0.6, () => {
-        setPalmState('TRIGGERED')
-        setPalmProgress(0)
-        setPalmTriggerActive(false)
-        setPhase('countdown')
-        runCountdownRef.current()
+
+      // Wire callbacks — Saatiril API: onPalmConfirmed, onPalmLeft, onStateChange, onStatusChange
+      await pt.start(video, settings.palm_trigger_sensitivity || 0.6, {
+        onPalmConfirmed: () => {
+          // Hand sustained 500ms — show "SIAP" overlay (UI reads palmState === 'confirmed')
+          console.log('[Booth] Palm confirmed — waiting for hand to leave')
+        },
+        onPalmLeft: () => {
+          // Confirmed hand left frame → START TIMER!
+          setPalmState('triggered')
+          setPalmTriggerActive(false)
+          setPhase('countdown')
+          runCountdownRef.current()
+        },
+        onStateChange: (newState) => {
+          setPalmState(newState)
+        },
+        onStatusChange: (newStatus, err) => {
+          setPalmStatus(newStatus)
+          setPalmError(err ?? null)
+        }
       })
-      setPalmTriggerActive(true)
-      console.log('[Booth] Palm trigger v2.1 activated — sensitivity:',
-        settings.palm_trigger_sensitivity || 0.6,
-        '(Saatiril-style: detect → SIAP → release → shutter)')
+
+      if (!cancelled) {
+        setPalmTriggerActive(true)
+        console.log('[Booth] Palm trigger v3 activated (MediaPipe Hands — Saatiril-style)')
+      }
     }
 
     startPalmTrigger()
@@ -627,9 +624,7 @@ export function BoothPage() {
       if (palmTriggerRef.current) {
         palmTriggerRef.current.stop()
         setPalmTriggerActive(false)
-        setPalmProgress(0)
-        setPalmState('IDLE')
-        setPalmDebug(null)
+        setPalmState('none')
       }
     }
   }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity])
@@ -807,8 +802,30 @@ export function BoothPage() {
             )}
 
             {/* Palm trigger v2 — Saatiril-style overlay */}
-            {/* ARMED state: big "SIAP" overlay — pull hand away to trigger shutter */}
-            {palmTriggerActive && palmState === 'ARMED' && (
+            {/* ═══ PALM TRIGGER v3 (MediaPipe Hands — Saatiril-style) ═══ */}
+
+            {/* Loading state — MediaPipe scripts/model loading */}
+            {palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
+              <div className="absolute top-20 right-4 z-20 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5">
+                <RefreshCw className="w-3 h-3 animate-spin text-purple-haze-200" />
+                <span className="text-purple-haze-100 text-xs font-medium">
+                  {palmStatus === 'loading_scripts' ? 'Loading palm trigger...' : 'Loading hand model...'}
+                </span>
+              </div>
+            )}
+
+            {/* Error state */}
+            {palmTriggerActive && palmStatus === 'error' && (
+              <div className="absolute top-20 right-4 z-20 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-3 py-1.5">
+                <AlertTriangle className="w-3 h-3 text-red-300" />
+                <span className="text-red-100 text-xs font-medium">
+                  Palm trigger error: {palmError || 'unknown'}
+                </span>
+              </div>
+            )}
+
+            {/* CONFIRMED state: big "SIAP" overlay — pull hand away to trigger shutter */}
+            {palmTriggerActive && palmState === 'confirmed' && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -834,8 +851,8 @@ export function BoothPage() {
               </motion.div>
             )}
 
-            {/* ARMING state: brief "Detecting..." while palm stabilizes (600ms) */}
-            {palmTriggerActive && palmState === 'ARMING' && (
+            {/* HAND_DETECTED state: brief "Mendeteksi..." while hand sustains 500ms */}
+            {palmTriggerActive && palmState === 'hand_detected' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-15">
                 <div className="text-center">
                   <motion.div
@@ -850,52 +867,14 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Palm trigger ready indicator (IDLE state) + debug meter */}
-            {palmTriggerActive && palmState === 'IDLE' && (
-              <div className="absolute top-20 right-4 z-20">
-                <div className="flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5">
-                  <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
-                  <span className="text-purple-haze-100 text-xs font-medium">
-                    Palm Trigger ON · Angkat tangan
-                  </span>
-                </div>
-                {/* v2.1: Debug meter — shows live palm detection so user can verify it works */}
-                {palmDebug && (
-                  <div className="mt-2 bg-black/70 border border-purple-haze-500/30 rounded-lg px-3 py-2 text-xs font-mono space-y-1 min-w-[180px]">
-                    <div className="flex justify-between text-silver-300">
-                      <span>Skin ratio</span>
-                      <span>{(palmDebug.ratio * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between text-silver-400">
-                      <span>Baseline</span>
-                      <span>{(palmDebug.baseline * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between text-silver-300">
-                      <span>Delta</span>
-                      <span className={palmDebug.isPalm ? 'text-green-400 font-bold' : 'text-silver-200'}>
-                        +{(palmDebug.delta * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-silver-400">
-                      <span>Threshold</span>
-                      <span>{(palmDebug.threshold * 100).toFixed(1)}%</span>
-                    </div>
-                    {/* Delta bar — fills green when delta > threshold (palm detected) */}
-                    <div className="w-full h-1.5 bg-silver-900/60 rounded-full overflow-hidden mt-1">
-                      <div
-                        className={`h-full transition-all duration-100 ${
-                          palmDebug.isPalm ? 'bg-green-400' : 'bg-purple-haze-400'
-                        }`}
-                        style={{
-                          width: `${Math.min(100, (palmDebug.delta / Math.max(palmDebug.threshold * 2, 0.001)) * 100)}%`
-                        }}
-                      />
-                    </div>
-                    <div className="text-[10px] text-silver-500 text-center mt-1">
-                      {palmDebug.isPalm ? '🟢 PALM DETECTED' : '⚪ no palm — raise hand'}
-                    </div>
-                  </div>
-                )}
+            {/* NONE/SEARCHING state: ready indicator badge */}
+            {palmTriggerActive && (palmState === 'none' || palmState === 'searching') &&
+             palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
+              <div className="absolute top-20 right-4 flex items-center gap-2 bg-purple-haze-500/20 border border-purple-haze-500/30 rounded-full px-3 py-1.5 z-20">
+                <div className="w-2 h-2 rounded-full bg-purple-haze-400 animate-pulse" />
+                <span className="text-purple-haze-100 text-xs font-medium">
+                  Palm Trigger ON · Angkat tangan
+                </span>
               </div>
             )}
 

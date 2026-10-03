@@ -1,321 +1,299 @@
 /**
- * ARAY Palm Trigger v2 — Saatiril-style arm/release detection
+ * ARAY Palm Trigger v3 — MediaPipe Hands (Saatiril-Andro port)
  *
- * ALUR (seperti Saatiril):
- * 1. User angkat tangan ke kamera
- * 2. Sistem deteksi tangan → muncul overlay "SIAP" (READY state)
- * 3. User TARIK tangan keluar dari frame
- * 4. Sistem deteksi tangan hilang → TRIGGER shutter (countdown → capture)
+ * Sama seperti Saatiril-Andro: https://github.com/synclicen/Saatiril-Andro
+ * commit c57562dc — src/hooks/use-palm-detection.ts
  *
- * Ini berbeda dari v1 yang trigger on HOLD (tahan 2 detik).
- * v2 trigger on RELEASE setelah ARM — lebih natural, lebih responsif.
+ * ALUR (photobooth trigger):
+ *   1. Person shows hand to camera
+ *   2. Hand must be visible for 500ms to be "confirmed" (debounce)
+ *   3. Indicator turns green: "Tangan terdeteksi ✓"
+ *   4. Person removes hand from frame → TIMER STARTS immediately
+ *   5. Person poses during countdown → photo taken at 0
+ *
+ * Ini jauh lebih akurat dari heuristic skin detection (v1/v2) karena
+ * pakai MediaPipe Hands ML model yang mendeteksi 21 hand landmarks.
  *
  * STATE MACHINE:
- *   IDLE  → (palm detected, stable for `armStableMs`)  → ARMED
- *   ARMED → (palm lost for `releaseTriggerMs`)         → TRIGGER → IDLE
- *   ARMED → (palm lost too quickly, < `armStableMs`)   → IDLE (false alarm)
- *
- * CALIBRATION:
- * - 15 frame awal mengukur baseline skin ratio (wajah user sudah di frame)
- * - Palm = delta-above-baseline (bukan absolute threshold)
- *
- * SENSITIVITY (user-configurable):
- *   0.4 (Low)    → delta 0.14 (butuh tangan besar & jelas)
- *   0.6 (Medium) → delta 0.10
- *   0.8 (High)   → delta 0.06 (tangan kecil cukup)
+ *   none          → no hand in frame
+ *   hand_detected → hand just appeared, waiting for 500ms sustain
+ *   confirmed     → hand sustained 500ms (show "SIAP" / "Tangan terdeteksi ✓")
+ *   triggered     → confirmed hand left frame → fire onPalmLeft → START TIMER
  *
  * TIMING:
- *   armStableMs      = 600   (tangan harus stabil 600ms sebelum ARMED)
- *   releaseTriggerMs = 150   (tangan hilang 150ms → trigger shutter)
- *   cooldownMs       = 1500  (anti double-trigger setelah capture)
+ *   HAND_CONFIRM_SUSTAIN_MS = 500  (debounce — hand must stay 500ms)
+ *   TRIGGER_COOLDOWN_MS     = 5000 (anti re-trigger setelah capture)
+ *
+ * MODEL:
+ *   MediaPipe Hands (maxNumHands: 1, modelComplexity: 1)
+ *   minDetectionConfidence: 0.3 (very responsive)
+ *   minTrackingConfidence: 0.3
+ *   Scripts loaded from CDN: cdn.jsdelivr.net/npm/@mediapipe/hands@0.4
  */
 
-export type PalmState = 'IDLE' | 'ARMING' | 'ARMED' | 'TRIGGERED'
+export type PalmStatus =
+  | 'unloaded'
+  | 'loading_scripts'
+  | 'loading_model'
+  | 'model_ready'
+  | 'detecting'
+  | 'stopped'
+  | 'error'
+
+export type PalmState = 'none' | 'searching' | 'hand_detected' | 'confirmed' | 'triggered'
+
+export interface PalmCallbacks {
+  onPalmConfirmed: () => void  // hand sustained 500ms → show "SIAP"
+  onPalmLeft: () => void       // confirmed hand left frame → START TIMER
+  onStateChange?: (state: PalmState) => void  // UI feedback
+  onStatusChange?: (status: PalmStatus, error?: string | null) => void  // loading/error
+}
+
+// Tuning constants (sama dengan Saatiril-Andro)
+const HAND_CONFIRM_SUSTAIN_MS = 500
+const TRIGGER_COOLDOWN_MS = 5000
+
+// ─── Singleton script loader ──────────────────────────────────────────────
+let scriptsLoadPromise: Promise<boolean> | null = null
+
+function loadScript(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) {
+      resolve()
+      return
+    }
+    const s = document.createElement('script')
+    s.src = src
+    s.async = true
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error(`Failed to load: ${src}`))
+    document.head.appendChild(s)
+  })
+}
+
+async function loadPalmScripts(): Promise<boolean> {
+  if (scriptsLoadPromise) return scriptsLoadPromise
+  scriptsLoadPromise = (async () => {
+    try {
+      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js')
+      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js')
+      await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js')
+      await new Promise((r) => setTimeout(r, 100))
+
+      if (typeof (window as any).Hands === 'undefined') {
+        throw new Error('MediaPipe Hands global missing')
+      }
+      return true
+    } catch (e: any) {
+      console.error('[ARAY Palm v3] Script load failed:', e.message)
+      scriptsLoadPromise = null
+      return false
+    }
+  })()
+  return scriptsLoadPromise
+}
+
+// ─── PalmTrigger class ────────────────────────────────────────────────────
 
 export class PalmTrigger {
+  private status: PalmStatus = 'unloaded'
+  private state: PalmState = 'none'
+  private error: string | null = null
+
+  private hands: any = null
   private video: HTMLVideoElement | null = null
-  private canvas: HTMLCanvasElement | null = null
-  private ctx: CanvasRenderingContext2D | null = null
-  private isActive = false
-  private sensitivity = 0.6
-  private onTrigger: (() => void) | null = null
+  private animFrame: number | null = null
+  private isDetecting = false
 
-  // State machine
-  private state: PalmState = 'IDLE'
-  private stateChangedAt = 0
+  private callbacks: PalmCallbacks | null = null
 
-  // Timing constants
-  private readonly armStableMs = 600      // palm must be present this long before ARMED
-  private readonly releaseTriggerMs = 150 // palm must be absent this long to trigger
-  private readonly cooldownMs = 1500      // after trigger, ignore palm for this long
-  private readonly falseAlarmMs = 2000    // if arming doesn't stabilize in 2s, reset
+  // Hand tracking state
+  private handVisibleSince = 0
+  private isConfirmed = false
+  private triggerFired = false
+  private lastTriggerTime = 0
 
-  // Smoothing: rolling buffer of recent skin ratios
-  private recentRatios: number[] = []
-  private readonly bufferSize = 5
+  /**
+   * Initialize: load MediaPipe scripts + model.
+   * Call this before start(). Returns true on success.
+   */
+  async initialize(): Promise<boolean> {
+    this.setStatus('loading_scripts')
+    this.error = null
 
-  // Calibration
-  private baselineSum = 0
-  private baselineCount = 0
-  private baselineRatio = 0
-  private readonly baselineFrames = 15
-  private calibrated = false
-
-  // Last seen palm timestamp (for release detection)
-  private lastPalmSeenAt = 0
-
-  // RAF
-  private rafId: number | null = null
-
-  // Debug
-  private readonly debug = false
-  private frameCount = 0
-
-  // Public callbacks for UI feedback
-  public onPalmDetected: ((state: PalmState, progress: number) => void) | null = null
-  public onPalmLost: (() => void) | null = null
-  // v2.1: debug callback — fires every frame with current delta/threshold.
-  // UI uses this to show a live "palm detection meter" so user can see
-  // if detection is working (delta bar moves when hand enters frame).
-  public onDebug: ((info: { ratio: number; baseline: number; delta: number; threshold: number; isPalm: boolean; state: PalmState }) => void) | null = null
-
-  start(video: HTMLVideoElement, sensitivity: number, onTrigger: () => void): void {
-    this.video = video
-    this.sensitivity = sensitivity
-    this.onTrigger = onTrigger
-    this.isActive = true
-    this.state = 'IDLE'
-    this.stateChangedAt = Date.now()
-    this.recentRatios = []
-    this.baselineSum = 0
-    this.baselineCount = 0
-    this.baselineRatio = 0
-    this.calibrated = false
-    this.lastPalmSeenAt = 0
-    this.frameCount = 0
-
-    this.canvas = document.createElement('canvas')
-    this.canvas.width = 160
-    this.canvas.height = 120
-    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })
-
-    console.log('[PalmTrigger v2] Started, sensitivity:', sensitivity,
-      '(delta threshold:', this.deltaThreshold().toFixed(3), ')')
-    console.log('[PalmTrigger v2] Flow: IDLE → ARMING (palm detected) →',
-      'ARMED ("SIAP" shown) → TRIGGER (palm pulled away) → shutter')
-    this.detect()
-  }
-
-  stop(): void {
-    this.isActive = false
-    if (this.rafId) {
-      cancelAnimationFrame(this.rafId)
-      this.rafId = null
+    const ok = await loadPalmScripts()
+    if (!ok) {
+      this.setStatus('error', 'Failed to load MediaPipe Hands scripts')
+      return false
     }
-    this.state = 'IDLE'
-    this.recentRatios = []
-    this.calibrated = false
-    console.log('[PalmTrigger v2] Stopped')
+
+    this.setStatus('loading_model')
+
+    try {
+      const hands = new (window as any).Hands({
+        locateFile: (file: string) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+        }
+      })
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.3,  // Very responsive (sama dengan Saatiril)
+        minTrackingConfidence: 0.3
+      })
+
+      hands.onResults((results: any) => this.processResults(results))
+
+      // Initialize with dummy frame
+      const tempCanvas = document.createElement('canvas')
+      tempCanvas.width = 1
+      tempCanvas.height = 1
+      await hands.send({ image: tempCanvas })
+
+      this.hands = hands
+      this.setStatus('model_ready')
+      console.log('[ARAY Palm v3] MediaPipe Hands model ready')
+      return true
+    } catch (e: any) {
+      console.error('[ARAY Palm v3] Model init failed:', e)
+      this.setStatus('error', e?.message || 'Model init failed')
+      return false
+    }
   }
 
   /**
-   * Delta above baseline required to consider palm "present".
-   * v2.1: MUCH lower thresholds — old 0.06-0.14 was too high.
-   * With user's face already in frame (baseline ~30% skin), adding a palm
-   * only increases skin ratio by ~3-5%. Old threshold of 0.10 (Medium)
-   * meant palm was never detected.
-   *
-   * 0.4 (Low)    → delta 0.06 (need clear, close palm)
-   * 0.6 (Medium) → delta 0.04 (moderate palm)
-   * 0.8 (High)   → delta 0.025 (small/distant palm enough)
+   * Start detection. Will auto-initialize if needed.
+   * @param video    HTMLVideoElement with camera stream
+   * @param _sensitivity  ignored (kept for backward compat — MediaPipe uses 0.3 confidence)
+   * @param callbacks   onPalmConfirmed, onPalmLeft, optional onStateChange/onStatusChange
    */
-  private deltaThreshold(): number {
-    return 0.085 - this.sensitivity * 0.075
+  async start(
+    video: HTMLVideoElement,
+    _sensitivity: number,
+    callbacks: PalmCallbacks
+  ): Promise<void> {
+    if (!this.hands) {
+      const ok = await this.initialize()
+      if (!ok) return
+    }
+
+    this.video = video
+    this.callbacks = callbacks
+    this.isDetecting = true
+    this.resetState()
+
+    this.setState('searching')
+    this.setStatus('detecting')
+    console.log('[ARAY Palm v3] Detection started — show hand to camera, hold 500ms, then remove to trigger')
+    this.detectFrame()
+  }
+
+  stop(): void {
+    this.isDetecting = false
+    if (this.animFrame) {
+      cancelAnimationFrame(this.animFrame)
+      this.animFrame = null
+    }
+    this.setState('none')
+    this.setStatus('model_ready')
+    this.resetState()
+    console.log('[ARAY Palm v3] Detection stopped')
+  }
+
+  dispose(): void {
+    this.stop()
+    if (this.hands) {
+      try { this.hands.close() } catch {}
+      this.hands = null
+    }
+    this.setStatus('unloaded')
+  }
+
+  getStatus(): PalmStatus { return this.status }
+  getState(): PalmState { return this.state }
+  getError(): string | null { return this.error }
+
+  // ─── Internal ───────────────────────────────────────────────────────────
+
+  private resetState(): void {
+    this.handVisibleSince = 0
+    this.isConfirmed = false
+    this.triggerFired = false
+    this.lastTriggerTime = 0
   }
 
   private setState(newState: PalmState): void {
     if (this.state === newState) return
-    const now = Date.now()
-    console.log('[PalmTrigger v2]', this.state, '→', newState,
-      '(was in', this.state, 'for', now - this.stateChangedAt, 'ms)')
+    console.log('[ARAY Palm v3]', this.state, '→', newState)
     this.state = newState
-    this.stateChangedAt = now
+    this.callbacks?.onStateChange?.(newState)
+  }
 
-    // Notify UI
-    if (this.onPalmDetected) {
-      this.onPalmDetected(newState, newState === 'ARMED' ? 1 : 0)
+  private setStatus(newStatus: PalmStatus, error?: string | null): void {
+    this.status = newStatus
+    if (error !== undefined) this.error = error
+    this.callbacks?.onStatusChange?.(newStatus, this.error)
+  }
+
+  private processResults(results: any): void {
+    if (!this.isDetecting) return
+
+    const multiHandLandmarks = results.multiHandLandmarks || []
+    const now = Date.now()
+    const handDetected = multiHandLandmarks.length > 0
+
+    // Cooldown check
+    if (this.lastTriggerTime > 0 && now - this.lastTriggerTime < TRIGGER_COOLDOWN_MS) {
+      this.setState('triggered')
+      return
     }
-    if (newState === 'IDLE' && this.onPalmLost) {
-      this.onPalmLost()
+
+    if (handDetected) {
+      if (this.handVisibleSince === 0) {
+        // Hand just appeared
+        this.handVisibleSince = now
+        this.isConfirmed = false
+        this.triggerFired = false
+        this.setState('hand_detected')
+        console.log('[ARAY Palm v3] Hand appeared — waiting for 500ms sustain')
+      } else if (!this.isConfirmed && now - this.handVisibleSince >= HAND_CONFIRM_SUSTAIN_MS) {
+        // Hand sustained long enough → confirmed
+        this.isConfirmed = true
+        this.setState('confirmed')
+        console.log('[ARAY Palm v3] Hand confirmed ✓ — remove hand to trigger timer')
+        this.callbacks?.onPalmConfirmed?.()
+      }
+      // else: hand still visible, waiting for sustain or waiting to leave
+    } else {
+      // No hand in frame
+      if (this.isConfirmed && !this.triggerFired) {
+        // Hand was confirmed and now left → TRIGGER!
+        this.triggerFired = true
+        this.lastTriggerTime = now
+        this.setState('triggered')
+        console.log('[ARAY Palm v3] Hand left frame → TIMER STARTED! (photobooth trigger)')
+        this.callbacks?.onPalmLeft?.()
+      } else {
+        // Hand was not confirmed or already triggered — just reset
+        this.setState('none')
+      }
+      this.handVisibleSince = 0
+      this.isConfirmed = false
     }
   }
 
-  private detect = (): void => {
-    if (!this.isActive || !this.video || !this.canvas || !this.ctx) return
-    if (this.video.videoWidth === 0 || this.video.readyState < 2) {
-      this.rafId = requestAnimationFrame(this.detect)
-      return
-    }
+  private detectFrame = async (): Promise<void> => {
+    if (!this.isDetecting || !this.hands || !this.video) return
 
     try {
-      this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height)
-    } catch (e) {
-      this.rafId = requestAnimationFrame(this.detect)
-      return
+      await this.hands.send({ image: this.video })
+    } catch {
+      // Frame send failed, skip
     }
 
-    const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height)
-    const data = imageData.data
-    const w = this.canvas.width
-    const h = this.canvas.height
-
-    // Count skin-tone pixels across whole frame
-    let skinPixels = 0
-    let totalPixels = 0
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const idx = (y * w + x) * 4
-        const r = data[idx]
-        const g = data[idx + 1]
-        const b = data[idx + 2]
-        totalPixels++
-        if (r > 60 && g > 30 && b > 15 &&
-            r > g && g >= b - 5 &&
-            r - b > 12) {
-          const max = r > g ? r : g
-          const min = r < g ? r : g
-          if (max < 245 && max - min > 8) {
-            skinPixels++
-          }
-        }
-      }
+    if (this.isDetecting) {
+      this.animFrame = requestAnimationFrame(() => this.detectFrame())
     }
-
-    const skinRatio = totalPixels > 0 ? skinPixels / totalPixels : 0
-
-    // Rolling smoothing
-    this.recentRatios.push(skinRatio)
-    if (this.recentRatios.length > this.bufferSize) this.recentRatios.shift()
-    const smoothed = this.recentRatios.reduce((a, b) => a + b, 0) / this.recentRatios.length
-
-    // Calibration phase
-    if (!this.calibrated) {
-      this.baselineSum += smoothed
-      this.baselineCount++
-      if (this.baselineCount < this.baselineFrames) {
-        this.rafId = requestAnimationFrame(this.detect)
-        return
-      }
-      this.baselineRatio = this.baselineSum / this.baselineCount
-      this.calibrated = true
-      console.log('[PalmTrigger v2] Calibrated. baseline skin ratio:',
-        this.baselineRatio.toFixed(3), '— delta threshold:',
-        this.deltaThreshold().toFixed(3))
-    }
-
-    const delta = smoothed - this.baselineRatio
-    const threshold = this.deltaThreshold()
-    const isPalm = delta > threshold
-    const now = Date.now()
-
-    // v2.1: Always emit debug info so UI can show live detection meter
-    if (this.onDebug) {
-      this.onDebug({
-        ratio: smoothed,
-        baseline: this.baselineRatio,
-        delta,
-        threshold,
-        isPalm,
-        state: this.state
-      })
-    }
-
-    // Periodic console log (every ~30 frames ≈ 1s) so user can see detection working
-    this.frameCount = (this.frameCount || 0) + 1
-    if (this.frameCount % 30 === 0) {
-      console.log('[PalmTrigger v2.1] state=', this.state,
-        'ratio=', smoothed.toFixed(3),
-        'baseline=', this.baselineRatio.toFixed(3),
-        'delta=', delta.toFixed(3),
-        'thr=', threshold.toFixed(3),
-        'palm=', isPalm ? 'YES' : 'no')
-    }
-
-    // ─── STATE MACHINE ───────────────────────────────────────────
-    switch (this.state) {
-      case 'IDLE': {
-        if (isPalm) {
-          // Start arming — palm must stay stable for armStableMs
-          this.lastPalmSeenAt = now
-          this.setState('ARMING')
-        }
-        break
-      }
-
-      case 'ARMING': {
-        if (isPalm) {
-          this.lastPalmSeenAt = now
-          const elapsed = now - this.stateChangedAt
-          if (elapsed >= this.armStableMs) {
-            // Palm stable long enough → ARMED ("SIAP" shown to user)
-            this.setState('ARMED')
-          }
-        } else {
-          // Palm lost during arming — if quick, treat as false alarm
-          const sinceLastSeen = now - this.lastPalmSeenAt
-          if (sinceLastSeen > this.releaseTriggerMs) {
-            console.log('[PalmTrigger v2] Palm lost during arming — false alarm, reset to IDLE')
-            this.setState('IDLE')
-          }
-        }
-        // Timeout: if arming takes too long, reset
-        if (now - this.stateChangedAt > this.falseAlarmMs) {
-          this.setState('IDLE')
-        }
-        break
-      }
-
-      case 'ARMED': {
-        if (!isPalm) {
-          // Palm pulled away — trigger shutter!
-          const sinceLastSeen = now - this.lastPalmSeenAt
-          if (sinceLastSeen >= this.releaseTriggerMs) {
-            console.log('[PalmTrigger v2] TRIGGER! Palm pulled away after',
-              now - this.stateChangedAt, 'ms in ARMED state')
-            this.setState('TRIGGERED')
-            if (this.onTrigger) {
-              this.onTrigger()
-            }
-            // Enter cooldown to prevent double-trigger
-            this.state = 'IDLE'
-            this.stateChangedAt = now + this.cooldownMs  // hack: skip arming during cooldown
-            // Reset baseline (lighting may have changed)
-            this.calibrated = false
-            this.baselineSum = 0
-            this.baselineCount = 0
-            this.recentRatios = []
-          }
-        } else {
-          this.lastPalmSeenAt = now
-        }
-        break
-      }
-
-      case 'TRIGGERED': {
-        // Should not stay here — TRIGGERED immediately transitions to IDLE
-        this.setState('IDLE')
-        break
-      }
-    }
-
-    // Cooldown check: if stateChangedAt is in the future, we're in cooldown
-    if (this.state === 'IDLE' && this.stateChangedAt > now) {
-      // Still in cooldown — skip arming
-      if (isPalm) {
-        this.lastPalmSeenAt = now
-      }
-    }
-
-    this.rafId = requestAnimationFrame(this.detect)
   }
 }
