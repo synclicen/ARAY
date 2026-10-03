@@ -304,7 +304,7 @@ export function SettingsPage() {
         <SettingRow
           icon={<Shield className="w-4 h-4" />}
           label="Enable kiosk mode"
-          hint="Full-screen booth. Hides settings & sidebar. Admin exit: Ctrl+Shift+Alt+Q"
+          hint="Full-screen booth. Hides settings & sidebar. Auto-redirect ke Booth page."
           danger
         >
           <Toggle
@@ -312,6 +312,14 @@ export function SettingsPage() {
             onChange={(v) => updateSettings({ kiosk_mode: v })}
           />
         </SettingRow>
+        <div className="mt-4 p-3 rounded-lg bg-purple-haze-500/10 border border-purple-haze-500/20 text-xs text-silver-300 space-y-1">
+          <p><strong className="text-silver-200">Cara exit kiosk mode:</strong></p>
+          <p>1. Klik tombol X kecil di pojok kanan atas → masukkan password</p>
+          <p>2. Atau tekan shortcut keyboard:</p>
+          <p className="pl-4 font-mono text-purple-haze-200">Ctrl+Shift+Alt+Q</p>
+          <p className="pl-4 font-mono text-purple-haze-200">Ctrl+Shift+Q (backup)</p>
+          <p className="mt-2"><strong className="text-silver-200">Password:</strong> {settings.booth_fullscreen_password || 'aray'} (ubah di Camera Settings)</p>
+        </div>
       </ArayCard>
 
       <div className="text-center py-4">

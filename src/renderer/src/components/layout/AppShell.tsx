@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   CalendarDays,
@@ -9,9 +9,11 @@ import {
   RefreshCw,
   Printer,
   Settings as SettingsIcon,
-  Sparkles
+  Sparkles,
+  X
 } from 'lucide-react'
-import { ArayLogo, ArayBadge } from '../ui'
+import { motion, AnimatePresence } from 'framer-motion'
+import { ArayLogo, ArayBadge, ArayButton } from '../ui'
 import { useSettingsStore } from '../../stores'
 
 interface AppShellProps {
@@ -32,29 +34,114 @@ const navItems = [
 export function AppShell({ children }: AppShellProps) {
   const [collapsed, setCollapsed] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
   const { settings } = useSettingsStore()
+  const [showKioskPasswordModal, setShowKioskPasswordModal] = useState(false)
+  const [kioskPasswordInput, setKioskPasswordInput] = useState('')
+  const [kioskPasswordError, setKioskPasswordError] = useState(false)
 
   const isKiosk = settings?.kiosk_mode ?? false
 
+  // v4.1.5: Saat kiosk mode aktif, auto-redirect ke /booth.
+  // Sebelumnya kiosk hide sidebar tapi user tetap di route saat ini (mis. Settings),
+  // sehingga tidak bisa navigasi kemana-mana — terlihat "stuck".
+  useEffect(() => {
+    if (isKiosk && location.pathname !== '/booth') {
+      navigate('/booth', { replace: true })
+    }
+  }, [isKiosk, location.pathname, navigate])
+
   if (isKiosk) {
-    // In kiosk mode, hide navigation but show exit button
+    const exitKiosk = () => {
+      const pwd = settings?.booth_fullscreen_password
+      if (pwd && pwd.length > 0) {
+        // Password diset — tampilkan modal
+        setShowKioskPasswordModal(true)
+        setKioskPasswordInput('')
+        setKioskPasswordError(false)
+      } else {
+        // Tanpa password — langsung exit
+        window.aray.settings.update({ kiosk_mode: false }).then(() => {
+          window.location.reload()
+        })
+      }
+    }
+
+    const verifyKioskPassword = () => {
+      const pwd = settings?.booth_fullscreen_password || 'aray'
+      if (kioskPasswordInput === pwd) {
+        window.aray.settings.update({ kiosk_mode: false }).then(() => {
+          setShowKioskPasswordModal(false)
+          window.location.reload()
+        })
+      } else {
+        setKioskPasswordError(true)
+      }
+    }
+
+    // In kiosk mode, hide navigation. Hanya booth yang tampil.
     return (
-      <div className="h-full w-full relative">
-        {children}
-        {/* Kiosk exit button — tiny, top-right corner */}
-        <button
-          onClick={async () => {
-            await window.aray.settings.update({ kiosk_mode: false })
-            window.location.reload()
-          }}
-          className="absolute top-2 right-2 z-50 w-6 h-6 rounded-full bg-silver-900/40 hover:bg-red-500/40 border border-silver-700/30 hover:border-red-500/50 flex items-center justify-center transition-all group"
-          title="Exit Kiosk Mode"
-        >
-          <svg className="w-3 h-3 text-silver-600 group-hover:text-red-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+      <>
+        <div className="h-full w-full relative">
+          {children}
+          {/* Kiosk exit button — kecil di pojok kanan atas.
+              Klik → password modal (jika password diset) atau langsung exit. */}
+          <button
+            onClick={exitKiosk}
+            className="absolute top-3 right-3 z-50 w-9 h-9 rounded-full bg-black/50 hover:bg-red-500/40 border border-silver-700/30 hover:border-red-500/50 flex items-center justify-center transition-all opacity-40 hover:opacity-100"
+            title="Exit Kiosk Mode (butuh password)"
+          >
+            <X className="w-4 h-4 text-silver-300" />
+          </button>
+        </div>
+
+        {/* Password modal untuk exit kiosk */}
+        <AnimatePresence>
+          {showKioskPasswordModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-surface-raised border border-silver-300/15 rounded-2xl shadow-card p-6 w-full max-w-sm"
+              >
+                <h3 className="text-lg font-semibold mb-2 text-silver-100">Exit Kiosk Mode</h3>
+                <p className="text-silver-400 text-sm mb-4">Masukkan password untuk keluar dari kiosk mode.</p>
+                <input
+                  type="password"
+                  autoFocus
+                  value={kioskPasswordInput}
+                  onChange={(e) => { setKioskPasswordInput(e.target.value); setKioskPasswordError(false) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') verifyKioskPassword() }}
+                  className={`aray-input w-full ${kioskPasswordError ? 'border-red-500' : ''}`}
+                  placeholder="Password"
+                />
+                {kioskPasswordError && <p className="text-red-400 text-xs mt-2">Password salah</p>}
+                <div className="flex gap-2 mt-4">
+                  <ArayButton
+                    variant="ghost"
+                    className="flex-1"
+                    onClick={() => { setShowKioskPasswordModal(false); setKioskPasswordInput(''); setKioskPasswordError(false) }}
+                  >
+                    Batal
+                  </ArayButton>
+                  <ArayButton variant="gold" className="flex-1" onClick={verifyKioskPassword}>
+                    Keluar
+                  </ArayButton>
+                </div>
+                <p className="text-silver-600 text-[10px] text-center mt-3">
+                  Shortcut keyboard: Ctrl+Shift+Alt+Q
+                </p>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </>
     )
   }
 

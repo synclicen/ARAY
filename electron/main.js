@@ -745,19 +745,48 @@ import_electron.app.whenReady().then(() => {
     registerIPC();
     createWindow();
     log("Window created successfully");
-    import_electron.globalShortcut.register("Ctrl+Shift+Alt+Q", () => {
-      log("Kiosk exit shortcut pressed");
-      const db = loadDB();
-      if (db.settings.kiosk_mode) {
-        db.settings.kiosk_mode = false;
-        saveDB(db);
-        log("Kiosk mode disabled via shortcut");
-        if (mainWindow) {
-          mainWindow.reload();
+    try {
+      const registered = import_electron.globalShortcut.register("Ctrl+Shift+Alt+Q", () => {
+        log("Kiosk exit shortcut pressed: Ctrl+Shift+Alt+Q");
+        const db = loadDB();
+        if (db.settings.kiosk_mode) {
+          db.settings.kiosk_mode = false;
+          saveDB(db);
+          log("Kiosk mode disabled via shortcut \u2014 reloading window");
+          if (mainWindow) {
+            mainWindow.reload();
+          }
+        } else {
+          log("Kiosk mode not active \u2014 shortcut ignored");
         }
+      });
+      if (registered) {
+        log("Kiosk exit shortcut registered: Ctrl+Shift+Alt+Q");
+      } else {
+        log("WARNING: Failed to register kiosk exit shortcut (Ctrl+Shift+Alt+Q)");
       }
-    });
-    log("Kiosk exit shortcut registered: Ctrl+Shift+Alt+Q");
+    } catch (e) {
+      log(`ERROR registering kiosk shortcut: ${e.message}`);
+    }
+    try {
+      const registered2 = import_electron.globalShortcut.register("Ctrl+Shift+Q", () => {
+        log("Kiosk exit shortcut pressed: Ctrl+Shift+Q (backup)");
+        const db = loadDB();
+        if (db.settings.kiosk_mode) {
+          db.settings.kiosk_mode = false;
+          saveDB(db);
+          log("Kiosk mode disabled via backup shortcut \u2014 reloading window");
+          if (mainWindow) {
+            mainWindow.reload();
+          }
+        }
+      });
+      if (registered2) {
+        log("Backup kiosk shortcut registered: Ctrl+Shift+Q");
+      }
+    } catch (e) {
+      log(`ERROR registering backup kiosk shortcut: ${e.message}`);
+    }
   } catch (err2) {
     log(`STARTUP ERROR: ${err2.message}`);
     log(`Stack: ${err2.stack}`);

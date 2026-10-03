@@ -669,20 +669,53 @@ app.whenReady().then(() => {
     createWindow(); log('Window created successfully')
 
     // Register kiosk exit shortcut: Ctrl+Shift+Alt+Q
-    globalShortcut.register('Ctrl+Shift+Alt+Q', () => {
-      log('Kiosk exit shortcut pressed')
-      const db = loadDB()
-      if (db.settings.kiosk_mode) {
-        db.settings.kiosk_mode = false
-        saveDB(db)
-        log('Kiosk mode disabled via shortcut')
-        // Reload the window to apply
-        if (mainWindow) {
-          mainWindow.reload()
+    // v4.1.5: Pastikan shortcut ter-register dengan logging yang jelas.
+    // Shortcut ini toggle kiosk_mode OFF (jika sedang ON).
+    try {
+      const registered = globalShortcut.register('Ctrl+Shift+Alt+Q', () => {
+        log('Kiosk exit shortcut pressed: Ctrl+Shift+Alt+Q')
+        const db = loadDB()
+        if (db.settings.kiosk_mode) {
+          db.settings.kiosk_mode = false
+          saveDB(db)
+          log('Kiosk mode disabled via shortcut — reloading window')
+          if (mainWindow) {
+            mainWindow.reload()
+          }
+        } else {
+          log('Kiosk mode not active — shortcut ignored')
         }
+      })
+      if (registered) {
+        log('Kiosk exit shortcut registered: Ctrl+Shift+Alt+Q')
+      } else {
+        log('WARNING: Failed to register kiosk exit shortcut (Ctrl+Shift+Alt+Q)')
       }
-    })
-    log('Kiosk exit shortcut registered: Ctrl+Shift+Alt+Q')
+    } catch (e: any) {
+      log(`ERROR registering kiosk shortcut: ${e.message}`)
+    }
+
+    // v4.1.5: Juga register shortcut yang lebih mudah: Ctrl+Shift+Q (tanpa Alt)
+    // sebagai backup kalau Ctrl+Shift+Alt+Q susah ditekan bersamaan.
+    try {
+      const registered2 = globalShortcut.register('Ctrl+Shift+Q', () => {
+        log('Kiosk exit shortcut pressed: Ctrl+Shift+Q (backup)')
+        const db = loadDB()
+        if (db.settings.kiosk_mode) {
+          db.settings.kiosk_mode = false
+          saveDB(db)
+          log('Kiosk mode disabled via backup shortcut — reloading window')
+          if (mainWindow) {
+            mainWindow.reload()
+          }
+        }
+      })
+      if (registered2) {
+        log('Backup kiosk shortcut registered: Ctrl+Shift+Q')
+      }
+    } catch (e: any) {
+      log(`ERROR registering backup kiosk shortcut: ${e.message}`)
+    }
   } catch (err: any) {
     log(`STARTUP ERROR: ${err.message}`); log(`Stack: ${err.stack}`)
     dialog.showErrorBox('ARAY — Error', `${err.message}\n\nLog: ${getLogPath()}`)
