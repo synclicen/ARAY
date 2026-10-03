@@ -465,11 +465,11 @@ export function BoothPage() {
       if (customTemplate) {
         // Custom template: use compositeCustomTemplate
         console.log('[Booth] Compositing with custom template:', customTemplate.name)
-        composite = await compositeCustomTemplate(customTemplate, photoUrls)
+        composite = await compositeCustomTemplate(customTemplate, photoUrls, aspectRatio)
       } else if (builtinTemplate) {
         // Built-in template: use compositeTemplate
         console.log('[Booth] Compositing with built-in template:', builtinTemplate.name)
-        composite = await compositeTemplate(builtinTemplate, photoUrls)
+        composite = await compositeTemplate(builtinTemplate, photoUrls, aspectRatio)
       }
 
       if (composite && activeEvent) {

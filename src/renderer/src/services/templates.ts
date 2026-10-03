@@ -391,13 +391,29 @@ export function getAvailableLayouts(): { id: string; name: string; shotCount: nu
   return TEMPLATES.map(t => ({ id: t.id, name: t.name, shotCount: t.shotCount }))
 }
 
+// Aspect ratio dimensions for composite output
+const ASPECT_DIMS: Record<string, { w: number; h: number }> = {
+  '9:16': { w: 1080, h: 1920 },
+  '1:1': { w: 1080, h: 1080 },
+  '4:3': { w: 1440, h: 1080 },
+  '16:9': { w: 1920, h: 1080 }
+}
+
+export function getCompositeDims(aspectRatio: string): { w: number; h: number } {
+  return ASPECT_DIMS[aspectRatio] || ASPECT_DIMS['9:16']
+}
+
 export async function compositeCustomTemplate(
   custom: CustomTemplate,
-  photoDataUrls: string[]
+  photoDataUrls: string[],
+  aspectRatio?: string
 ): Promise<string | null> {
   try {
     const info = getLayoutInfo(custom.layout)
-    const dims = info.dims
+    // If aspectRatio provided, override canvas dimensions to match
+    // PNG frame will be stretched to fit — so user should design PNG
+    // with the same aspect ratio for best results
+    const dims = aspectRatio ? getCompositeDims(aspectRatio) : info.dims
     const slots = info.slots
     const canvas = document.createElement('canvas')
     canvas.width = dims.w
@@ -409,7 +425,7 @@ export async function compositeCustomTemplate(
     ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Draw photos into slots
+    // Draw photos into slots (slots are percentage-based, work with any canvas size)
     const photos = photoDataUrls.slice(0, slots.length)
     for (let i = 0; i < slots.length && i < photos.length; i++) {
       const slot = slots[i]
@@ -422,7 +438,8 @@ export async function compositeCustomTemplate(
       drawImageCover(ctx, img, sx, sy, sw, sh)
     }
 
-    // Overlay custom frame image on top
+    // Overlay custom frame image — stretched to canvas dimensions
+    // User should design PNG with same aspect ratio for pixel-perfect match
     const frameImg = await loadImage(custom.frameDataUrl)
     if (frameImg) {
       ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height)
@@ -437,12 +454,15 @@ export async function compositeCustomTemplate(
 
 export async function compositeTemplate(
   template: ArayTemplateDef,
-  photoDataUrls: string[]
+  photoDataUrls: string[],
+  aspectRatio?: string
 ): Promise<string | null> {
   try {
     const canvas = document.createElement('canvas')
-    canvas.width = template.canvasWidth
-    canvas.height = template.canvasHeight
+    // If aspectRatio provided, use aspect ratio dims instead of template dims
+    const dims = aspectRatio ? getCompositeDims(aspectRatio) : { w: template.canvasWidth, h: template.canvasHeight }
+    canvas.width = dims.w
+    canvas.height = dims.h
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
 
