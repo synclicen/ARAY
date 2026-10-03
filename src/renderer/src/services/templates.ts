@@ -334,7 +334,7 @@ export interface CustomTemplate {
   name: string
   frameDataUrl: string  // user-uploaded frame image (PNG with transparency)
   shotCount: number
-  layout: 'strip-4' | 'grid-4' | 'triple-3' | 'single-1'
+  layout: string  // any template ID from TEMPLATES (e.g. 'classic-strip-4', 'duo-vertical')
   canvasWidth: number
   canvasHeight: number
 }
@@ -360,39 +360,35 @@ export function deleteCustomTemplate(id: string): void {
   localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
 }
 
-// Layout presets for custom templates
-const LAYOUT_SLOTS: Record<string, TemplateSlot[]> = {
-  'strip-4': [
-    { x: 5, y: 8, width: 90, height: 20 },
-    { x: 5, y: 31, width: 90, height: 20 },
-    { x: 5, y: 54, width: 90, height: 20 },
-    { x: 5, y: 77, width: 90, height: 20 }
-  ],
-  'grid-4': [
-    { x: 5, y: 8, width: 42, height: 38 },
-    { x: 53, y: 8, width: 42, height: 38 },
-    { x: 5, y: 50, width: 42, height: 38 },
-    { x: 53, y: 50, width: 42, height: 38 }
-  ],
-  'triple-3': [
-    { x: 3, y: 10, width: 30, height: 75 },
-    { x: 35, y: 10, width: 30, height: 75 },
-    { x: 67, y: 10, width: 30, height: 75 }
-  ],
-  'single-1': [
-    { x: 8, y: 8, width: 84, height: 78 }
-  ]
+// Get layout info from any built-in template by ID
+function getLayoutInfo(layoutId: string): { slots: TemplateSlot[]; dims: { w: number; h: number }; shotCount: number } {
+  const template = TEMPLATES.find(t => t.id === layoutId)
+  if (template) {
+    return {
+      slots: template.slots,
+      dims: { w: template.canvasWidth, h: template.canvasHeight },
+      shotCount: template.shotCount
+    }
+  }
+  // Fallback to classic strip
+  return {
+    slots: TEMPLATES[0].slots,
+    dims: { w: TEMPLATES[0].canvasWidth, h: TEMPLATES[0].canvasHeight },
+    shotCount: TEMPLATES[0].shotCount
+  }
 }
 
-const LAYOUT_SHOT_COUNT: Record<string, number> = {
-  'strip-4': 4, 'grid-4': 4, 'triple-3': 3, 'single-1': 1
+export function getLayoutShotCount(layoutId: string): number {
+  return getLayoutInfo(layoutId).shotCount
 }
 
-const LAYOUT_DIMS: Record<string, { w: number; h: number }> = {
-  'strip-4': { w: 600, h: 1800 },
-  'grid-4': { w: 1200, h: 1800 },
-  'triple-3': { w: 1800, h: 600 },
-  'single-1': { w: 1200, h: 1800 }
+export function getLayoutDims(layoutId: string): { w: number; h: number } {
+  return getLayoutInfo(layoutId).dims
+}
+
+// All available layouts for custom template selector (from built-in templates)
+export function getAvailableLayouts(): { id: string; name: string; shotCount: number }[] {
+  return TEMPLATES.map(t => ({ id: t.id, name: t.name, shotCount: t.shotCount }))
 }
 
 export async function compositeCustomTemplate(
@@ -400,8 +396,9 @@ export async function compositeCustomTemplate(
   photoDataUrls: string[]
 ): Promise<string | null> {
   try {
-    const dims = LAYOUT_DIMS[custom.layout] || LAYOUT_DIMS['strip-4']
-    const slots = LAYOUT_SLOTS[custom.layout] || LAYOUT_SLOTS['strip-4']
+    const info = getLayoutInfo(custom.layout)
+    const dims = info.dims
+    const slots = info.slots
     const canvas = document.createElement('canvas')
     canvas.width = dims.w
     canvas.height = dims.h

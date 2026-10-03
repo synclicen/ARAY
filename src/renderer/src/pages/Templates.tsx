@@ -5,16 +5,9 @@ import { ArayCard, ArayButton, ArayBadge } from '../components/ui'
 import {
   TEMPLATES, type ArayTemplateDef,
   getCustomTemplates, saveCustomTemplate, deleteCustomTemplate,
-  getLayoutShotCount, type CustomTemplate
+  getLayoutShotCount, getAvailableLayouts, type CustomTemplate
 } from '../services/templates'
 import { useSettingsStore } from '../stores/settings'
-
-const LAYOUTS = [
-  { id: 'strip-4', name: 'Strip (4 photos)', shotCount: 4 },
-  { id: 'grid-4', name: 'Grid 2×2 (4 photos)', shotCount: 4 },
-  { id: 'triple-3', name: 'Triple (3 photos)', shotCount: 3 },
-  { id: 'single-1', name: 'Single (1 photo)', shotCount: 1 }
-]
 
 export function TemplatesPage() {
   const { settings, updateSettings } = useSettingsStore()
@@ -22,8 +15,9 @@ export function TemplatesPage() {
   const [previewTemplate, setPreviewTemplate] = useState<ArayTemplateDef | null>(null)
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([])
   const [showUploadModal, setShowUploadModal] = useState(false)
+  const LAYOUTS = getAvailableLayouts()
   const [uploadName, setUploadName] = useState('')
-  const [uploadLayout, setUploadLayout] = useState('strip-4')
+  const [uploadLayout, setUploadLayout] = useState('classic-strip-4')
   const [uploadFrameData, setUploadFrameData] = useState<string | null>(null)
   const [uploadPreview, setUploadPreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
