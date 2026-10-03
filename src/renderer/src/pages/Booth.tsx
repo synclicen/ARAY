@@ -707,8 +707,9 @@ export function BoothPage() {
         )}
       </AnimatePresence>
 
-      {/* Top bar — hidden saat fullscreenBooth (kecuali toggle button kecil) */}
-      {!fullscreenBooth && (
+      {/* Top bar — hidden saat fullscreenBooth ATAU kiosk mode.
+          Di fullscreen/kiosk, hanya tombol X kecil yang tampil (untuk exit). */}
+      {!fullscreenBooth && !settings?.kiosk_mode && (
         <div className="absolute top-0 left-0 right-0 z-20 p-5 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent">
           <button
             onClick={() => {
@@ -903,8 +904,8 @@ export function BoothPage() {
             exit={{ opacity: 0 }}
             className="absolute inset-0 z-10 flex flex-col items-center justify-end pb-12"
           >
-            {/* Shot progress (photo mode only) — hidden saat fullscreen */}
-            {mode === 'photo' && !fullscreenBooth && (
+            {/* Shot progress (photo mode only) — hidden saat fullscreen ATAU kiosk */}
+            {mode === 'photo' && !fullscreenBooth && !settings?.kiosk_mode && (
               <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2">
                 {Array.from({ length: totalShots }).map((_, i) => (
                   <div
@@ -1028,7 +1029,7 @@ export function BoothPage() {
             {/* "Shot X of Y" info — sekarang digabung dengan shutter button
                 (lihat bottom capture button). Tidak ada teks terpisah lagi. */}
 
-            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
+            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && !settings?.kiosk_mode && (
               <div className="text-center mb-32">
                 {mode === 'photo' ? (
                   <p className="text-silver-200 text-2xl font-semibold mb-1">
