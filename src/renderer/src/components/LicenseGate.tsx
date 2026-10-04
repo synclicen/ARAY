@@ -70,8 +70,9 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
   }
 
   const copyMachineId = () => {
-    if (status?.displayMachineId) {
-      navigator.clipboard.writeText(status.displayMachineId)
+    if (status?.machineId) {
+      // v4.4.4: Copy FULL 64-char machineId (bukan display 12-char)
+      navigator.clipboard.writeText(status.machineId)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -139,20 +140,23 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
             <label className="text-xs text-silver-500 uppercase tracking-wide flex items-center gap-1 mb-2">
               <Shield className="w-3 h-3" /> Machine ID Perangkat
             </label>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 px-3 py-2.5 rounded-lg bg-surface-base border border-silver-300/10 text-silver-200 font-mono text-sm">
-                {status?.displayMachineId || 'Loading...'}
+            <div className="flex items-start gap-2">
+              <div className="flex-1 px-3 py-2.5 rounded-lg bg-surface-base border border-silver-300/10 text-silver-200 font-mono text-[10px] break-all leading-relaxed max-h-24 overflow-y-auto">
+                {status?.machineId || 'Loading...'}
               </div>
               <button
                 onClick={copyMachineId}
-                className="p-2.5 rounded-lg bg-purple-haze-500/20 border border-purple-haze-500/30 hover:bg-purple-haze-500/30 transition-all"
-                title="Copy Machine ID"
+                className="p-2.5 rounded-lg bg-purple-haze-500/20 border border-purple-haze-500/30 hover:bg-purple-haze-500/30 transition-all shrink-0"
+                title="Copy Full Machine ID (64 chars)"
               >
                 {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4 text-purple-haze-200" />}
               </button>
             </div>
             <p className="text-xs text-silver-600 mt-1.5">
-              Kirim Machine ID ini ke pengembang untuk mendapatkan kode aktivasi
+              {status?.displayMachineId && (
+                <span className="text-silver-500">Short ID: {status.displayMachineId} · </span>
+              )}
+              Kirim <strong className="text-silver-400">full Machine ID</strong> ke pengembang
             </p>
           </div>
 
@@ -233,7 +237,7 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
                     <Terminal className="w-3 h-3" /> Generate Activation Code
                   </p>
 
-                  {/* Machine ID input */}
+                  {/* Machine ID input — pre-filled dengan full machineId dari device ini */}
                   <div>
                     <label className="text-[10px] text-silver-600 uppercase mb-1 block">Machine ID (64 hex chars)</label>
                     <input
@@ -241,8 +245,16 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
                       value={devMachineId}
                       onChange={(e) => { setDevMachineId(e.target.value); setDevError(null) }}
                       placeholder="a1b2c3d4e5f6...64 chars"
-                      className="aray-input w-full font-mono text-xs"
+                      className="aray-input w-full font-mono text-[10px] break-all"
                     />
+                    {status?.machineId && (
+                      <button
+                        onClick={() => setDevMachineId(status.machineId)}
+                        className="text-[10px] text-purple-haze-300 hover:text-purple-haze-200 mt-1 underline"
+                      >
+                        Use this device's Machine ID
+                      </button>
+                    )}
                   </div>
 
                   {/* Admin Key input */}
