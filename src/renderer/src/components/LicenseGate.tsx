@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { Shield, Check, AlertTriangle, Copy, KeyRound, Calendar } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Shield, Check, AlertTriangle, Copy, KeyRound, Calendar, Terminal, ChevronDown, ChevronUp } from 'lucide-react'
 import { ArayButton, ArayLogo } from '../components/ui'
 
 interface LicenseStatus {
@@ -20,6 +20,13 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [activating, setActivating] = useState(false)
   const [copied, setCopied] = useState(false)
+  // v4.4.1: Developer mode — generate activation code dari app
+  const [showDevMode, setShowDevMode] = useState(false)
+  const [devMachineId, setDevMachineId] = useState('')
+  const [devAdminKey, setDevAdminKey] = useState('')
+  const [devResult, setDevResult] = useState<string | null>(null)
+  const [devError, setDevError] = useState<string | null>(null)
+  const [devLoading, setDevLoading] = useState(false)
 
   const checkStatus = async () => {
     try {
@@ -67,6 +74,36 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
       navigator.clipboard.writeText(status.displayMachineId)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  // v4.4.1: Developer mode — generate activation code
+  const handleGenerate = async () => {
+    if (!devMachineId.trim() || !devAdminKey.trim()) {
+      setDevError('Isi Machine ID dan Admin Key')
+      return
+    }
+    setDevLoading(true)
+    setDevError(null)
+    setDevResult(null)
+    try {
+      const result = await window.aray.license.generate(devMachineId.trim(), devAdminKey.trim())
+      if (result?.success) {
+        const data = result.data as any
+        setDevResult(data.activationCode)
+      } else {
+        setDevError(result?.error || 'Generate gagal')
+      }
+    } catch (e: any) {
+      setDevError(e.message)
+    } finally {
+      setDevLoading(false)
+    }
+  }
+
+  const copyDevResult = () => {
+    if (devResult) {
+      navigator.clipboard.writeText(devResult)
     }
   }
 
@@ -170,6 +207,96 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
               Hubungi pengembang untuk perpanjangan.
             </p>
           </div>
+        </div>
+
+        {/* v4.4.1: Developer Mode — collapsible section di bawah */}
+        <div className="mt-4">
+          <button
+            onClick={() => setShowDevMode(!showDevMode)}
+            className="w-full flex items-center justify-center gap-1.5 text-xs text-silver-600 hover:text-silver-400 transition-colors py-2"
+          >
+            <Terminal className="w-3 h-3" />
+            Developer Mode
+            {showDevMode ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+
+          <AnimatePresence>
+            {showDevMode && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="bg-surface-raised/80 backdrop-blur-xl border border-purple-haze-500/20 rounded-xl p-4 space-y-3 mt-2">
+                  <p className="text-xs text-purple-haze-200 font-medium flex items-center gap-1">
+                    <Terminal className="w-3 h-3" /> Generate Activation Code
+                  </p>
+
+                  {/* Machine ID input */}
+                  <div>
+                    <label className="text-[10px] text-silver-600 uppercase mb-1 block">Machine ID (64 hex chars)</label>
+                    <input
+                      type="text"
+                      value={devMachineId}
+                      onChange={(e) => { setDevMachineId(e.target.value); setDevError(null) }}
+                      placeholder="a1b2c3d4e5f6...64 chars"
+                      className="aray-input w-full font-mono text-xs"
+                    />
+                  </div>
+
+                  {/* Admin Key input */}
+                  <div>
+                    <label className="text-[10px] text-silver-600 uppercase mb-1 block">Admin Key (16 chars)</label>
+                    <input
+                      type="password"
+                      value={devAdminKey}
+                      onChange={(e) => { setDevAdminKey(e.target.value); setDevError(null) }}
+                      placeholder="XXXXXXXXXXXXXXXX"
+                      className="aray-input w-full font-mono text-xs"
+                      maxLength={16}
+                    />
+                  </div>
+
+                  {/* Generate button */}
+                  <ArayButton
+                    variant="ghost"
+                    className="w-full text-sm border border-purple-haze-500/30 text-purple-haze-200"
+                    disabled={devLoading}
+                    onClick={handleGenerate}
+                  >
+                    {devLoading ? 'Generating...' : 'Generate Code'}
+                  </ArayButton>
+
+                  {/* Error */}
+                  {devError && (
+                    <p className="text-red-400 text-xs flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" /> {devError}
+                    </p>
+                  )}
+
+                  {/* Result */}
+                  {devResult && (
+                    <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] text-green-400 uppercase mb-0.5">Activation Code</p>
+                          <p className="text-green-300 font-mono text-sm font-bold">{devResult}</p>
+                        </div>
+                        <button
+                          onClick={copyDevResult}
+                          className="p-1.5 rounded-lg bg-green-500/20 hover:bg-green-500/30 transition-all"
+                          title="Copy"
+                        >
+                          <Copy className="w-3.5 h-3.5 text-green-300" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </motion.div>
     </div>

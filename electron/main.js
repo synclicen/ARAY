@@ -272,9 +272,15 @@ function activateLicense(activationCode) {
   return { success: true, licenseType: verification.licenseType };
 }
 function generateLicenseCode(machineId, adminKey) {
-  const expectedAdminKey = crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex");
+  const expectedAdminKey = crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex").substring(0, 16).toUpperCase();
   if (adminKey !== expectedAdminKey) {
-    return { success: false, error: "Admin key tidak valid." };
+    return { success: false, error: "Admin key tidak valid. Akses ditolak." };
+  }
+  if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
+    return {
+      success: false,
+      error: `Machine ID tidak valid. Harus 64 karakter hex. Diterima: ${machineId?.length || 0} karakter.`
+    };
   }
   const expiresAt = /* @__PURE__ */ new Date();
   expiresAt.setDate(expiresAt.getDate() + 30);

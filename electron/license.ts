@@ -366,9 +366,19 @@ export function generateLicenseCode(
     .createHash('sha256')
     .update(`${LICENSE_SECRET}:admin-api-key`)
     .digest('hex')
+    .substring(0, 16)
+    .toUpperCase()
 
   if (adminKey !== expectedAdminKey) {
-    return { success: false, error: 'Admin key tidak valid.' }
+    return { success: false, error: 'Admin key tidak valid. Akses ditolak.' }
+  }
+
+  // Validate Machine ID — must be 64 hex chars (SHA-256)
+  if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
+    return {
+      success: false,
+      error: `Machine ID tidak valid. Harus 64 karakter hex. Diterima: ${machineId?.length || 0} karakter.`,
+    }
   }
 
   // Monthly license — expires 30 days from now
