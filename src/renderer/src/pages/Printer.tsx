@@ -24,20 +24,23 @@ export function PrinterPage() {
     try {
       console.log('[Printer] Detecting printers...')
       const result = await window.aray.print.listPrinters()
-      console.log('[Printer] Detect result:', result)
-      if (result?.success) {
+      console.log('[Printer] Detect result:', JSON.stringify(result))
+      if (result?.success && Array.isArray(result.data)) {
         const list = result.data as PrinterInfo[]
         setPrinters(list)
         console.log('[Printer] Found', list.length, 'printers:', list.map(p => p.name))
         if (list.length === 0) {
-          setTestResult('⚠ Tidak ada printer terdeteksi. Pastikan printer terhubung dan driver terinstall.')
+          setTestResult('⚠ Tidak ada printer terdeteksi. Pastikan printer terhubung dan driver terinstall. Cek log di %APPDATA%/ARAY/aray-startup.log')
+        } else {
+          setTestResult(`✓ Ditemukan ${list.length} printer`)
         }
       } else {
         console.error('[Printer] Detect failed:', result)
-        setTestResult('✗ Gagal detect printer: ' + (result as any)?.error?.message || 'unknown')
+        const errMsg = (result as any)?.error?.message || 'Format response salah'
+        setTestResult('✗ Gagal detect printer: ' + errMsg)
       }
     } catch (e: any) {
-      console.error('[Printer] Detect printers failed:', e)
+      console.error('[Printer] Detect printers exception:', e)
       setTestResult('✗ Error: ' + e.message)
     } finally {
       setLoading(false)

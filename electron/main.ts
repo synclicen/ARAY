@@ -523,15 +523,16 @@ function registerIPC() {
   ipcMain.handle('settings.update', (_e, partial: any) => wrap(() => updateSettings(partial)))
   ipcMain.handle('settings.getDefaultStoragePath', () => wrap(() => getDefaultStoragePath()))
 
-  // PRINT — v4.2.3: Real printer detection + actual printing
+  // PRINT — v4.2.4: Real printer detection + actual printing
   // List printers pakai Electron's win.webContents.getPrinters()
-  // v4.2.3 FIX: getPrinters() return Promise di Electron 31+ — harus di-await.
-  // Sebelumnya sync call return Promise object, bukan array -> renderer dapat [].
+  // v4.2.4 FIX: Return {success, data} langsung (bukan wrap) untuk eliminasi ambiguity.
+  // v4.2.3 bug: wrap(() => result) di async handler — wrap eksekusi fn, return ok(fn()),
+  //   tapi kalau fn throw, catch return err. Sebenarnya OK, tapi mari simplify.
   ipcMain.handle('print.listPrinters', async () => {
     try {
       if (!mainWindow) {
         log('[print.listPrinters] No main window')
-        return wrap(() => [])
+        return { success: true, data: [] }
       }
       log('[print.listPrinters] Calling mainWindow.webContents.getPrinters()...')
       const printers = await mainWindow.webContents.getPrinters()
@@ -544,11 +545,11 @@ function registerIPC() {
         status: p.status,
         is_connected: p.status === 0  // 0 = ready
       }))
-      return wrap(() => result)
+      return { success: true, data: result }
     } catch (e: any) {
       log(`[print.listPrinters] Error: ${e.message}`)
       log(`[print.listPrinters] Stack: ${e.stack}`)
-      return wrap(() => [])
+      return { success: false, error: { code: 'PRINTER_DETECT_FAILED', message: e.message } }
     }
   })
 

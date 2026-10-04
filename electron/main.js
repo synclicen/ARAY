@@ -623,7 +623,7 @@ function registerIPC() {
     try {
       if (!mainWindow) {
         log("[print.listPrinters] No main window");
-        return wrap(() => []);
+        return { success: true, data: [] };
       }
       log("[print.listPrinters] Calling mainWindow.webContents.getPrinters()...");
       const printers = await mainWindow.webContents.getPrinters();
@@ -637,11 +637,11 @@ function registerIPC() {
         is_connected: p.status === 0
         // 0 = ready
       }));
-      return wrap(() => result);
+      return { success: true, data: result };
     } catch (e) {
       log(`[print.listPrinters] Error: ${e.message}`);
       log(`[print.listPrinters] Stack: ${e.stack}`);
-      return wrap(() => []);
+      return { success: false, error: { code: "PRINTER_DETECT_FAILED", message: e.message } };
     }
   });
   import_electron.ipcMain.handle("print.queue", async (_e, mediaId, printerName, copies) => {
