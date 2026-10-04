@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayProgress } from '../components/ui'
 import { useSettingsStore } from '../stores/settings'
+import { VIDEO_TEMPLATES } from '../services/video-templates'
 
 export function SettingsPage() {
   const { settings, storageInfo, updateSettings, setStoragePath, loadStorageInfo } = useSettingsStore()
@@ -172,21 +173,14 @@ export function SettingsPage() {
           >
             <select
               className="aray-input max-w-[300px]"
-              value={settings.video_template || 'plain'}
+              value={settings.video_template || 'viral-bounce-10'}
               onChange={(e) => updateSettings({ video_template: e.target.value })}
             >
-              <option value="plain">Plain — No motion (15s)</option>
-              <option value="slowmo">Slow Motion — Dreamy slow zoom (15s)</option>
-              <option value="speed-ram">Speed Ramp — Slow→fast→slow (15s)</option>
-              <option value="boomerang">Boomerang — Bouncing zoom (10s)</option>
-              <option value="shake">Shake — 8mm film shake (15s)</option>
-              <option value="slowmo-shake">Slow-mo + Shake (15s)</option>
-              <option value="boomerang-shake">Boomerang + Shake (10s)</option>
-              <option value="speedram-shake">Speed Ramp + Shake (15s)</option>
-              <option value="slowmo-boomerang">Slow-mo + Boomerang (15s)</option>
-              <option value="pulse">Pulse Zoom — Rhythmic (15s)</option>
-              <option value="zoom-in">Zoom In — Portrait focus (15s)</option>
-              <option value="sway">Sway — Gentle (15s)</option>
+              {VIDEO_TEMPLATES.map(t => (
+                <option key={t.id} value={t.id}>
+                  {t.name} — {t.description} ({t.duration}s)
+                </option>
+              ))}
             </select>
           </SettingRow>
           <SettingRow
