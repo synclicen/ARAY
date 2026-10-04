@@ -219,7 +219,13 @@ export function AppShell({ children }: AppShellProps) {
             <div className="text-xs text-silver-500">ARAY v1.0</div>
           </div>
         </header>
-        <div className="h-[calc(100%-3.5rem)] overflow-y-auto">{children}</div>
+        <div className="h-[calc(100%-3.5rem-2rem)] overflow-y-auto">{children}</div>
+        {/* v4.3.8: Footer — © 2026 · Made by Fajrianor */}
+        <footer className="h-8 px-6 flex items-center justify-center border-t border-silver-300/10 bg-surface-raised/40">
+          <span className="text-xs text-silver-500">
+            © 2026 · Made by <span className="text-silver-300 font-medium">Fajrianor</span>
+          </span>
+        </footer>
       </main>
     </div>
   )
