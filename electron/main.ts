@@ -382,10 +382,21 @@ function createWindow(): void {
 
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1280, minHeight: 720,
-    show: true, autoHideMenuBar: true,
+    show: false,  // v4.4.2: Don't show until ready (fix blank screen on startup)
+    autoHideMenuBar: true,
     title: 'ARAY — Are you Ready? and....Yapping!',
     backgroundColor: '#0F0B1A',
     webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true }
+  })
+
+  // v4.4.2: Show window only when content is loaded — no blank screen
+  mainWindow.once('ready-to-show', () => {
+    log('Window ready-to-show — showing now')
+    if (mainWindow) {
+      mainWindow.show()
+      // Optional: focus the window
+      mainWindow.focus()
+    }
   })
 
   mainWindow.webContents.setWindowOpenHandler((d) => { shell.openExternal(d.url); return { action: 'deny' } })
@@ -1061,11 +1072,13 @@ app.whenReady().then(() => {
         '.binarypb': 'application/octet-stream'
       }
       const mime = mimeTypes[ext] || 'application/octet-stream'
-      // Add CORS headers so fetch() from the page works
+      // v4.4.2: Cache static assets (JS, CSS, fonts) for faster startup.
+      // Only no-cache for HTML (so updates take effect).
+      const isHtml = ext === '.html'
       const headers = new Headers({
         'Content-Type': mime,
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=86400'
       })
       return new Response(buffer, { status: 200, headers })
     } catch (e: any) {

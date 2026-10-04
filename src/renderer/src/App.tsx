@@ -23,29 +23,25 @@ function App() {
   const [licenseChecked, setLicenseChecked] = useState(false)
 
   useEffect(() => {
-    loadSettings()
-    loadStorageInfo()
-    // v4.4.0: Check license status on app load
-    checkLicense()
-  }, [loadSettings, loadStorageInfo])
-
-  const checkLicense = async () => {
-    try {
-      const result = await window.aray.license.status()
-      if (result?.success) {
-        setLicenseValid((result.data as any).isValid)
-      }
-    } catch (e) {
-      console.error('License check failed:', e)
-      setLicenseValid(false)
-    } finally {
+    // v4.4.2: Paralelkan license check + settings + storage untuk startup cepat
+    Promise.all([
+      window.aray.license.status().then((result: any) => {
+        if (result?.success) {
+          setLicenseValid((result.data as any).isValid)
+        }
+      }).catch((e: any) => {
+        console.error('License check failed:', e)
+      }),
+      loadSettings(),
+      loadStorageInfo()
+    ]).finally(() => {
       setLicenseChecked(true)
-    }
-  }
+    })
+  }, [loadSettings, loadStorageInfo])
 
   // v4.4.0: License gate — if not valid, show activation screen
   if (!licenseChecked) {
-    return <AraySplash message="Memeriksa lisensi..." />
+    return <AraySplash message="Loading ARAY..." />
   }
 
   if (!licenseValid) {
@@ -67,13 +63,14 @@ function App() {
 
   return (
     <AppShell>
+      {/* v4.4.2: Reduce AnimatePresence duration from 0.25s to 0.12s for snappier navigation */}
       <AnimatePresence mode="wait">
         <motion.div
           key={location.pathname}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.25, ease: 'easeOut' }}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.12, ease: 'easeOut' }}
           className="h-full"
         >
           <Routes location={location}>

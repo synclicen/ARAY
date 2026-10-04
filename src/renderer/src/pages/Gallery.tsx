@@ -46,8 +46,12 @@ export function GalleryPage() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  // v4.4.2: Pagination — lazy load media untuk performance dengan 5000+ photos
+  const [visibleCount, setVisibleCount] = useState(50)
+  const PAGE_SIZE = 50
 
   useEffect(() => {
+    setVisibleCount(PAGE_SIZE)  // v4.4.2: Reset pagination on filter change
     loadMedia({ event_id: eventId || undefined, type: typeFilter === 'all' ? undefined : typeFilter })
   }, [loadMedia, typeFilter, eventId])
 
@@ -272,17 +276,32 @@ export function GalleryPage() {
           </p>
         </ArayCard>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-          {deduped.map((m) => (
-            <MediaTile
-              key={m.id}
-              media={m}
-              onClick={() => setSelected(m)}
-              selectMode={selectMode}
-              isSelected={selectedIds.has(m.id)}
-              onToggleSelect={() => toggleSelect(m.id)}
-            />
-          ))}
+        <div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {/* v4.4.2: Only render visibleCount items for performance */}
+            {deduped.slice(0, visibleCount).map((m) => (
+              <MediaTile
+                key={m.id}
+                media={m}
+                onClick={() => setSelected(m)}
+                selectMode={selectMode}
+                isSelected={selectedIds.has(m.id)}
+                onToggleSelect={() => toggleSelect(m.id)}
+              />
+            ))}
+          </div>
+          {/* Load More button — show if there are more items */}
+          {visibleCount < deduped.length && (
+            <div className="text-center mt-6">
+              <ArayButton
+                variant="ghost"
+                onClick={() => setVisibleCount(visibleCount + PAGE_SIZE)}
+                className="border border-silver-300/20"
+              >
+                Load More ({deduped.length - visibleCount} remaining)
+              </ArayButton>
+            </div>
+          )}
         </div>
       )}
 

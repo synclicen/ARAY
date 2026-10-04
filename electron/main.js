@@ -745,11 +745,19 @@ function createWindow() {
     height: 900,
     minWidth: 1280,
     minHeight: 720,
-    show: true,
+    show: false,
+    // v4.4.2: Don't show until ready (fix blank screen on startup)
     autoHideMenuBar: true,
     title: "ARAY \u2014 Are you Ready? and....Yapping!",
     backgroundColor: "#0F0B1A",
     webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true }
+  });
+  mainWindow.once("ready-to-show", () => {
+    log("Window ready-to-show \u2014 showing now");
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
   });
   mainWindow.webContents.setWindowOpenHandler((d) => {
     import_electron2.shell.openExternal(d.url);
@@ -1372,10 +1380,11 @@ import_electron2.app.whenReady().then(() => {
         ".binarypb": "application/octet-stream"
       };
       const mime = mimeTypes[ext] || "application/octet-stream";
+      const isHtml = ext === ".html";
       const headers = new Headers({
         "Content-Type": mime,
         "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-cache"
+        "Cache-Control": isHtml ? "no-cache" : "public, max-age=86400"
       });
       return new Response(buffer, { status: 200, headers });
     } catch (e) {
