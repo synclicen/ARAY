@@ -369,7 +369,8 @@ export function generateLicenseCode(
     .substring(0, 16)
     .toUpperCase()
 
-  if (adminKey !== expectedAdminKey) {
+  // v4.4.3: Case-insensitive comparison — user bisa input huruf besar/kecil
+  if (adminKey.toUpperCase() !== expectedAdminKey) {
     return { success: false, error: 'Admin key tidak valid. Akses ditolak.' }
   }
 

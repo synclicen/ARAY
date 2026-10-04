@@ -273,7 +273,7 @@ function activateLicense(activationCode) {
 }
 function generateLicenseCode(machineId, adminKey) {
   const expectedAdminKey = crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex").substring(0, 16).toUpperCase();
-  if (adminKey !== expectedAdminKey) {
+  if (adminKey.toUpperCase() !== expectedAdminKey) {
     return { success: false, error: "Admin key tidak valid. Akses ditolak." };
   }
   if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
