@@ -140,6 +140,8 @@ export function BoothPage() {
   // and never sees shot 2's countdown logic.
   // Declaration here; assignment lives further down (after runCountdown is defined).
   const runCountdownRef = useRef<() => void>(() => {})
+  // v4.3.7: Ref for startRecording — dipakai palm trigger video mode
+  const startRecordingRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     if (events.length === 0) loadEvents()
@@ -572,6 +574,8 @@ export function BoothPage() {
   // Keep runCountdownRef in sync so the palm trigger callback always calls the
   // latest runCountdown (otherwise shot 2+ would re-run shot 1's closure).
   useEffect(() => { runCountdownRef.current = runCountdown }, [runCountdown])
+  // v4.3.7: Keep startRecordingRef in sync untuk palm trigger video mode
+  useEffect(() => { startRecordingRef.current = startRecording }, [startRecording])
 
   // Cleanup
   useEffect(() => {
@@ -590,8 +594,9 @@ export function BoothPage() {
 
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
+  // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
   useEffect(() => {
-    if (phase !== 'preview' || mode !== 'photo' || !settings?.palm_trigger) return
+    if (phase !== 'preview' || !settings?.palm_trigger) return
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -620,11 +625,20 @@ export function BoothPage() {
           console.log('[Booth] Palm confirmed — waiting for hand to leave')
         },
         onPalmLeft: () => {
-          // Confirmed hand left frame → START TIMER!
+          // Confirmed hand left frame → START TIMER/RECORDING!
+          // v4.3.7: Video mode langsung start recording (no countdown).
+          // Photo mode: countdown then capture.
           setPalmState('triggered')
           setPalmTriggerActive(false)
-          setPhase('countdown')
-          runCountdownRef.current()
+          if (mode === 'video') {
+            // Video mode: langsung start recording (video tidak perlu countdown)
+            setPhase('preview')  // tetap di preview agar recording overlay tampil
+            startRecordingRef.current()
+          } else {
+            // Photo mode: countdown then capture
+            setPhase('countdown')
+            runCountdownRef.current()
+          }
         },
         onStateChange: (newState) => {
           setPalmState(newState)
@@ -1066,18 +1080,50 @@ export function BoothPage() {
 
             {/* Video recording: no overlay (clean preview, auto-stop handles everything) */}
 
-            {/* Video recording: REC badge at top with countdown, nothing else */}
+            {/* v4.3.7: Video recording indicator BESAR dengan countdown timer di atas.
+                User bisa lihat detik rekaman dengan jelas.
+                - Big countdown number (text-8xl) di tengah atas
+                - REC badge + remaining time
+                - Red border glow untuk emphasize recording active */}
             {mode === 'video' && isRecording && (
-              <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-4 py-1.5 z-20">
-                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                <span
-                  className={`text-sm font-mono font-bold ${
-                    videoDuration - recordingTime <= 3 ? 'text-red-300' : 'text-red-200'
-                  }`}
-                >
-                  REC {videoDuration - recordingTime}s
-                </span>
-              </div>
+              <>
+                {/* Big countdown timer di tengah atas */}
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 text-center pointer-events-none">
+                  <motion.div
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className={`text-[120px] font-extrabold leading-none ${
+                      videoDuration - recordingTime <= 3
+                        ? 'text-red-400'
+                        : 'text-white'
+                    }`}
+                    style={{
+                      textShadow: videoDuration - recordingTime <= 3
+                        ? '0 0 40px rgba(239, 68, 68, 0.8)'
+                        : '0 0 30px rgba(0, 0, 0, 0.8)'
+                    }}
+                  >
+                    {videoDuration - recordingTime}
+                  </motion.div>
+                  <div className="text-2xl font-bold text-silver-300 mt-1">
+                    {videoDuration - recordingTime <= 3 ? 'seconds left!' : 'seconds'}
+                  </div>
+                </div>
+
+                {/* REC badge — kecil di pojok kanan atas */}
+                <div className="absolute top-4 right-4 flex items-center gap-2 bg-red-500/30 border border-red-500/50 rounded-full px-4 py-2 z-20">
+                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-sm font-mono font-bold text-red-200">
+                    REC {recordingTime}s / {videoDuration}s
+                  </span>
+                </div>
+
+                {/* Red border glow untuk emphasize recording */}
+                <div className="absolute inset-0 pointer-events-none z-10" style={{
+                  boxShadow: 'inset 0 0 100px rgba(239, 68, 68, 0.3)',
+                  animation: 'pulse 2s ease-in-out infinite'
+                }} />
+              </>
             )}
 
             {/* "Shot X of Y" info — sekarang digabung dengan shutter button
