@@ -123,7 +123,9 @@ export interface AraySettings {
   /**
    * Print settings — dipakai saat print dari booth result.
    */
-  print_paper_size?: '4x6' | '5x7' | 'A4' | 'Letter' | 'A6'
+  print_paper_size?: '4x6' | '5x7' | 'A4' | 'Letter' | 'A6' | 'custom'
+  print_custom_width?: number   // mm, for custom paper size
+  print_custom_height?: number  // mm, for custom paper size
   print_copies?: number
   print_color?: boolean  // true = color, false = grayscale
   print_orientation?: 'portrait' | 'landscape'

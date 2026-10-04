@@ -63,6 +63,8 @@ export function PrinterPage() {
       // v4.3.3: Pass print settings ke test print
       const printSettings = {
         paper_size: settings.print_paper_size || '4x6',
+        custom_width: settings.print_custom_width || 100,
+        custom_height: settings.print_custom_height || 150,
         copies: settings.print_copies || 1,
         color: settings.print_color !== false,
         orientation: settings.print_orientation || 'portrait',
@@ -193,18 +195,50 @@ export function PrinterPage() {
                   <div className="text-xs text-silver-500 mt-0.5">Ukuran kertas print</div>
                 </div>
               </div>
-              <select
-                className="aray-input max-w-[140px]"
-                value={settings.print_paper_size || '4x6'}
-                onChange={(e) => updateSettings({ print_paper_size: e.target.value as any })}
-              >
-                <option value="4x6">4×6 (Photo)</option>
-                <option value="5x7">5×7 (Large Photo)</option>
-                <option value="A6">A6 (105×148mm)</option>
-                <option value="A4">A4 (210×297mm)</option>
-                <option value="Letter">Letter (8.5×11")</option>
-              </select>
+              <div className="flex items-center gap-2">
+                <select
+                  className="aray-input max-w-[140px]"
+                  value={settings.print_paper_size || '4x6'}
+                  onChange={(e) => updateSettings({ print_paper_size: e.target.value as any })}
+                >
+                  <option value="4x6">4×6 (Photo)</option>
+                  <option value="5x7">5×7 (Large Photo)</option>
+                  <option value="A6">A6 (105×148mm)</option>
+                  <option value="A4">A4 (210×297mm)</option>
+                  <option value="Letter">Letter (8.5×11")</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
             </div>
+
+            {/* Custom Size Inputs — tampil hanya jika paper_size = custom */}
+            {settings.print_paper_size === 'custom' && (
+              <div className="flex items-center justify-between py-2 pl-7">
+                <div className="text-xs text-silver-500">Custom dimensions (mm)</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="10"
+                    max="1000"
+                    className="aray-input max-w-[80px]"
+                    value={settings.print_custom_width || 100}
+                    onChange={(e) => updateSettings({ print_custom_width: parseInt(e.target.value) || 100 })}
+                    placeholder="W"
+                  />
+                  <span className="text-silver-500 text-sm">×</span>
+                  <input
+                    type="number"
+                    min="10"
+                    max="1000"
+                    className="aray-input max-w-[80px]"
+                    value={settings.print_custom_height || 150}
+                    onChange={(e) => updateSettings({ print_custom_height: parseInt(e.target.value) || 150 })}
+                    placeholder="H"
+                  />
+                  <span className="text-silver-500 text-xs">mm</span>
+                </div>
+              </div>
+            )}
 
             {/* Copies */}
             <div className="flex items-center justify-between py-2">

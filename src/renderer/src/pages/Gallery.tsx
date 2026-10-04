@@ -327,20 +327,22 @@ function MediaTile({
   useEffect(() => {
     let cancelled = false
     async function load() {
-      // v4.3.4: For video, load original_path as video thumbnail (first frame)
-      // For photo, use thumbnail_path
-      const path = isVideo ? media.original_path : media.thumbnail_path
+      // v4.3.6: For video, pakai aray-file:// protocol (efficient, no base64)
+      if (isVideo) {
+        const normalizedPath = (media.original_path || '').replace(/\\/g, '/')
+        const encodedPath = encodeURIComponent(normalizedPath)
+        const url = `aray-file:///${encodedPath}`
+        if (!cancelled) setImgSrc(url)
+        return
+      }
+      // For photo, use thumbnail_path via base64 (file kecil, OK)
+      const path = media.thumbnail_path
       if (path) {
         try {
           const result = await window.aray.media.readFile(path)
           if (!cancelled && result.success) {
             const ext = path.toLowerCase().split('.').pop() || ''
-            let mime: string
-            if (isVideo) {
-              mime = ext === 'mp4' ? 'video/mp4' : 'video/webm'
-            } else {
-              mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
-            }
+            const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
             setImgSrc(`data:${mime};base64,${result.data}`)
           }
         } catch {
@@ -453,21 +455,30 @@ function MediaDetailModal({
       const path = media.original_path
       if (!path) return
 
-      // v4.3.5: For video, pakai aray-file:// protocol (stream dari disk).
-      // Base64 data URL choke pada file besar (>10MB) -> video stuck di 0:00.
+      // v4.3.6: For video, pakai aray-file:// protocol (stream dari disk).
+      // Encode path untuk handle spaces dan special chars.
       if (isVideo) {
-        // aray-file:// protocol format: aray-file:///C:/Users/.../file.webm
-        // Windows path: C:\Users\... -> replace \ with / -> aray-file:///C:/Users/...
+        // Windows path: C:\Users\Fajri Bowo\...\video.webm
+        // -> replace \ with / -> C:/Users/Fajri Bowo/.../video.webm
+        // -> encodeURIComponent setiap segment -> C%3A%2FUsers%2FFajri%20Bowo%2F...
+        // -> aray-file:/// + encoded path
         const normalizedPath = path.replace(/\\/g, '/')
-        const url = `aray-file:///${normalizedPath}`
+        // Encode entire path — protocol handler akan decode
+        const encodedPath = encodeURIComponent(normalizedPath)
+        const url = `aray-file:///${encodedPath}`
         console.log('[Gallery] Video URL:', url)
+        console.log('[Gallery] Video path:', path)
         if (!cancelled) setVideoSrc(url)
 
         // Get file info untuk debug
         try {
           const info = await window.aray.media.getFileInfo(path)
           if (!cancelled && info?.success) {
-            setFileInfo({ sizeMB: (info.data as any).sizeMB })
+            const data = info.data as any
+            console.log('[Gallery] Video file size:', data.sizeMB, 'MB')
+            setFileInfo({ sizeMB: data.sizeMB })
+          } else {
+            console.error('[Gallery] Video file not found or error:', info)
           }
         } catch (e) {
           console.error('[Gallery] getFileInfo failed:', e)

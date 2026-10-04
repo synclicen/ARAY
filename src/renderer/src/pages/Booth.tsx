@@ -1253,6 +1253,8 @@ export function BoothPage() {
                   // v4.3.3: Pass print settings ke IPC
                   const printSettings = {
                     paper_size: settings?.print_paper_size || '4x6',
+                    custom_width: settings?.print_custom_width || 100,
+                    custom_height: settings?.print_custom_height || 150,
                     copies: settings?.print_copies || 1,
                     color: settings?.print_color !== false,
                     orientation: settings?.print_orientation || 'portrait',

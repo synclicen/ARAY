@@ -756,7 +756,16 @@ function registerIPC() {
         'A4': { w: 210, h: 297 },
         'Letter': { w: 216, h: 279 }  // 8.5×11 inch
       }
-      const dims = paperDims[paperSize] || paperDims['4x6']
+      // v4.3.6: Support custom paper size
+      let dims: { w: number; h: number }
+      if (paperSize === 'custom') {
+        const customW = parseInt(printSettings?.custom_width) || 100
+        const customH = parseInt(printSettings?.custom_height) || 150
+        dims = { w: customW, h: customH }
+        log(`[print.queue] Custom paper size: ${customW}x${customH}mm`)
+      } else {
+        dims = paperDims[paperSize] || paperDims['4x6']
+      }
       // Swap if landscape
       const pageW = orientation === 'landscape' ? dims.h : dims.w
       const pageH = orientation === 'landscape' ? dims.w : dims.h
@@ -1010,28 +1019,31 @@ app.whenReady().then(() => {
   })
   log(`app:// protocol registered — serving from ${rendererDir}`)
 
-  // v4.3.5: Register aray-file:// protocol — stream media files from disk.
-  // URL format: aray-file:///C:/Users/.../video.webm
-  // Renderer pakai: <video src="aray-file:///${path}">
-  // Ini efficient — tidak perlu base64 encode, stream langsung dari disk.
+  // v4.3.6: Register aray-file:// protocol — serve media files from disk.
+  // v4.3.6 FIX: Pakai buffer langsung (bukan stream) untuk reliability.
+  // Stream (Readable.toWeb) bisa fail di beberapa Node version.
+  // Buffer lebih reliable untuk video playback.
   protocol.handle('aray-file', (request) => {
     try {
-      // Parse URL: aray-file:///C:/Users/.../file.webm
-      // URL.pathname = /C:/Users/.../file.webm (Windows path dengan drive letter)
+      // Parse URL: aray-file:///C%3A%2FUsers%2F...%2Ffile.webm
+      // atau: aray-file:///C:/Users/.../file.webm
       let urlPath = request.url.replace(/^aray-file:\/\/\/?/, '')
-      // Decode URI component
+      // Decode URI component (handle spaces, special chars)
       urlPath = decodeURIComponent(urlPath)
       // Fix Windows path: /C:/Users -> C:\Users
       const filePath = process.platform === 'win32'
         ? urlPath.replace(/\//g, '\\')
         : urlPath
 
-      log(`[aray-file://] Request: ${request.url} -> ${filePath}`)
+      log(`[aray-file://] Request: ${request.url.substring(0, 100)}... -> ${filePath}`)
 
       if (!fs.existsSync(filePath)) {
         log(`[aray-file://] 404: ${filePath}`)
         return new Response('Not Found', { status: 404 })
       }
+
+      const stat = fs.statSync(filePath)
+      log(`[aray-file://] File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`)
 
       const ext = path.extname(filePath).toLowerCase()
       const mimeTypes: Record<string, string> = {
@@ -1047,21 +1059,45 @@ app.whenReady().then(() => {
       }
       const mime = mimeTypes[ext] || 'application/octet-stream'
 
-      // v4.3.5: Stream file langsung — pakai fs.createReadStream untuk efficiency.
-      // Electron protocol.handle support Response dari Node stream.
-      const { Readable } = require('stream')
-      const stream = fs.createReadStream(filePath)
-      const readableStream = Readable.toWeb(stream)
+      // v4.3.6: Read file ke buffer langsung (bukan stream) — lebih reliable.
+      // Untuk video besar (20-50MB), buffer OK di Electron.
+      const buffer = fs.readFileSync(filePath)
 
       const headers = new Headers({
         'Content-Type': mime,
         'Access-Control-Allow-Origin': '*',
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Content-Length': stat.size.toString()
       })
 
-      return new Response(readableStream as any, { status: 200, headers })
+      // Support Range requests untuk video seek
+      const range = request.headers.get('range')
+      if (range) {
+        // Parse: bytes=start-end
+        const match = range.match(/bytes=(\d+)-(\d*)/)
+        if (match) {
+          const start = parseInt(match[1])
+          const end = match[2] ? parseInt(match[2]) : stat.size - 1
+          const chunkSize = end - start + 1
+          const chunk = buffer.subarray(start, end + 1)
+          log(`[aray-file://] Range: ${start}-${end} (${chunkSize} bytes)`)
+          return new Response(chunk as any, {
+            status: 206,
+            headers: new Headers({
+              'Content-Type': mime,
+              'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+              'Content-Length': chunkSize.toString(),
+              'Accept-Ranges': 'bytes',
+              'Access-Control-Allow-Origin': '*'
+            })
+          })
+        }
+      }
+
+      return new Response(buffer as any, { status: 200, headers })
     } catch (e: any) {
       log(`[aray-file://] Error: ${e.message}`)
+      log(`[aray-file://] Stack: ${e.stack}`)
       return new Response('Internal Error', { status: 500 })
     }
   })

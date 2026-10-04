@@ -813,7 +813,15 @@ function registerIPC() {
         "Letter": { w: 216, h: 279 }
         // 8.5×11 inch
       };
-      const dims = paperDims[paperSize] || paperDims["4x6"];
+      let dims;
+      if (paperSize === "custom") {
+        const customW = parseInt(printSettings?.custom_width) || 100;
+        const customH = parseInt(printSettings?.custom_height) || 150;
+        dims = { w: customW, h: customH };
+        log(`[print.queue] Custom paper size: ${customW}x${customH}mm`);
+      } else {
+        dims = paperDims[paperSize] || paperDims["4x6"];
+      }
       const pageW = orientation === "landscape" ? dims.h : dims.w;
       const pageH = orientation === "landscape" ? dims.w : dims.h;
       const grayscaleFilter = color ? "" : "filter: grayscale(100%);";
@@ -1030,11 +1038,13 @@ import_electron.app.whenReady().then(() => {
       let urlPath = request.url.replace(/^aray-file:\/\/\/?/, "");
       urlPath = decodeURIComponent(urlPath);
       const filePath = process.platform === "win32" ? urlPath.replace(/\//g, "\\") : urlPath;
-      log(`[aray-file://] Request: ${request.url} -> ${filePath}`);
+      log(`[aray-file://] Request: ${request.url.substring(0, 100)}... -> ${filePath}`);
       if (!fs.existsSync(filePath)) {
         log(`[aray-file://] 404: ${filePath}`);
         return new Response("Not Found", { status: 404 });
       }
+      const stat = fs.statSync(filePath);
+      log(`[aray-file://] File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
       const ext = path.extname(filePath).toLowerCase();
       const mimeTypes = {
         ".webm": "video/webm",
@@ -1048,17 +1058,38 @@ import_electron.app.whenReady().then(() => {
         ".gif": "image/gif"
       };
       const mime = mimeTypes[ext] || "application/octet-stream";
-      const { Readable } = require("stream");
-      const stream = fs.createReadStream(filePath);
-      const readableStream = Readable.toWeb(stream);
+      const buffer = fs.readFileSync(filePath);
       const headers = new Headers({
         "Content-Type": mime,
         "Access-Control-Allow-Origin": "*",
-        "Accept-Ranges": "bytes"
+        "Accept-Ranges": "bytes",
+        "Content-Length": stat.size.toString()
       });
-      return new Response(readableStream, { status: 200, headers });
+      const range = request.headers.get("range");
+      if (range) {
+        const match = range.match(/bytes=(\d+)-(\d*)/);
+        if (match) {
+          const start = parseInt(match[1]);
+          const end = match[2] ? parseInt(match[2]) : stat.size - 1;
+          const chunkSize = end - start + 1;
+          const chunk = buffer.subarray(start, end + 1);
+          log(`[aray-file://] Range: ${start}-${end} (${chunkSize} bytes)`);
+          return new Response(chunk, {
+            status: 206,
+            headers: new Headers({
+              "Content-Type": mime,
+              "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+              "Content-Length": chunkSize.toString(),
+              "Accept-Ranges": "bytes",
+              "Access-Control-Allow-Origin": "*"
+            })
+          });
+        }
+      }
+      return new Response(buffer, { status: 200, headers });
     } catch (e) {
       log(`[aray-file://] Error: ${e.message}`);
+      log(`[aray-file://] Stack: ${e.stack}`);
       return new Response("Internal Error", { status: 500 });
     }
   });
