@@ -523,15 +523,18 @@ function registerIPC() {
   ipcMain.handle('settings.update', (_e, partial: any) => wrap(() => updateSettings(partial)))
   ipcMain.handle('settings.getDefaultStoragePath', () => wrap(() => getDefaultStoragePath()))
 
-  // PRINT — v4.2.2: Real printer detection + actual printing
+  // PRINT — v4.2.3: Real printer detection + actual printing
   // List printers pakai Electron's win.webContents.getPrinters()
-  ipcMain.handle('print.listPrinters', () => {
+  // v4.2.3 FIX: getPrinters() return Promise di Electron 31+ — harus di-await.
+  // Sebelumnya sync call return Promise object, bukan array -> renderer dapat [].
+  ipcMain.handle('print.listPrinters', async () => {
     try {
       if (!mainWindow) {
         log('[print.listPrinters] No main window')
         return wrap(() => [])
       }
-      const printers = mainWindow.webContents.getPrinters()
+      log('[print.listPrinters] Calling mainWindow.webContents.getPrinters()...')
+      const printers = await mainWindow.webContents.getPrinters()
       log(`[print.listPrinters] Found ${printers.length} printer(s):`)
       printers.forEach(p => log(`  - ${p.name} (${p.displayName || 'no display name'}) status=${p.status} isDefault=${p.isDefault}`))
       const result = printers.map(p => ({
@@ -544,6 +547,7 @@ function registerIPC() {
       return wrap(() => result)
     } catch (e: any) {
       log(`[print.listPrinters] Error: ${e.message}`)
+      log(`[print.listPrinters] Stack: ${e.stack}`)
       return wrap(() => [])
     }
   })

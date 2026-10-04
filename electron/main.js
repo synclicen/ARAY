@@ -619,13 +619,14 @@ function registerIPC() {
   import_electron.ipcMain.handle("settings.get", () => wrap(() => getSettings()));
   import_electron.ipcMain.handle("settings.update", (_e, partial) => wrap(() => updateSettings(partial)));
   import_electron.ipcMain.handle("settings.getDefaultStoragePath", () => wrap(() => getDefaultStoragePath()));
-  import_electron.ipcMain.handle("print.listPrinters", () => {
+  import_electron.ipcMain.handle("print.listPrinters", async () => {
     try {
       if (!mainWindow) {
         log("[print.listPrinters] No main window");
         return wrap(() => []);
       }
-      const printers = mainWindow.webContents.getPrinters();
+      log("[print.listPrinters] Calling mainWindow.webContents.getPrinters()...");
+      const printers = await mainWindow.webContents.getPrinters();
       log(`[print.listPrinters] Found ${printers.length} printer(s):`);
       printers.forEach((p) => log(`  - ${p.name} (${p.displayName || "no display name"}) status=${p.status} isDefault=${p.isDefault}`));
       const result = printers.map((p) => ({
@@ -639,6 +640,7 @@ function registerIPC() {
       return wrap(() => result);
     } catch (e) {
       log(`[print.listPrinters] Error: ${e.message}`);
+      log(`[print.listPrinters] Stack: ${e.stack}`);
       return wrap(() => []);
     }
   });
