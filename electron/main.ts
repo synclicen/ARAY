@@ -127,9 +127,12 @@ function ensureEventStorage(event: any): string {
 function getPhotoPaths(event: any, sessionId: string, shotNumber: number, ext = 'jpg') {
   const eventPath = ensureEventStorage(event)
   const eventDir = path.join(eventPath, 'Photos')
-  // Short filename: EventName_001.jpg (event name + shot number)
+  // v4.3.4: Format filename = EventName_YYYY-MM-DD_001
+  // (event name + date + sequence number, no random UUID/sessionId)
   const eventName = sanitizeFilename(event.name || 'ARAY')
-  const filename = `${eventName}_${String(shotNumber).padStart(2, '0')}`
+  const dateStr = getDateStr(event)
+  const seq = getSequenceNumber(eventPath, 'Photos/Original', eventName, dateStr, ext)
+  const filename = `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}`
   return {
     original: path.join(eventDir, 'Original', `${filename}.${ext}`),
     thumbnail: path.join(eventDir, 'Thumbnails', `${filename}_thumb.${ext}`)
@@ -139,21 +142,58 @@ function getPhotoPaths(event: any, sessionId: string, shotNumber: number, ext = 
 function getVideoPath(event: any, sessionId: string, ext = 'webm'): string {
   const eventPath = ensureEventStorage(event)
   const eventName = sanitizeFilename(event.name || 'ARAY')
-  // v4.3.0: Include sessionId (8 char) in filename so each video gets a unique file.
-  // Sebelumnya hardcoded ${eventName}.webm — semua video overwrite file yang sama.
-  const sid = (sessionId || '').slice(0, 8) || 'nosession'
-  return path.join(eventPath, 'Videos', 'Original', `${eventName}_${sid}.${ext}`)
+  // v4.3.4: Format filename = EventName_YYYY-MM-DD_001.webm
+  // (event name + date + sequence number, no random sessionId)
+  const dateStr = getDateStr(event)
+  const seq = getSequenceNumber(eventPath, 'Videos/Original', eventName, dateStr, ext)
+  return path.join(eventPath, 'Videos', 'Original', `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.${ext}`)
 }
 
 function getCompositePath(event: any, sessionId: string): string {
   const eventPath = ensureEventStorage(event)
   const eventName = sanitizeFilename(event.name || 'ARAY')
-  // v4.0.5: include sessionId in filename so each session gets a unique file.
-  // Before this, all composites in the same event overwrote the same file
-  // (`{eventName}_composite.jpg`), causing the Gallery to show N identical
-  // thumbnails pointing to 1 file on disk.
-  const sid = (sessionId || '').slice(0, 8)
-  return path.join(eventPath, 'Photos', 'Prints', `${eventName}_${sid}_composite.jpg`)
+  // v4.3.4: Format filename = EventName_YYYY-MM-DD_001.jpg
+  const dateStr = getDateStr(event)
+  const seq = getSequenceNumber(eventPath, 'Photos/Prints', eventName, dateStr, 'jpg')
+  return path.join(eventPath, 'Photos', 'Prints', `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.jpg`)
+}
+
+// v4.3.4: Helper — dapatkan date string YYYY-MM-DD dari event atau today
+function getDateStr(event: any): string {
+  if (event.event_date) {
+    const d = new Date(event.event_date)
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    }
+  }
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+// v4.3.4: Helper — dapatkan sequence number berikutnya berdasarkan file yang
+// sudah ada di folder. Cari file dengan prefix EventName_DateStr_*, ambil
+// nomor urut terbesar, +1.
+function getSequenceNumber(eventPath: string, subDir: string, eventName: string, dateStr: string, ext: string): number {
+  try {
+    const dir = path.join(eventPath, subDir)
+    if (!fs.existsSync(dir)) return 1
+    const prefix = `${eventName}_${dateStr}_`
+    const files = fs.readdirSync(dir)
+    let maxSeq = 0
+    for (const f of files) {
+      if (f.startsWith(prefix) && f.endsWith('.' + ext)) {
+        // Extract seq number: EventName_DateStr_001.ext
+        const middle = f.slice(prefix.length, f.length - ext.length - 1)
+        const seq = parseInt(middle)
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq
+        }
+      }
+    }
+    return maxSeq + 1
+  } catch {
+    return 1
+  }
 }
 
 function calculateChecksum(filePath: string): string {

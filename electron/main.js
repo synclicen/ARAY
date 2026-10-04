@@ -167,7 +167,9 @@ function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
   const eventPath = ensureEventStorage(event);
   const eventDir = path.join(eventPath, "Photos");
   const eventName = sanitizeFilename(event.name || "ARAY");
-  const filename = `${eventName}_${String(shotNumber).padStart(2, "0")}`;
+  const dateStr = getDateStr(event);
+  const seq = getSequenceNumber(eventPath, "Photos/Original", eventName, dateStr, ext);
+  const filename = `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}`;
   return {
     original: path.join(eventDir, "Original", `${filename}.${ext}`),
     thumbnail: path.join(eventDir, "Thumbnails", `${filename}_thumb.${ext}`)
@@ -176,14 +178,47 @@ function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
 function getVideoPath(event, sessionId, ext = "webm") {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
-  const sid = (sessionId || "").slice(0, 8) || "nosession";
-  return path.join(eventPath, "Videos", "Original", `${eventName}_${sid}.${ext}`);
+  const dateStr = getDateStr(event);
+  const seq = getSequenceNumber(eventPath, "Videos/Original", eventName, dateStr, ext);
+  return path.join(eventPath, "Videos", "Original", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.${ext}`);
 }
 function getCompositePath(event, sessionId) {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
-  const sid = (sessionId || "").slice(0, 8);
-  return path.join(eventPath, "Photos", "Prints", `${eventName}_${sid}_composite.jpg`);
+  const dateStr = getDateStr(event);
+  const seq = getSequenceNumber(eventPath, "Photos/Prints", eventName, dateStr, "jpg");
+  return path.join(eventPath, "Photos", "Prints", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.jpg`);
+}
+function getDateStr(event) {
+  if (event.event_date) {
+    const d = new Date(event.event_date);
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    }
+  }
+  const now = /* @__PURE__ */ new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+function getSequenceNumber(eventPath, subDir, eventName, dateStr, ext) {
+  try {
+    const dir = path.join(eventPath, subDir);
+    if (!fs.existsSync(dir)) return 1;
+    const prefix = `${eventName}_${dateStr}_`;
+    const files = fs.readdirSync(dir);
+    let maxSeq = 0;
+    for (const f of files) {
+      if (f.startsWith(prefix) && f.endsWith("." + ext)) {
+        const middle = f.slice(prefix.length, f.length - ext.length - 1);
+        const seq = parseInt(middle);
+        if (!isNaN(seq) && seq > maxSeq) {
+          maxSeq = seq;
+        }
+      }
+    }
+    return maxSeq + 1;
+  } catch {
+    return 1;
+  }
 }
 function calculateChecksum(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");

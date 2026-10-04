@@ -322,15 +322,26 @@ function MediaTile({
 }) {
   const [imgError, setImgError] = useState(false)
   const [imgSrc, setImgSrc] = useState<string | null>(null)
+  const isVideo = media.type === 'video'
 
   useEffect(() => {
     let cancelled = false
     async function load() {
-      if (media.thumbnail_path) {
+      // v4.3.4: For video, load original_path as video thumbnail (first frame)
+      // For photo, use thumbnail_path
+      const path = isVideo ? media.original_path : media.thumbnail_path
+      if (path) {
         try {
-          const result = await window.aray.media.readFile(media.thumbnail_path)
+          const result = await window.aray.media.readFile(path)
           if (!cancelled && result.success) {
-            setImgSrc(`data:image/jpeg;base64,${result.data}`)
+            const ext = path.toLowerCase().split('.').pop() || ''
+            let mime: string
+            if (isVideo) {
+              mime = ext === 'mp4' ? 'video/mp4' : 'video/webm'
+            } else {
+              mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+            }
+            setImgSrc(`data:${mime};base64,${result.data}`)
           }
         } catch {
           setImgError(true)
@@ -343,7 +354,7 @@ function MediaTile({
     return () => {
       cancelled = true
     }
-  }, [media.thumbnail_path])
+  }, [media.thumbnail_path, media.original_path, isVideo])
 
   const handleClick = () => {
     if (selectMode && onToggleSelect) {
@@ -366,7 +377,29 @@ function MediaTile({
       }`}
     >
       {imgSrc && !imgError ? (
-        <img src={imgSrc} alt={media.id} className="w-full h-full object-cover" />
+        isVideo ? (
+          <>
+            <video
+              src={imgSrc}
+              className="w-full h-full object-cover"
+              muted
+              preload="metadata"
+            />
+            {/* Play badge untuk indicate video */}
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-12 h-12 rounded-full bg-black/60 flex items-center justify-center">
+                <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+            <div className="absolute top-2 left-2">
+              <ArayBadge variant="purple">VIDEO</ArayBadge>
+            </div>
+          </>
+        ) : (
+          <img src={imgSrc} alt={media.id} className="w-full h-full object-cover" />
+        )
       ) : (
         <div className="w-full h-full bg-purple-haze-900/40 flex items-center justify-center">
           <Images className="w-8 h-8 text-silver-600" />
@@ -410,6 +443,7 @@ function MediaDetailModal({
   onNext: () => void
 }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null)
+  const isVideo = media.type === 'video'
 
   useEffect(() => {
     let cancelled = false
@@ -419,7 +453,15 @@ function MediaDetailModal({
       try {
         const result = await window.aray.media.readFile(path)
         if (!cancelled && result.success) {
-          setImgSrc(`data:image/jpeg;base64,${result.data}`)
+          // v4.3.4: Set MIME based on media type + file extension
+          const ext = path.toLowerCase().split('.').pop() || ''
+          let mime: string
+          if (isVideo) {
+            mime = ext === 'mp4' ? 'video/mp4' : ext === 'webm' ? 'video/webm' : 'video/webm'
+          } else {
+            mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+          }
+          setImgSrc(`data:${mime};base64,${result.data}`)
         }
       } catch (e) {
         console.error(e)
@@ -429,7 +471,7 @@ function MediaDetailModal({
     return () => {
       cancelled = true
     }
-  }, [media])
+  }, [media, isVideo])
 
   return (
     <motion.div
@@ -467,7 +509,16 @@ function MediaDetailModal({
             <ChevronLeft className="w-5 h-5" />
           </button>
           {imgSrc ? (
-            <img src={imgSrc} alt={media.id} className="max-w-full max-h-[70vh] object-contain" />
+            isVideo ? (
+              <video
+                src={imgSrc}
+                controls
+                autoPlay
+                className="max-w-full max-h-[70vh] object-contain"
+              />
+            ) : (
+              <img src={imgSrc} alt={media.id} className="max-w-full max-h-[70vh] object-contain" />
+            )
           ) : (
             <div className="text-silver-500">Loading...</div>
           )}
