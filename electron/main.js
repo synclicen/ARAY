@@ -5,6 +5,13 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -21,44 +28,332 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// electron/license.ts
+var license_exports = {};
+__export(license_exports, {
+  activateLicense: () => activateLicense,
+  checkLicenseStatus: () => checkLicenseStatus,
+  generateExpectedCode: () => generateExpectedCode,
+  generateLicenseCode: () => generateLicenseCode,
+  getAdminKeyHash: () => getAdminKeyHash,
+  getDisplayMachineId: () => getDisplayMachineId,
+  getMachineId: () => getMachineId,
+  readLicenseFile: () => readLicenseFile,
+  verifyActivationCode: () => verifyActivationCode
+});
+function getHardwareFingerprint() {
+  const cpus2 = os.cpus();
+  const cpuInfo = cpus2.length > 0 ? cpus2[0].model : "unknown-cpu";
+  const cpuCores = String(cpus2.length);
+  const nets = os.networkInterfaces();
+  let macAddress = "no-mac";
+  for (const [, addrs] of Object.entries(nets)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (!addr.internal && addr.family === "IPv4" && addr.mac && addr.mac !== "00:00:00:00:00:00") {
+        macAddress = addr.mac;
+        break;
+      }
+    }
+    if (macAddress !== "no-mac") break;
+  }
+  const hostname2 = os.hostname();
+  const platform2 = os.platform();
+  const arch2 = os.arch();
+  const raw = `${cpuInfo}|${cpuCores}|${macAddress}|${hostname2}|${platform2}|${arch2}`;
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
+function getMachineId() {
+  return getHardwareFingerprint();
+}
+function getDisplayMachineId(machineId) {
+  const short = machineId.substring(0, 12).toUpperCase();
+  return `${short.slice(0, 4)}-${short.slice(4, 8)}-${short.slice(8, 12)}`;
+}
+function generateExpectedCode(machineId, licenseType, expiresAt) {
+  const expiryStr = expiresAt ? new Date(expiresAt).getTime().toString(16) : "0";
+  const input = `${machineId}:${licenseType}:${expiryStr}:${LICENSE_SECRET}`;
+  const hash = crypto.createHash("sha256").update(input).digest("hex");
+  const code = hash.substring(0, 16).toUpperCase();
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}-${code.slice(12, 16)}`;
+}
+function verifyActivationCode(machineId, activationCode) {
+  const normalized = activationCode.replace(/[-\s]/g, "").toUpperCase();
+  if (normalized.length !== 16) return null;
+  const formatted = `${normalized.slice(0, 4)}-${normalized.slice(4, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}`;
+  const now = /* @__PURE__ */ new Date();
+  for (let dayOffset = 0; dayOffset <= 45; dayOffset++) {
+    const date = new Date(now);
+    date.setDate(date.getDate() + dayOffset);
+    date.setHours(23, 59, 59, 0);
+    const monthlyCode = generateExpectedCode(machineId, "monthly", date.toISOString());
+    if (formatted === monthlyCode) {
+      return { licenseType: "monthly", expiresAt: date.toISOString() };
+    }
+  }
+  return null;
+}
+function signLicenseData(data) {
+  const payload = JSON.stringify({
+    machineId: data.machineId,
+    activationCode: data.activationCode,
+    licenseType: data.licenseType,
+    activatedAt: data.activatedAt,
+    expiresAt: data.expiresAt
+  });
+  return crypto.createHmac("sha256", LICENSE_SECRET).update(payload).digest("hex");
+}
+function verifyLicenseSignature(data) {
+  const expectedSig = signLicenseData({
+    machineId: data.machineId,
+    activationCode: data.activationCode,
+    licenseType: data.licenseType,
+    activatedAt: data.activatedAt,
+    expiresAt: data.expiresAt
+  });
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(data.signature, "hex"),
+      Buffer.from(expectedSig, "hex")
+    );
+  } catch {
+    return false;
+  }
+}
+function getEncryptionKey() {
+  const key = crypto.createHash("sha256").update(LICENSE_SECRET).digest();
+  const iv = Buffer.alloc(16, 0);
+  return { key, iv };
+}
+function encryptData(plaintext) {
+  const { key, iv } = getEncryptionKey();
+  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  let encrypted = cipher.update(plaintext, "utf-8", "base64");
+  encrypted += cipher.final("base64");
+  return encrypted;
+}
+function decryptData(ciphertext) {
+  const { key, iv } = getEncryptionKey();
+  const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+  let decrypted = decipher.update(ciphertext, "base64", "utf-8");
+  decrypted += decipher.final("utf-8");
+  return decrypted;
+}
+function getLicenseFilePath() {
+  return path.join(import_electron.app.getPath("userData"), "license.dat");
+}
+function getFirstRunFilePath() {
+  return path.join(import_electron.app.getPath("userData"), "first-run.dat");
+}
+function readLicenseFile() {
+  try {
+    const filePath = getLicenseFilePath();
+    if (!fs.existsSync(filePath)) return null;
+    const encrypted = fs.readFileSync(filePath, "utf-8");
+    const data = JSON.parse(decryptData(encrypted));
+    if (!verifyLicenseSignature(data)) {
+      console.warn("[ARAY LICENSE] License file signature invalid \u2014 tampering detected");
+      return null;
+    }
+    return data;
+  } catch (e) {
+    console.warn("[ARAY LICENSE] Failed to read license file:", e);
+    return null;
+  }
+}
+function writeLicenseFile(data) {
+  try {
+    const filePath = getLicenseFilePath();
+    const json = JSON.stringify(data);
+    const encrypted = encryptData(json);
+    fs.writeFileSync(filePath, encrypted, "utf-8");
+    return true;
+  } catch (e) {
+    console.error("[ARAY LICENSE] Failed to write license file:", e);
+    return false;
+  }
+}
+function getFirstRunDate() {
+  try {
+    const filePath = getFirstRunFilePath();
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+}
+function recordFirstRun() {
+  try {
+    const filePath = getFirstRunFilePath();
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    fs.writeFileSync(filePath, now, "utf-8");
+    return now;
+  } catch {
+    return (/* @__PURE__ */ new Date()).toISOString();
+  }
+}
+function checkLicenseStatus() {
+  const machineId = getMachineId();
+  const displayMachineId = getDisplayMachineId(machineId);
+  const licenseData = readLicenseFile();
+  if (licenseData) {
+    const verification = verifyActivationCode(machineId, licenseData.activationCode);
+    if (!verification) {
+      return {
+        isValid: false,
+        isGracePeriod: false,
+        isExpired: true,
+        daysRemaining: 0,
+        graceDaysRemaining: 0,
+        licenseType: null,
+        expiresAt: null,
+        machineId,
+        displayMachineId,
+        firstRunDate: getFirstRunDate()
+      };
+    }
+    const now = /* @__PURE__ */ new Date();
+    const isExpired = licenseData.expiresAt ? new Date(licenseData.expiresAt) < now : true;
+    const daysRemaining = licenseData.expiresAt ? Math.max(0, Math.ceil((new Date(licenseData.expiresAt).getTime() - now.getTime()) / (1e3 * 60 * 60 * 24))) : 0;
+    return {
+      isValid: !isExpired,
+      isGracePeriod: false,
+      isExpired,
+      daysRemaining,
+      graceDaysRemaining: 0,
+      licenseType: licenseData.licenseType,
+      expiresAt: licenseData.expiresAt,
+      machineId,
+      displayMachineId,
+      firstRunDate: getFirstRunDate()
+    };
+  }
+  const firstRunDate = getFirstRunDate() || recordFirstRun();
+  return {
+    isValid: false,
+    isGracePeriod: false,
+    isExpired: true,
+    daysRemaining: 0,
+    graceDaysRemaining: 0,
+    licenseType: null,
+    expiresAt: null,
+    machineId,
+    displayMachineId,
+    firstRunDate
+  };
+}
+function activateLicense(activationCode) {
+  const machineId = getMachineId();
+  const verification = verifyActivationCode(machineId, activationCode);
+  if (!verification) {
+    return { success: false, error: "Kode aktivasi tidak valid untuk perangkat ini." };
+  }
+  if (new Date(verification.expiresAt) < /* @__PURE__ */ new Date()) {
+    return { success: false, error: "Kode aktivasi sudah kadaluarsa. Hubungi pengembang untuk kode baru." };
+  }
+  const normalized = activationCode.replace(/[-\s]/g, "").toUpperCase();
+  const formattedCode = `${normalized.slice(0, 4)}-${normalized.slice(4, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}`;
+  const licenseData = {
+    machineId,
+    activationCode: formattedCode,
+    licenseType: verification.licenseType,
+    activatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    expiresAt: verification.expiresAt,
+    signature: ""
+  };
+  licenseData.signature = signLicenseData(licenseData);
+  const written = writeLicenseFile(licenseData);
+  if (!written) {
+    return { success: false, error: "Gagal menyimpan data lisensi ke disk." };
+  }
+  console.log(`[ARAY LICENSE] Activated: ${verification.licenseType} (expires: ${verification.expiresAt})`);
+  return { success: true, licenseType: verification.licenseType };
+}
+function generateLicenseCode(machineId, adminKey) {
+  const expectedAdminKey = crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex");
+  if (adminKey !== expectedAdminKey) {
+    return { success: false, error: "Admin key tidak valid." };
+  }
+  const expiresAt = /* @__PURE__ */ new Date();
+  expiresAt.setDate(expiresAt.getDate() + 30);
+  expiresAt.setHours(23, 59, 59, 0);
+  const code = generateExpectedCode(machineId, "monthly", expiresAt.toISOString());
+  const displayMachineId = getDisplayMachineId(machineId);
+  const verification = verifyActivationCode(machineId, code);
+  return {
+    success: true,
+    data: {
+      machineId,
+      displayMachineId,
+      licenseType: "monthly",
+      activationCode: code,
+      expiresAt: expiresAt.toISOString(),
+      expiresAtFormatted: expiresAt.toLocaleDateString("id-ID", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric"
+      }),
+      daysRemaining: 30,
+      verified: verification !== null
+    }
+  };
+}
+function getAdminKeyHash() {
+  return crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex").substring(0, 16);
+}
+var crypto, fs, os, path, import_electron, LICENSE_SECRET;
+var init_license = __esm({
+  "electron/license.ts"() {
+    "use strict";
+    crypto = __toESM(require("crypto"));
+    fs = __toESM(require("fs"));
+    os = __toESM(require("os"));
+    path = __toESM(require("path"));
+    import_electron = require("electron");
+    LICENSE_SECRET = "ARAY-2026-HUMAS-UIN-ANTASARI-BANJARMASIN";
+  }
+});
 
 // electron/main.ts
-var import_electron = require("electron");
-var path = __toESM(require("path"));
-var fs = __toESM(require("fs"));
-var crypto = __toESM(require("crypto"));
-var os = __toESM(require("os"));
+var import_electron2 = require("electron");
+var path2 = __toESM(require("path"));
+var fs2 = __toESM(require("fs"));
+var crypto2 = __toESM(require("crypto"));
+var os2 = __toESM(require("os"));
 var mainWindow = null;
 function getLogPath() {
   try {
-    return path.join(import_electron.app.getPath("userData"), "aray-startup.log");
+    return path2.join(import_electron2.app.getPath("userData"), "aray-startup.log");
   } catch {
-    return path.join(process.cwd(), "aray-startup.log");
+    return path2.join(process.cwd(), "aray-startup.log");
   }
 }
 function log(msg) {
   const line = `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `;
   try {
-    fs.appendFileSync(getLogPath(), line);
+    fs2.appendFileSync(getLogPath(), line);
   } catch {
   }
   console.log(`[ARAY] ${msg}`);
 }
 function getDbPath() {
-  const dir = path.join(import_electron.app.getPath("userData"), "database");
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, "data.json");
+  const dir = path2.join(import_electron2.app.getPath("userData"), "database");
+  if (!fs2.existsSync(dir)) fs2.mkdirSync(dir, { recursive: true });
+  return path2.join(dir, "data.json");
 }
 function loadDB() {
   try {
     const dbPath = getDbPath();
-    if (!fs.existsSync(dbPath)) {
+    if (!fs2.existsSync(dbPath)) {
       const empty = { events: [], sessions: [], media: [], settings: {} };
       saveDB(empty);
       return empty;
     }
-    const data = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+    const data = JSON.parse(fs2.readFileSync(dbPath, "utf8"));
     return { events: data.events || [], sessions: data.sessions || [], media: data.media || [], settings: data.settings || {} };
   } catch (err2) {
     log(`DB load error: ${err2.message}`);
@@ -69,17 +364,17 @@ function saveDB(db) {
   try {
     const dbPath = getDbPath();
     const tmpPath = dbPath + ".tmp";
-    fs.writeFileSync(tmpPath, JSON.stringify(db, null, 2), "utf8");
-    fs.renameSync(tmpPath, dbPath);
+    fs2.writeFileSync(tmpPath, JSON.stringify(db, null, 2), "utf8");
+    fs2.renameSync(tmpPath, dbPath);
   } catch (err2) {
     log(`DB save error: ${err2.message}`);
   }
 }
 function getDefaultStoragePath() {
   try {
-    return path.join(import_electron.app.getPath("documents"), "ARAY");
+    return path2.join(import_electron2.app.getPath("documents"), "ARAY");
   } catch {
-    return path.join(os.homedir(), "ARAY");
+    return path2.join(os2.homedir(), "ARAY");
   }
 }
 function getStoragePath() {
@@ -88,15 +383,15 @@ function getStoragePath() {
 function ensureStoragePath() {
   const storagePath = getStoragePath();
   try {
-    if (!fs.existsSync(storagePath)) fs.mkdirSync(storagePath, { recursive: true });
-    const testFile = path.join(storagePath, ".aray-write-test");
-    fs.writeFileSync(testFile, "ok");
-    fs.unlinkSync(testFile);
+    if (!fs2.existsSync(storagePath)) fs2.mkdirSync(storagePath, { recursive: true });
+    const testFile = path2.join(storagePath, ".aray-write-test");
+    fs2.writeFileSync(testFile, "ok");
+    fs2.unlinkSync(testFile);
     return storagePath;
   } catch (err2) {
     log(`Storage path invalid: ${err2.message}`);
-    const fallback = path.join(import_electron.app.getPath("userData"), "ARAY-Storage");
-    if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
+    const fallback = path2.join(import_electron2.app.getPath("userData"), "ARAY-Storage");
+    if (!fs2.existsSync(fallback)) fs2.mkdirSync(fallback, { recursive: true });
     const db = loadDB();
     db.settings.storage_path = fallback;
     saveDB(db);
@@ -119,7 +414,7 @@ function buildEventFolderName(event) {
   return parts.join("_");
 }
 function ensureEventStorage(event) {
-  if (event.storage_path && fs.existsSync(event.storage_path)) {
+  if (event.storage_path && fs2.existsSync(event.storage_path)) {
     for (const sub of [
       "Photos/Original",
       "Photos/Edited",
@@ -132,13 +427,13 @@ function ensureEventStorage(event) {
       "360",
       "Metadata"
     ]) {
-      const p = path.join(event.storage_path, sub);
-      if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+      const p = path2.join(event.storage_path, sub);
+      if (!fs2.existsSync(p)) fs2.mkdirSync(p, { recursive: true });
     }
     return event.storage_path;
   }
   const base = ensureStoragePath();
-  const eventPath = path.join(base, "Events", buildEventFolderName(event));
+  const eventPath = path2.join(base, "Events", buildEventFolderName(event));
   for (const sub of [
     "Photos/Original",
     "Photos/Edited",
@@ -151,8 +446,8 @@ function ensureEventStorage(event) {
     "360",
     "Metadata"
   ]) {
-    const p = path.join(eventPath, sub);
-    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+    const p = path2.join(eventPath, sub);
+    if (!fs2.existsSync(p)) fs2.mkdirSync(p, { recursive: true });
   }
   event.storage_path = eventPath;
   const db = loadDB();
@@ -165,14 +460,14 @@ function ensureEventStorage(event) {
 }
 function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
   const eventPath = ensureEventStorage(event);
-  const eventDir = path.join(eventPath, "Photos");
+  const eventDir = path2.join(eventPath, "Photos");
   const eventName = sanitizeFilename(event.name || "ARAY");
   const dateStr = getDateStr(event);
   const seq = getSequenceNumber(eventPath, "Photos/Original", eventName, dateStr, ext);
   const filename = `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}`;
   return {
-    original: path.join(eventDir, "Original", `${filename}.${ext}`),
-    thumbnail: path.join(eventDir, "Thumbnails", `${filename}_thumb.${ext}`)
+    original: path2.join(eventDir, "Original", `${filename}.${ext}`),
+    thumbnail: path2.join(eventDir, "Thumbnails", `${filename}_thumb.${ext}`)
   };
 }
 function getVideoPath(event, sessionId, ext = "webm") {
@@ -180,14 +475,14 @@ function getVideoPath(event, sessionId, ext = "webm") {
   const eventName = sanitizeFilename(event.name || "ARAY");
   const dateStr = getDateStr(event);
   const seq = getSequenceNumber(eventPath, "Videos/Original", eventName, dateStr, ext);
-  return path.join(eventPath, "Videos", "Original", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.${ext}`);
+  return path2.join(eventPath, "Videos", "Original", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.${ext}`);
 }
 function getCompositePath(event, sessionId) {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
   const dateStr = getDateStr(event);
   const seq = getSequenceNumber(eventPath, "Photos/Prints", eventName, dateStr, "jpg");
-  return path.join(eventPath, "Photos", "Prints", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.jpg`);
+  return path2.join(eventPath, "Photos", "Prints", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.jpg`);
 }
 function getDateStr(event) {
   if (event.event_date) {
@@ -201,10 +496,10 @@ function getDateStr(event) {
 }
 function getSequenceNumber(eventPath, subDir, eventName, dateStr, ext) {
   try {
-    const dir = path.join(eventPath, subDir);
-    if (!fs.existsSync(dir)) return 1;
+    const dir = path2.join(eventPath, subDir);
+    if (!fs2.existsSync(dir)) return 1;
     const prefix = `${eventName}_${dateStr}_`;
-    const files = fs.readdirSync(dir);
+    const files = fs2.readdirSync(dir);
     let maxSeq = 0;
     for (const f of files) {
       if (f.startsWith(prefix) && f.endsWith("." + ext)) {
@@ -221,13 +516,13 @@ function getSequenceNumber(eventPath, subDir, eventName, dateStr, ext) {
   }
 }
 function calculateChecksum(filePath) {
-  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  return crypto2.createHash("sha256").update(fs2.readFileSync(filePath)).digest("hex");
 }
 function getStorageInfo() {
   const storagePath = getStoragePath();
   let totalBytes = 0, freeBytes = 0;
   try {
-    const stats = fs.statfsSync(storagePath);
+    const stats = fs2.statfsSync(storagePath);
     totalBytes = stats.blocks * stats.bsize;
     freeBytes = stats.bfree * stats.bsize;
   } catch {
@@ -286,7 +581,7 @@ function getBackupStats() {
   const f = getBackupFolder();
   if (!f) return { connected: false, totalFiles: 0, folder: null };
   try {
-    const files = fs.readdirSync(f).filter((x) => /\.(jpg|jpeg|png|gif|mp4|mov|webm)$/i.test(x));
+    const files = fs2.readdirSync(f).filter((x) => /\.(jpg|jpeg|png|gif|mp4|mov|webm)$/i.test(x));
     return { connected: true, totalFiles: files.length, folder: f };
   } catch (e) {
     return { connected: false, totalFiles: 0, folder: null };
@@ -296,13 +591,13 @@ function backupFile(localPath, filename) {
   const f = getBackupFolder();
   if (!f) return { success: false, copied: false, message: "No backup folder" };
   try {
-    if (!fs.existsSync(localPath)) return { success: false, copied: false, message: "Local not found" };
-    if (!fs.existsSync(f)) fs.mkdirSync(f, { recursive: true });
-    const dest = path.join(f, filename || path.basename(localPath));
-    if (fs.existsSync(dest)) {
-      if (fs.statSync(localPath).size === fs.statSync(dest).size) return { success: true, copied: false, message: "Already" };
+    if (!fs2.existsSync(localPath)) return { success: false, copied: false, message: "Local not found" };
+    if (!fs2.existsSync(f)) fs2.mkdirSync(f, { recursive: true });
+    const dest = path2.join(f, filename || path2.basename(localPath));
+    if (fs2.existsSync(dest)) {
+      if (fs2.statSync(localPath).size === fs2.statSync(dest).size) return { success: true, copied: false, message: "Already" };
     }
-    fs.copyFileSync(localPath, dest);
+    fs2.copyFileSync(localPath, dest);
     return { success: true, copied: true, message: "OK" };
   } catch (e) {
     log(`Backup fail: ${e.message}`);
@@ -318,11 +613,11 @@ function backupAllPendingMedia() {
       skipped++;
       continue;
     }
-    if (!fs.existsSync(m.original_path)) {
+    if (!fs2.existsSync(m.original_path)) {
       failed++;
       continue;
     }
-    const r = backupFile(m.original_path, path.basename(m.original_path));
+    const r = backupFile(m.original_path, path2.basename(m.original_path));
     if (r.success) {
       m.sync_status = "SYNCED";
       m.uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
@@ -342,7 +637,7 @@ function createEvent(input) {
   const db = loadDB();
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const event = {
-    id: crypto.randomUUID(),
+    id: crypto2.randomUUID(),
     code: generateEventCode(),
     name: input.name,
     client: input.client || null,
@@ -388,7 +683,7 @@ function deleteEvent(id) {
 }
 function createSession(eventId, type, shotCount = 1) {
   const db = loadDB();
-  const s = { id: crypto.randomUUID(), event_id: eventId, type, shot_count: shotCount, created_at: (/* @__PURE__ */ new Date()).toISOString() };
+  const s = { id: crypto2.randomUUID(), event_id: eventId, type, shot_count: shotCount, created_at: (/* @__PURE__ */ new Date()).toISOString() };
   db.sessions.unshift(s);
   saveDB(db);
   return s;
@@ -396,7 +691,7 @@ function createSession(eventId, type, shotCount = 1) {
 function createMedia(input) {
   const db = loadDB();
   const m = {
-    id: crypto.randomUUID(),
+    id: crypto2.randomUUID(),
     event_id: input.event_id,
     session_id: input.session_id,
     type: input.type,
@@ -435,11 +730,11 @@ function getMediaStats(eventId) {
 }
 function createWindow() {
   log("Creating main window...");
-  const preloadPath = path.join(__dirname, "preload.js");
-  const rendererPath = path.join(__dirname, "..", "out", "renderer", "index.html");
-  log(`Preload: ${preloadPath} (exists: ${fs.existsSync(preloadPath)})`);
-  log(`Renderer: ${rendererPath} (exists: ${fs.existsSync(rendererPath)})`);
-  mainWindow = new import_electron.BrowserWindow({
+  const preloadPath = path2.join(__dirname, "preload.js");
+  const rendererPath = path2.join(__dirname, "..", "out", "renderer", "index.html");
+  log(`Preload: ${preloadPath} (exists: ${fs2.existsSync(preloadPath)})`);
+  log(`Renderer: ${rendererPath} (exists: ${fs2.existsSync(rendererPath)})`);
+  mainWindow = new import_electron2.BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1280,
@@ -451,7 +746,7 @@ function createWindow() {
     webPreferences: { preload: preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false, webSecurity: true }
   });
   mainWindow.webContents.setWindowOpenHandler((d) => {
-    import_electron.shell.openExternal(d.url);
+    import_electron2.shell.openExternal(d.url);
     return { action: "deny" };
   });
   mainWindow.webContents.on("did-fail-load", (_e, c, desc, url) => log(`Renderer FAIL: ${c} ${desc} (${url})`));
@@ -479,39 +774,89 @@ function wrap(fn) {
   });
 }
 function registerIPC() {
-  import_electron.ipcMain.handle("app.getVersion", () => wrap(() => import_electron.app.getVersion()));
-  import_electron.ipcMain.handle("app.openExternal", (_e, url) => wrap(() => {
-    import_electron.shell.openExternal(url);
+  import_electron2.ipcMain.handle("app.getVersion", () => wrap(() => import_electron2.app.getVersion()));
+  import_electron2.ipcMain.handle("app.openExternal", (_e, url) => wrap(() => {
+    import_electron2.shell.openExternal(url);
     return { success: true };
   }));
-  import_electron.ipcMain.handle("events.create", (_e, input) => wrap(() => createEvent(input)));
-  import_electron.ipcMain.handle("events.list", (_e, includeArchived) => wrap(() => listEvents(includeArchived)));
-  import_electron.ipcMain.handle("events.get", (_e, id) => wrap(() => getEventById(id)));
-  import_electron.ipcMain.handle("events.update", (_e, input) => wrap(() => updateEvent(input)));
-  import_electron.ipcMain.handle("events.delete", (_e, id) => wrap(() => deleteEvent(id)));
-  import_electron.ipcMain.handle("events.archive", (_e, id) => wrap(() => updateEvent({ id, status: "archived" })));
-  import_electron.ipcMain.handle("events.duplicate", (_e, id) => wrap(() => {
+  const { checkLicenseStatus: checkLicenseStatus2, activateLicense: activateLicense2, getMachineId: getMachineId2, getDisplayMachineId: getDisplayMachineId2, generateLicenseCode: generateLicenseCode2 } = (init_license(), __toCommonJS(license_exports));
+  import_electron2.ipcMain.handle("license.status", () => {
+    try {
+      const status = checkLicenseStatus2();
+      log(`[license.status] isValid=${status.isValid}, expired=${status.isExpired}, daysRemaining=${status.daysRemaining}`);
+      return { success: true, data: status };
+    } catch (e) {
+      log(`[license.status] Error: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  });
+  import_electron2.ipcMain.handle("license.activate", (_e, activationCode) => {
+    try {
+      log(`[license.activate] Attempting activation...`);
+      const result = activateLicense2(activationCode);
+      if (result.success) {
+        log(`[license.activate] Success: ${result.licenseType}`);
+      } else {
+        log(`[license.activate] Failed: ${result.error}`);
+      }
+      return result;
+    } catch (e) {
+      log(`[license.activate] Error: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  });
+  import_electron2.ipcMain.handle("license.generate", (_e, machineId, adminKey) => {
+    try {
+      log(`[license.generate] Generating code for machine: ${machineId.substring(0, 12)}...`);
+      const result = generateLicenseCode2(machineId, adminKey);
+      if (result.success) {
+        log(`[license.generate] Success: code=${result.data?.activationCode}`);
+      } else {
+        log(`[license.generate] Failed: ${result.error}`);
+      }
+      return result;
+    } catch (e) {
+      log(`[license.generate] Error: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  });
+  import_electron2.ipcMain.handle("license.getMachineId", () => {
+    try {
+      const mid = getMachineId2();
+      const display = getDisplayMachineId2(mid);
+      return { success: true, data: { machineId: mid, displayMachineId: display } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+  import_electron2.ipcMain.handle("events.create", (_e, input) => wrap(() => createEvent(input)));
+  import_electron2.ipcMain.handle("events.list", (_e, includeArchived) => wrap(() => listEvents(includeArchived)));
+  import_electron2.ipcMain.handle("events.get", (_e, id) => wrap(() => getEventById(id)));
+  import_electron2.ipcMain.handle("events.update", (_e, input) => wrap(() => updateEvent(input)));
+  import_electron2.ipcMain.handle("events.delete", (_e, id) => wrap(() => deleteEvent(id)));
+  import_electron2.ipcMain.handle("events.archive", (_e, id) => wrap(() => updateEvent({ id, status: "archived" })));
+  import_electron2.ipcMain.handle("events.duplicate", (_e, id) => wrap(() => {
     const s = getEventById(id);
     if (!s) return null;
     return createEvent({ name: `${s.name} (Copy)`, client: s.client, venue: s.venue, event_date: s.event_date, operator: s.operator });
   }));
-  import_electron.ipcMain.handle("events.openFolder", (_e, id) => wrap(() => {
+  import_electron2.ipcMain.handle("events.openFolder", (_e, id) => wrap(() => {
     const event = getEventById(id);
     if (!event) throw new Error("Event not found");
     let folderPath = event.storage_path;
-    if (!folderPath || !fs.existsSync(folderPath)) {
+    if (!folderPath || !fs2.existsSync(folderPath)) {
       folderPath = ensureEventStorage(event);
     }
     console.log("[ARAY] Opening event folder:", folderPath);
     console.log("[ARAY] Event name:", event.name);
     console.log("[ARAY] Event storage_path:", event.storage_path);
-    import_electron.shell.openPath(folderPath);
+    import_electron2.shell.openPath(folderPath);
     return { success: true, path: folderPath };
   }));
-  import_electron.ipcMain.handle("sessions.create", (_e, eventId, type, shotCount) => wrap(() => createSession(eventId, type, shotCount)));
-  import_electron.ipcMain.handle("media.list", (_e, filters) => wrap(() => listMedia(filters || {})));
-  import_electron.ipcMain.handle("media.get", (_e, id) => wrap(() => loadDB().media.find((m) => m.id === id) || null));
-  import_electron.ipcMain.handle("media.delete", (_e, id) => wrap(() => {
+  import_electron2.ipcMain.handle("sessions.create", (_e, eventId, type, shotCount) => wrap(() => createSession(eventId, type, shotCount)));
+  import_electron2.ipcMain.handle("media.list", (_e, filters) => wrap(() => listMedia(filters || {})));
+  import_electron2.ipcMain.handle("media.get", (_e, id) => wrap(() => loadDB().media.find((m) => m.id === id) || null));
+  import_electron2.ipcMain.handle("media.delete", (_e, id) => wrap(() => {
     const db = loadDB();
     const idx = db.media.findIndex((m) => m.id === id);
     if (idx === -1) return false;
@@ -519,20 +864,20 @@ function registerIPC() {
     saveDB(db);
     return true;
   }));
-  import_electron.ipcMain.handle("media.stats", (_e, eventId) => wrap(() => getMediaStats(eventId)));
-  import_electron.ipcMain.handle("media.saveCapturedFrame", (_e, payload) => wrap(() => {
+  import_electron2.ipcMain.handle("media.stats", (_e, eventId) => wrap(() => getMediaStats(eventId)));
+  import_electron2.ipcMain.handle("media.saveCapturedFrame", (_e, payload) => wrap(() => {
     const event = getEventById(payload.event_id);
     if (!event) throw new Error("Event not found");
     ensureEventStorage(event);
     const ext = payload.mime_type === "image/png" ? "png" : "jpg";
     const paths = getPhotoPaths(event, payload.session_id, payload.shot_number, ext);
     const base64Data = payload.frame_base64.replace(/^data:image\/\w+;base64,/, "");
-    fs.writeFileSync(paths.original, Buffer.from(base64Data, "base64"));
+    fs2.writeFileSync(paths.original, Buffer.from(base64Data, "base64"));
     let thumbnailPath = null;
     if (payload.thumbnail_base64) {
       try {
         const thumbData = payload.thumbnail_base64.replace(/^data:image\/\w+;base64,/, "");
-        fs.writeFileSync(paths.thumbnail, Buffer.from(thumbData, "base64"));
+        fs2.writeFileSync(paths.thumbnail, Buffer.from(thumbData, "base64"));
         thumbnailPath = paths.thumbnail;
       } catch (e) {
         log(`Thumb fail: ${e.message}`);
@@ -549,7 +894,7 @@ function registerIPC() {
     });
     const settings = getSettings();
     if (settings.auto_backup && settings.backup_folder) {
-      const r = backupFile(paths.original, path.basename(paths.original));
+      const r = backupFile(paths.original, path2.basename(paths.original));
       if (r.success) {
         const db = loadDB();
         const idx = db.media.findIndex((m) => m.id === media.id);
@@ -562,7 +907,7 @@ function registerIPC() {
     }
     return media;
   }));
-  import_electron.ipcMain.handle("media.saveVideo", (_e, payload) => wrap(() => {
+  import_electron2.ipcMain.handle("media.saveVideo", (_e, payload) => wrap(() => {
     log(`[media.saveVideo] Request: event=${payload.event_id}, session=${payload.session_id}, mime=${payload.mime_type}, style=${payload.video_style}`);
     const event = getEventById(payload.event_id);
     if (!event) {
@@ -584,7 +929,7 @@ function registerIPC() {
       log(`[media.saveVideo] ERROR: video buffer is empty`);
       throw new Error("Video buffer is empty");
     }
-    fs.writeFileSync(videoPath, buffer);
+    fs2.writeFileSync(videoPath, buffer);
     const checksum = calculateChecksum(videoPath);
     const media = createMedia({
       event_id: payload.event_id,
@@ -594,10 +939,10 @@ function registerIPC() {
       thumbnail_path: null,
       checksum
     });
-    log(`[media.saveVideo] Video saved: ${path.basename(videoPath)} (media id: ${media.id})`);
+    log(`[media.saveVideo] Video saved: ${path2.basename(videoPath)} (media id: ${media.id})`);
     const settings = getSettings();
     if (settings.auto_backup && settings.backup_folder) {
-      const r = backupFile(videoPath, path.basename(videoPath));
+      const r = backupFile(videoPath, path2.basename(videoPath));
       if (r.success) {
         const db = loadDB();
         const idx = db.media.findIndex((m) => m.id === media.id);
@@ -610,13 +955,13 @@ function registerIPC() {
     }
     return media;
   }));
-  import_electron.ipcMain.handle("media.saveComposite", (_e, payload) => wrap(() => {
+  import_electron2.ipcMain.handle("media.saveComposite", (_e, payload) => wrap(() => {
     const event = getEventById(payload.event_id);
     if (!event) throw new Error("Event not found");
     ensureEventStorage(event);
     const compositePath = getCompositePath(event, payload.session_id);
     const base64Data = payload.image_base64.replace(/^data:image\/\w+;base64,/, "");
-    fs.writeFileSync(compositePath, Buffer.from(base64Data, "base64"));
+    fs2.writeFileSync(compositePath, Buffer.from(base64Data, "base64"));
     const checksum = calculateChecksum(compositePath);
     const media = createMedia({
       event_id: payload.event_id,
@@ -627,19 +972,19 @@ function registerIPC() {
       checksum,
       processed_path: compositePath
     });
-    log(`Composite saved: ${path.basename(compositePath)}`);
+    log(`Composite saved: ${path2.basename(compositePath)}`);
     return media;
   }));
-  import_electron.ipcMain.handle("media.readFile", (_e, filePath) => wrap(() => {
-    if (!fs.existsSync(filePath)) throw new Error("File not found");
-    return fs.readFileSync(filePath).toString("base64");
+  import_electron2.ipcMain.handle("media.readFile", (_e, filePath) => wrap(() => {
+    if (!fs2.existsSync(filePath)) throw new Error("File not found");
+    return fs2.readFileSync(filePath).toString("base64");
   }));
-  import_electron.ipcMain.handle("media.getFileInfo", (_e, filePath) => {
+  import_electron2.ipcMain.handle("media.getFileInfo", (_e, filePath) => {
     try {
-      if (!fs.existsSync(filePath)) {
+      if (!fs2.existsSync(filePath)) {
         return { success: false, error: "File not found" };
       }
-      const stat = fs.statSync(filePath);
+      const stat = fs2.statSync(filePath);
       return {
         success: true,
         data: {
@@ -652,9 +997,9 @@ function registerIPC() {
       return { success: false, error: e.message };
     }
   });
-  import_electron.ipcMain.handle("media.openInFolder", (_e, filePath) => {
+  import_electron2.ipcMain.handle("media.openInFolder", (_e, filePath) => {
     try {
-      if (!fs.existsSync(filePath)) {
+      if (!fs2.existsSync(filePath)) {
         log(`[media.openInFolder] File not found: ${filePath}`);
         return { success: false, error: "File not found" };
       }
@@ -667,7 +1012,7 @@ function registerIPC() {
       return { success: false, error: e.message };
     }
   });
-  import_electron.ipcMain.handle("media.updateSyncStatus", (_e, id, status, remoteId, error) => wrap(() => {
+  import_electron2.ipcMain.handle("media.updateSyncStatus", (_e, id, status, remoteId, error) => wrap(() => {
     const db = loadDB();
     const idx = db.media.findIndex((m) => m.id === id);
     if (idx === -1) return { success: false };
@@ -678,32 +1023,32 @@ function registerIPC() {
     saveDB(db);
     return { success: true };
   }));
-  import_electron.ipcMain.handle("storage.getInfo", () => wrap(() => getStorageInfo()));
-  import_electron.ipcMain.handle("storage.getPath", () => wrap(() => getStoragePath()));
-  import_electron.ipcMain.handle("storage.setPath", (_e, p) => wrap(() => {
+  import_electron2.ipcMain.handle("storage.getInfo", () => wrap(() => getStorageInfo()));
+  import_electron2.ipcMain.handle("storage.getPath", () => wrap(() => getStoragePath()));
+  import_electron2.ipcMain.handle("storage.setPath", (_e, p) => wrap(() => {
     updateSettings({ storage_path: p });
     ensureStoragePath();
     return getSettings();
   }));
-  import_electron.ipcMain.handle("storage.chooseFolder", () => wrap(async () => {
-    const r = await import_electron.dialog.showOpenDialog({ title: "Where should ARAY save your memories?", properties: ["openDirectory", "createDirectory"] });
+  import_electron2.ipcMain.handle("storage.chooseFolder", () => wrap(async () => {
+    const r = await import_electron2.dialog.showOpenDialog({ title: "Where should ARAY save your memories?", properties: ["openDirectory", "createDirectory"] });
     return r.canceled ? { canceled: true, path: null } : { canceled: false, path: r.filePaths[0] };
   }));
-  import_electron.ipcMain.handle("storage.openFolder", (_e, p) => wrap(() => {
-    import_electron.shell.openPath(p);
+  import_electron2.ipcMain.handle("storage.openFolder", (_e, p) => wrap(() => {
+    import_electron2.shell.openPath(p);
     return { success: true };
   }));
-  import_electron.ipcMain.handle("storage.ensure", () => wrap(() => {
+  import_electron2.ipcMain.handle("storage.ensure", () => wrap(() => {
     ensureStoragePath();
     return { success: true };
   }));
-  import_electron.ipcMain.handle("camera.list", () => wrap(() => []));
-  import_electron.ipcMain.handle("camera.connect", () => wrap(() => true));
-  import_electron.ipcMain.handle("camera.disconnect", () => wrap(() => void 0));
-  import_electron.ipcMain.handle("settings.get", () => wrap(() => getSettings()));
-  import_electron.ipcMain.handle("settings.update", (_e, partial) => wrap(() => updateSettings(partial)));
-  import_electron.ipcMain.handle("settings.getDefaultStoragePath", () => wrap(() => getDefaultStoragePath()));
-  import_electron.ipcMain.handle("print.listPrinters", async () => {
+  import_electron2.ipcMain.handle("camera.list", () => wrap(() => []));
+  import_electron2.ipcMain.handle("camera.connect", () => wrap(() => true));
+  import_electron2.ipcMain.handle("camera.disconnect", () => wrap(() => void 0));
+  import_electron2.ipcMain.handle("settings.get", () => wrap(() => getSettings()));
+  import_electron2.ipcMain.handle("settings.update", (_e, partial) => wrap(() => updateSettings(partial)));
+  import_electron2.ipcMain.handle("settings.getDefaultStoragePath", () => wrap(() => getDefaultStoragePath()));
+  import_electron2.ipcMain.handle("print.listPrinters", async () => {
     try {
       log("[print.listPrinters] Starting printer detection...");
       let printers = [];
@@ -777,7 +1122,7 @@ function registerIPC() {
       return { success: false, error: { code: "PRINTER_DETECT_FAILED", message: e.message } };
     }
   });
-  import_electron.ipcMain.handle("print.queue", async (_e, mediaId, printerName, copies, printSettings) => {
+  import_electron2.ipcMain.handle("print.queue", async (_e, mediaId, printerName, copies, printSettings) => {
     try {
       log(`[print.queue] Request: mediaId=${mediaId}, printer=${printerName || "default"}, copies=${copies || 1}`);
       log(`[print.queue] Print settings:`, JSON.stringify(printSettings || {}));
@@ -788,13 +1133,13 @@ function registerIPC() {
         return { success: false, error: "Media not found" };
       }
       const filePath = media.processed_path || media.original_path;
-      if (!filePath || !fs.existsSync(filePath)) {
+      if (!filePath || !fs2.existsSync(filePath)) {
         log(`[print.queue] File not found: ${filePath}`);
         return { success: false, error: "File not found: " + filePath };
       }
       log(`[print.queue] Printing file: ${filePath}`);
-      const buffer = fs.readFileSync(filePath);
-      const ext = path.extname(filePath).toLowerCase().slice(1);
+      const buffer = fs2.readFileSync(filePath);
+      const ext = path2.extname(filePath).toLowerCase().slice(1);
       const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
       const base64 = buffer.toString("base64");
       const dataUrl = `data:${mime};base64,${base64}`;
@@ -890,7 +1235,7 @@ function registerIPC() {
             resolve2({
               success: true,
               data: {
-                id: crypto.randomUUID(),
+                id: crypto2.randomUUID(),
                 media_id: mediaId,
                 printer_name: printerName || "Default",
                 paper_size: paperSize,
@@ -911,8 +1256,8 @@ function registerIPC() {
       return { success: false, error: e.message };
     }
   });
-  import_electron.ipcMain.handle("googleDrive.connect", () => wrap(async () => {
-    const result = await import_electron.dialog.showOpenDialog({
+  import_electron2.ipcMain.handle("googleDrive.connect", () => wrap(async () => {
+    const result = await import_electron2.dialog.showOpenDialog({
       title: "Select your Google Drive folder (or any cloud sync folder)",
       properties: ["openDirectory", "createDirectory"],
       buttonLabel: "Set as Cloud Backup Folder"
@@ -923,11 +1268,11 @@ function registerIPC() {
     log(`Cloud backup folder set: ${folder}`);
     return { connected: true, folder, message: `Connected to ${folder}` };
   }));
-  import_electron.ipcMain.handle("googleDrive.disconnect", () => wrap(() => {
+  import_electron2.ipcMain.handle("googleDrive.disconnect", () => wrap(() => {
     updateSettings({ backup_folder: null, auto_backup: false });
     return { success: true };
   }));
-  import_electron.ipcMain.handle("googleDrive.status", () => wrap(() => {
+  import_electron2.ipcMain.handle("googleDrive.status", () => wrap(() => {
     const stats = getBackupStats();
     return {
       connected: stats.connected,
@@ -936,20 +1281,20 @@ function registerIPC() {
       message: stats.connected ? `Backing up to: ${stats.folder}` : "Not connected"
     };
   }));
-  import_electron.ipcMain.handle("sync.start", () => wrap(() => {
+  import_electron2.ipcMain.handle("sync.start", () => wrap(() => {
     return { started: true, ...backupAllPendingMedia() };
   }));
-  import_electron.ipcMain.handle("sync.pause", () => wrap(() => ({ paused: true })));
-  import_electron.ipcMain.handle("sync.resume", () => wrap(() => {
+  import_electron2.ipcMain.handle("sync.pause", () => wrap(() => ({ paused: true })));
+  import_electron2.ipcMain.handle("sync.resume", () => wrap(() => {
     return { resumed: true, ...backupAllPendingMedia() };
   }));
-  import_electron.ipcMain.handle("sync.retry", () => wrap(() => {
+  import_electron2.ipcMain.handle("sync.retry", () => wrap(() => {
     return { retrying: true, ...backupAllPendingMedia() };
   }));
-  import_electron.ipcMain.handle("sync.summary", (_e, eventId) => wrap(() => getMediaStats(eventId)));
+  import_electron2.ipcMain.handle("sync.summary", (_e, eventId) => wrap(() => getMediaStats(eventId)));
   log("All IPC handlers registered");
 }
-import_electron.protocol.registerSchemesAsPrivileged([
+import_electron2.protocol.registerSchemesAsPrivileged([
   {
     scheme: "app",
     privileges: {
@@ -975,31 +1320,31 @@ import_electron.protocol.registerSchemesAsPrivileged([
     }
   }
 ]);
-import_electron.app.whenReady().then(() => {
+import_electron2.app.whenReady().then(() => {
   log("========================================");
   log("ARAY starting up (v2.0.0 \u2014 Photo + Video + Templates)");
-  log(`Version: ${import_electron.app.getVersion()}`);
+  log(`Version: ${import_electron2.app.getVersion()}`);
   log(`Electron: ${process.versions.electron}`);
   log(`Node: ${process.versions.node}`);
   log(`Platform: ${process.platform} ${process.arch}`);
   log(`__dirname: ${__dirname}`);
-  log(`userData: ${import_electron.app.getPath("userData")}`);
+  log(`userData: ${import_electron2.app.getPath("userData")}`);
   log("========================================");
-  const rendererDir = path.join(__dirname, "..", "out", "renderer");
-  import_electron.protocol.handle("app", (request) => {
+  const rendererDir = path2.join(__dirname, "..", "out", "renderer");
+  import_electron2.protocol.handle("app", (request) => {
     try {
       let urlPath = request.url.replace(/^app:\/\/\.?\//, "");
       urlPath = decodeURIComponent(urlPath);
-      const filePath = path.resolve(rendererDir, urlPath);
-      if (!filePath.startsWith(path.resolve(rendererDir))) {
+      const filePath = path2.resolve(rendererDir, urlPath);
+      if (!filePath.startsWith(path2.resolve(rendererDir))) {
         return new Response("Forbidden", { status: 403 });
       }
-      if (!fs.existsSync(filePath)) {
+      if (!fs2.existsSync(filePath)) {
         log(`[app://] 404: ${urlPath}`);
         return new Response("Not Found", { status: 404 });
       }
-      const buffer = fs.readFileSync(filePath);
-      const ext = path.extname(filePath).toLowerCase();
+      const buffer = fs2.readFileSync(filePath);
+      const ext = path2.extname(filePath).toLowerCase();
       const mimeTypes = {
         ".html": "text/html",
         ".js": "application/javascript",
@@ -1033,19 +1378,19 @@ import_electron.app.whenReady().then(() => {
     }
   });
   log(`app:// protocol registered \u2014 serving from ${rendererDir}`);
-  import_electron.protocol.handle("aray-file", (request) => {
+  import_electron2.protocol.handle("aray-file", (request) => {
     try {
       let urlPath = request.url.replace(/^aray-file:\/\/\/?/, "");
       urlPath = decodeURIComponent(urlPath);
       const filePath = process.platform === "win32" ? urlPath.replace(/\//g, "\\") : urlPath;
       log(`[aray-file://] Request: ${request.url.substring(0, 100)}... -> ${filePath}`);
-      if (!fs.existsSync(filePath)) {
+      if (!fs2.existsSync(filePath)) {
         log(`[aray-file://] 404: ${filePath}`);
         return new Response("Not Found", { status: 404 });
       }
-      const stat = fs.statSync(filePath);
+      const stat = fs2.statSync(filePath);
       log(`[aray-file://] File size: ${(stat.size / 1024 / 1024).toFixed(2)} MB`);
-      const ext = path.extname(filePath).toLowerCase();
+      const ext = path2.extname(filePath).toLowerCase();
       const mimeTypes = {
         ".webm": "video/webm",
         ".mp4": "video/mp4",
@@ -1058,7 +1403,7 @@ import_electron.app.whenReady().then(() => {
         ".gif": "image/gif"
       };
       const mime = mimeTypes[ext] || "application/octet-stream";
-      const buffer = fs.readFileSync(filePath);
+      const buffer = fs2.readFileSync(filePath);
       const headers = new Headers({
         "Content-Type": mime,
         "Access-Control-Allow-Origin": "*",
@@ -1101,7 +1446,7 @@ import_electron.app.whenReady().then(() => {
     createWindow();
     log("Window created successfully");
     try {
-      const registered = import_electron.globalShortcut.register("Ctrl+Shift+Alt+Q", () => {
+      const registered = import_electron2.globalShortcut.register("Ctrl+Shift+Alt+Q", () => {
         log("Kiosk exit shortcut pressed: Ctrl+Shift+Alt+Q");
         const db = loadDB();
         if (db.settings.kiosk_mode) {
@@ -1124,7 +1469,7 @@ import_electron.app.whenReady().then(() => {
       log(`ERROR registering kiosk shortcut: ${e.message}`);
     }
     try {
-      const registered2 = import_electron.globalShortcut.register("Ctrl+Shift+Q", () => {
+      const registered2 = import_electron2.globalShortcut.register("Ctrl+Shift+Q", () => {
         log("Kiosk exit shortcut pressed: Ctrl+Shift+Q (backup)");
         const db = loadDB();
         if (db.settings.kiosk_mode) {
@@ -1145,17 +1490,17 @@ import_electron.app.whenReady().then(() => {
   } catch (err2) {
     log(`STARTUP ERROR: ${err2.message}`);
     log(`Stack: ${err2.stack}`);
-    import_electron.dialog.showErrorBox("ARAY \u2014 Error", `${err2.message}
+    import_electron2.dialog.showErrorBox("ARAY \u2014 Error", `${err2.message}
 
 Log: ${getLogPath()}`);
-    import_electron.app.quit();
+    import_electron2.app.quit();
   }
-  import_electron.app.on("activate", () => {
-    if (import_electron.BrowserWindow.getAllWindows().length === 0) createWindow();
+  import_electron2.app.on("activate", () => {
+    if (import_electron2.BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
-import_electron.app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") import_electron.app.quit();
+import_electron2.app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") import_electron2.app.quit();
 });
 process.on("uncaughtException", (err2) => {
   log(`UNCAUGHT: ${err2.message}`);

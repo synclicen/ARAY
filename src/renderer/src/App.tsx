@@ -1,8 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useSettingsStore } from './stores/settings'
 import { AraySplash } from './components/ui'
+import { LicenseGate } from './components/LicenseGate'
 
 import { AppShell } from './components/layout/AppShell'
 import { FirstRunPage } from './pages/FirstRun'
@@ -18,11 +19,38 @@ import { SettingsPage } from './pages/Settings'
 function App() {
   const { settings, loadSettings, loadStorageInfo } = useSettingsStore()
   const location = useLocation()
+  const [licenseValid, setLicenseValid] = useState(false)
+  const [licenseChecked, setLicenseChecked] = useState(false)
 
   useEffect(() => {
     loadSettings()
     loadStorageInfo()
+    // v4.4.0: Check license status on app load
+    checkLicense()
   }, [loadSettings, loadStorageInfo])
+
+  const checkLicense = async () => {
+    try {
+      const result = await window.aray.license.status()
+      if (result?.success) {
+        setLicenseValid((result.data as any).isValid)
+      }
+    } catch (e) {
+      console.error('License check failed:', e)
+      setLicenseValid(false)
+    } finally {
+      setLicenseChecked(true)
+    }
+  }
+
+  // v4.4.0: License gate — if not valid, show activation screen
+  if (!licenseChecked) {
+    return <AraySplash message="Memeriksa lisensi..." />
+  }
+
+  if (!licenseValid) {
+    return <LicenseGate onActivated={() => setLicenseValid(true)} />
+  }
 
   if (!settings) {
     return <AraySplash message="Warming up the booth..." />

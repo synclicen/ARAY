@@ -417,6 +417,62 @@ function registerIPC() {
   ipcMain.handle('app.getVersion', () => wrap(() => app.getVersion()))
   ipcMain.handle('app.openExternal', (_e, url: string) => wrap(() => { shell.openExternal(url); return { success: true } }))
 
+  // LICENSE — v4.4.0: Monthly license system (adaptasi dari Saatiril)
+  const { checkLicenseStatus, activateLicense, getMachineId, getDisplayMachineId, generateLicenseCode } = require('./license')
+
+  ipcMain.handle('license.status', () => {
+    try {
+      const status = checkLicenseStatus()
+      log(`[license.status] isValid=${status.isValid}, expired=${status.isExpired}, daysRemaining=${status.daysRemaining}`)
+      return { success: true, data: status }
+    } catch (e: any) {
+      log(`[license.status] Error: ${e.message}`)
+      return { success: false, error: e.message }
+    }
+  })
+
+  ipcMain.handle('license.activate', (_e, activationCode: string) => {
+    try {
+      log(`[license.activate] Attempting activation...`)
+      const result = activateLicense(activationCode)
+      if (result.success) {
+        log(`[license.activate] Success: ${result.licenseType}`)
+      } else {
+        log(`[license.activate] Failed: ${result.error}`)
+      }
+      return result
+    } catch (e: any) {
+      log(`[license.activate] Error: ${e.message}`)
+      return { success: false, error: e.message }
+    }
+  })
+
+  ipcMain.handle('license.generate', (_e, machineId: string, adminKey: string) => {
+    try {
+      log(`[license.generate] Generating code for machine: ${machineId.substring(0, 12)}...`)
+      const result = generateLicenseCode(machineId, adminKey)
+      if (result.success) {
+        log(`[license.generate] Success: code=${result.data?.activationCode}`)
+      } else {
+        log(`[license.generate] Failed: ${result.error}`)
+      }
+      return result
+    } catch (e: any) {
+      log(`[license.generate] Error: ${e.message}`)
+      return { success: false, error: e.message }
+    }
+  })
+
+  ipcMain.handle('license.getMachineId', () => {
+    try {
+      const mid = getMachineId()
+      const display = getDisplayMachineId(mid)
+      return { success: true, data: { machineId: mid, displayMachineId: display } }
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
+  })
+
   // EVENTS
   ipcMain.handle('events.create', (_e, input: any) => wrap(() => createEvent(input)))
   ipcMain.handle('events.list', (_e, includeArchived?: boolean) => wrap(() => listEvents(includeArchived)))

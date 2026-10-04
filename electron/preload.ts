@@ -12,6 +12,14 @@ contextBridge.exposeInMainWorld('aray', {
     openExternal: (url: string) => ipcRenderer.invoke('app.openExternal', url)
   },
 
+  // v4.4.0: Monthly license system
+  license: {
+    status: () => ipcRenderer.invoke('license.status'),
+    activate: (activationCode: string) => ipcRenderer.invoke('license.activate', activationCode),
+    generate: (machineId: string, adminKey: string) => ipcRenderer.invoke('license.generate', machineId, adminKey),
+    getMachineId: () => ipcRenderer.invoke('license.getMachineId')
+  },
+
   events: {
     create: (input: any) => ipcRenderer.invoke('events.create', input),
     list: (includeArchived?: boolean) => ipcRenderer.invoke('events.list', includeArchived),
