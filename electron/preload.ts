@@ -63,8 +63,8 @@ contextBridge.exposeInMainWorld('aray', {
   },
 
   print: {
-    queue: (mediaId: string, printerName?: string, copies?: number) =>
-      ipcRenderer.invoke('print.queue', mediaId, printerName, copies),
+    queue: (mediaId: string, printerName?: string, copies?: number, printSettings?: any) =>
+      ipcRenderer.invoke('print.queue', mediaId, printerName, copies, printSettings),
     listPrinters: () => ipcRenderer.invoke('print.listPrinters')
   },
 

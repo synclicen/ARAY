@@ -60,8 +60,16 @@ export function PrinterPage() {
     setTesting(true)
     setTestResult(null)
     try {
-      // Print a test page — find any media, or create a simple test
-      const result = await window.aray.print.queue('test', settings.printer_name, 1)
+      // v4.3.3: Pass print settings ke test print
+      const printSettings = {
+        paper_size: settings.print_paper_size || '4x6',
+        copies: settings.print_copies || 1,
+        color: settings.print_color !== false,
+        orientation: settings.print_orientation || 'portrait',
+        quality: settings.print_quality || 'normal',
+        fit: settings.print_fit || 'contain'
+      }
+      const result = await window.aray.print.queue('test', settings.printer_name, settings.print_copies || 1, printSettings)
       if (result?.success) {
         setTestResult('✓ Test print berhasil dikirim ke ' + settings.printer_name)
       } else {
@@ -159,11 +167,11 @@ export function PrinterPage() {
         )}
       </ArayCard>
 
-      {/* Selected printer + test print */}
+      {/* Selected printer + print settings + test print */}
       {settings?.printer_name && (
         <ArayCard className="p-6">
           <h3 className="font-semibold mb-4">Selected Printer</h3>
-          <div className="flex items-center justify-between p-4 rounded-lg bg-surface-elevated/40 mb-4">
+          <div className="flex items-center justify-between p-4 rounded-lg bg-surface-elevated/40 mb-6">
             <div className="flex items-center gap-3">
               <PrinterLucide className="w-5 h-5 text-gold-400" />
               <div>
@@ -172,6 +180,129 @@ export function PrinterPage() {
               </div>
             </div>
           </div>
+
+          {/* Print Settings */}
+          <h4 className="text-sm font-semibold text-silver-200 mb-3">Print Settings</h4>
+          <div className="space-y-3 mb-6">
+            {/* Paper Size */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-start gap-3">
+                <PrinterLucide className="w-4 h-4 text-silver-400 mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-silver-100">Paper Size</div>
+                  <div className="text-xs text-silver-500 mt-0.5">Ukuran kertas print</div>
+                </div>
+              </div>
+              <select
+                className="aray-input max-w-[140px]"
+                value={settings.print_paper_size || '4x6'}
+                onChange={(e) => updateSettings({ print_paper_size: e.target.value as any })}
+              >
+                <option value="4x6">4×6 (Photo)</option>
+                <option value="5x7">5×7 (Large Photo)</option>
+                <option value="A6">A6 (105×148mm)</option>
+                <option value="A4">A4 (210×297mm)</option>
+                <option value="Letter">Letter (8.5×11")</option>
+              </select>
+            </div>
+
+            {/* Copies */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-start gap-3">
+                <PrinterLucide className="w-4 h-4 text-silver-400 mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-silver-100">Copies</div>
+                  <div className="text-xs text-silver-500 mt-0.5">Jumlah copy per print</div>
+                </div>
+              </div>
+              <input
+                type="number"
+                min="1"
+                max="10"
+                className="aray-input max-w-[80px]"
+                value={settings.print_copies || 1}
+                onChange={(e) => updateSettings({ print_copies: parseInt(e.target.value) || 1 })}
+              />
+            </div>
+
+            {/* Color */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-start gap-3">
+                <PrinterLucide className="w-4 h-4 text-silver-400 mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-silver-100">Color</div>
+                  <div className="text-xs text-silver-500 mt-0.5">Color atau Grayscale</div>
+                </div>
+              </div>
+              <select
+                className="aray-input max-w-[140px]"
+                value={settings.print_color === false ? 'grayscale' : 'color'}
+                onChange={(e) => updateSettings({ print_color: e.target.value === 'color' })}
+              >
+                <option value="color">Color</option>
+                <option value="grayscale">Grayscale</option>
+              </select>
+            </div>
+
+            {/* Orientation */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-start gap-3">
+                <PrinterLucide className="w-4 h-4 text-silver-400 mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-silver-100">Orientation</div>
+                  <div className="text-xs text-silver-500 mt-0.5">Portrait atau Landscape</div>
+                </div>
+              </div>
+              <select
+                className="aray-input max-w-[140px]"
+                value={settings.print_orientation || 'portrait'}
+                onChange={(e) => updateSettings({ print_orientation: e.target.value as any })}
+              >
+                <option value="portrait">Portrait</option>
+                <option value="landscape">Landscape</option>
+              </select>
+            </div>
+
+            {/* Quality */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-start gap-3">
+                <PrinterLucide className="w-4 h-4 text-silver-400 mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-silver-100">Quality</div>
+                  <div className="text-xs text-silver-500 mt-0.5">Resolusi print</div>
+                </div>
+              </div>
+              <select
+                className="aray-input max-w-[140px]"
+                value={settings.print_quality || 'normal'}
+                onChange={(e) => updateSettings({ print_quality: e.target.value as any })}
+              >
+                <option value="draft">Draft (cepat, hemat tinta)</option>
+                <option value="normal">Normal</option>
+                <option value="high">High (kualitas tinggi)</option>
+              </select>
+            </div>
+
+            {/* Fit */}
+            <div className="flex items-center justify-between py-2">
+              <div className="flex items-start gap-3">
+                <PrinterLucide className="w-4 h-4 text-silver-400 mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-silver-100">Image Fit</div>
+                  <div className="text-xs text-silver-500 mt-0.5">Contain = utuh, Cover = penuh (crop)</div>
+                </div>
+              </div>
+              <select
+                className="aray-input max-w-[140px]"
+                value={settings.print_fit || 'contain'}
+                onChange={(e) => updateSettings({ print_fit: e.target.value as any })}
+              >
+                <option value="contain">Contain (utuh, mungkin ada margin)</option>
+                <option value="cover">Cover (penuh, mungkin crop)</option>
+              </select>
+            </div>
+          </div>
+
           <ArayButton
             variant="gold"
             icon={<PrinterLucide className="w-4 h-4" />}

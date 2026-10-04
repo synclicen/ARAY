@@ -120,6 +120,15 @@ export interface AraySettings {
    * Mis. Google Drive folder, website gallery, dll.
    */
   share_qr_link?: string
+  /**
+   * Print settings — dipakai saat print dari booth result.
+   */
+  print_paper_size?: '4x6' | '5x7' | 'A4' | 'Letter' | 'A6'
+  print_copies?: number
+  print_color?: boolean  // true = color, false = grayscale
+  print_orientation?: 'portrait' | 'landscape'
+  print_quality?: 'draft' | 'normal' | 'high'
+  print_fit?: 'contain' | 'cover'  // how image fits paper
 }
 
 export interface StorageInfo {

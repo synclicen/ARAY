@@ -709,9 +709,10 @@ function registerIPC() {
       return { success: false, error: { code: "PRINTER_DETECT_FAILED", message: e.message } };
     }
   });
-  import_electron.ipcMain.handle("print.queue", async (_e, mediaId, printerName, copies) => {
+  import_electron.ipcMain.handle("print.queue", async (_e, mediaId, printerName, copies, printSettings) => {
     try {
       log(`[print.queue] Request: mediaId=${mediaId}, printer=${printerName || "default"}, copies=${copies || 1}`);
+      log(`[print.queue] Print settings:`, JSON.stringify(printSettings || {}));
       const db = loadDB();
       const media = db.media.find((m) => m.id === mediaId);
       if (!media) {
@@ -729,6 +730,26 @@ function registerIPC() {
       const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
       const base64 = buffer.toString("base64");
       const dataUrl = `data:${mime};base64,${base64}`;
+      const paperSize = printSettings?.paper_size || "4x6";
+      const orientation = printSettings?.orientation || "portrait";
+      const fit = printSettings?.fit || "contain";
+      const color = printSettings?.color !== false;
+      const quality = printSettings?.quality || "normal";
+      const paperDims = {
+        "4x6": { w: 102, h: 152 },
+        // 4×6 inch
+        "5x7": { w: 127, h: 178 },
+        // 5×7 inch
+        "A6": { w: 105, h: 148 },
+        "A4": { w: 210, h: 297 },
+        "Letter": { w: 216, h: 279 }
+        // 8.5×11 inch
+      };
+      const dims = paperDims[paperSize] || paperDims["4x6"];
+      const pageW = orientation === "landscape" ? dims.h : dims.w;
+      const pageH = orientation === "landscape" ? dims.w : dims.h;
+      const grayscaleFilter = color ? "" : "filter: grayscale(100%);";
+      const objectFit = fit === "cover" ? "cover" : "contain";
       const { BrowserWindow: BrowserWindow2 } = require("electron");
       const printWin = new BrowserWindow2({
         show: false,
@@ -741,9 +762,27 @@ function registerIPC() {
 <head>
 <meta charset="utf-8">
 <style>
-  @page { margin: 0; }
-  body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-  img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+  @page {
+    size: ${pageW}mm ${pageH}mm;
+    margin: 0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: ${pageW}mm;
+    height: ${pageH}mm;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: ${objectFit};
+    ${grayscaleFilter}
+  }
 </style>
 </head>
 <body>
@@ -754,10 +793,17 @@ function registerIPC() {
       const printOptions = {
         silent: true,
         printBackground: true,
-        copies: copies || 1
+        copies: copies || parseInt(printSettings?.copies) || 1
+        // v4.3.3: paperSize di-set via @page CSS di HTML (lebih reliable)
+        // deviceName untuk pilih printer
       };
       if (printerName && printerName !== "Default") {
         printOptions.deviceName = printerName;
+      }
+      if (quality === "high") {
+        printOptions.dpi = [600, 600];
+      } else if (quality === "draft") {
+        printOptions.dpi = [150, 150];
       }
       log(`[print.queue] Print options:`, JSON.stringify(printOptions));
       return new Promise((resolve2) => {
@@ -765,17 +811,20 @@ function registerIPC() {
           log(`[print.queue] Print callback: success=${success}, reason=${failureReason || "none"}`);
           printWin.close();
           if (success) {
-            resolve2(wrap(() => ({
-              id: crypto.randomUUID(),
-              media_id: mediaId,
-              printer_name: printerName || "Default",
-              paper_size: "4x6",
-              copies: copies || 1,
-              status: "printed",
-              created_at: (/* @__PURE__ */ new Date()).toISOString(),
-              completed_at: (/* @__PURE__ */ new Date()).toISOString(),
-              error: null
-            })));
+            resolve2({
+              success: true,
+              data: {
+                id: crypto.randomUUID(),
+                media_id: mediaId,
+                printer_name: printerName || "Default",
+                paper_size: paperSize,
+                copies: printOptions.copies,
+                status: "printed",
+                created_at: (/* @__PURE__ */ new Date()).toISOString(),
+                completed_at: (/* @__PURE__ */ new Date()).toISOString(),
+                error: null
+              }
+            });
           } else {
             resolve2({ success: false, error: failureReason || "Print failed" });
           }

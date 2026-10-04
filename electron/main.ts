@@ -630,12 +630,13 @@ function registerIPC() {
     }
   })
 
-  // Print queue — v4.2.2: Actually print the file to the selected printer.
-  // Reads the media file, creates a hidden BrowserWindow, loads the image,
-  // and calls webContents.print() with the selected printer.
-  ipcMain.handle('print.queue', async (_e, mediaId: string, printerName?: string, copies?: number) => {
+  // Print queue — v4.3.3: Apply print settings (paper size, color, copies, dll)
+  // Reads the media file, creates a hidden BrowserWindow, loads the image with
+  // CSS berdasarkan settings, and calls webContents.print() dengan options.
+  ipcMain.handle('print.queue', async (_e, mediaId: string, printerName?: string, copies?: number, printSettings?: any) => {
     try {
       log(`[print.queue] Request: mediaId=${mediaId}, printer=${printerName || 'default'}, copies=${copies || 1}`)
+      log(`[print.queue] Print settings:`, JSON.stringify(printSettings || {}))
 
       // Find media in DB to get file path
       const db = loadDB()
@@ -660,6 +661,32 @@ function registerIPC() {
       const base64 = buffer.toString('base64')
       const dataUrl = `data:${mime};base64,${base64}`
 
+      // v4.3.3: Apply print settings to HTML CSS
+      const paperSize = printSettings?.paper_size || '4x6'
+      const orientation = printSettings?.orientation || 'portrait'
+      const fit = printSettings?.fit || 'contain'
+      const color = printSettings?.color !== false  // default true
+      const quality = printSettings?.quality || 'normal'
+
+      // Paper dimensions in mm (for @page size)
+      const paperDims: Record<string, { w: number; h: number }> = {
+        '4x6': { w: 102, h: 152 },    // 4×6 inch
+        '5x7': { w: 127, h: 178 },    // 5×7 inch
+        'A6': { w: 105, h: 148 },
+        'A4': { w: 210, h: 297 },
+        'Letter': { w: 216, h: 279 }  // 8.5×11 inch
+      }
+      const dims = paperDims[paperSize] || paperDims['4x6']
+      // Swap if landscape
+      const pageW = orientation === 'landscape' ? dims.h : dims.w
+      const pageH = orientation === 'landscape' ? dims.w : dims.h
+
+      // CSS filter for grayscale
+      const grayscaleFilter = color ? '' : 'filter: grayscale(100%);'
+
+      // object-fit: contain (utuh) atau cover (penuh)
+      const objectFit = fit === 'cover' ? 'cover' : 'contain'
+
       // Create a hidden window for printing
       const { BrowserWindow } = require('electron')
       const printWin = new BrowserWindow({
@@ -669,15 +696,33 @@ function registerIPC() {
         webPreferences: { offscreen: true }
       })
 
-      // Load HTML with the image, sized to fit page
+      // Load HTML with image + print settings applied via CSS
       const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <style>
-  @page { margin: 0; }
-  body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-  img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+  @page {
+    size: ${pageW}mm ${pageH}mm;
+    margin: 0;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: ${pageW}mm;
+    height: ${pageH}mm;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: ${objectFit};
+    ${grayscaleFilter}
+  }
 </style>
 </head>
 <body>
@@ -687,15 +732,25 @@ function registerIPC() {
 
       await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
 
-      // Print — use silent print if printerName provided, else default
+      // Print options — apply settings
       const printOptions: any = {
         silent: true,
         printBackground: true,
-        copies: copies || 1
+        copies: copies || parseInt(printSettings?.copies) || 1,
+        // v4.3.3: paperSize di-set via @page CSS di HTML (lebih reliable)
+        // deviceName untuk pilih printer
       }
       if (printerName && printerName !== 'Default') {
         printOptions.deviceName = printerName
       }
+
+      // Quality — set DPI berdasarkan quality
+      if (quality === 'high') {
+        printOptions.dpi = [600, 600]
+      } else if (quality === 'draft') {
+        printOptions.dpi = [150, 150]
+      }
+      // normal = default (300dpi)
 
       log(`[print.queue] Print options:`, JSON.stringify(printOptions))
 
@@ -704,17 +759,20 @@ function registerIPC() {
           log(`[print.queue] Print callback: success=${success}, reason=${failureReason || 'none'}`)
           printWin.close()
           if (success) {
-            resolve(wrap(() => ({
-              id: crypto.randomUUID(),
-              media_id: mediaId,
-              printer_name: printerName || 'Default',
-              paper_size: '4x6',
-              copies: copies || 1,
-              status: 'printed',
-              created_at: new Date().toISOString(),
-              completed_at: new Date().toISOString(),
-              error: null
-            })))
+            resolve({
+              success: true,
+              data: {
+                id: crypto.randomUUID(),
+                media_id: mediaId,
+                printer_name: printerName || 'Default',
+                paper_size: paperSize,
+                copies: printOptions.copies,
+                status: 'printed',
+                created_at: new Date().toISOString(),
+                completed_at: new Date().toISOString(),
+                error: null
+              }
+            })
           } else {
             resolve({ success: false, error: failureReason || 'Print failed' })
           }

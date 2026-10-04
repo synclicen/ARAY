@@ -1250,7 +1250,21 @@ export function BoothPage() {
                 onClick={async () => {
                   const mediaId = compositeMediaId ?? capturedShots[0]?.mediaId ?? ''
                   if (!mediaId) return
-                  await window.aray.print.queue(mediaId, settings?.printer_name || undefined, 1)
+                  // v4.3.3: Pass print settings ke IPC
+                  const printSettings = {
+                    paper_size: settings?.print_paper_size || '4x6',
+                    copies: settings?.print_copies || 1,
+                    color: settings?.print_color !== false,
+                    orientation: settings?.print_orientation || 'portrait',
+                    quality: settings?.print_quality || 'normal',
+                    fit: settings?.print_fit || 'contain'
+                  }
+                  await window.aray.print.queue(
+                    mediaId,
+                    settings?.printer_name || undefined,
+                    settings?.print_copies || 1,
+                    printSettings
+                  )
                 }}
               >
                 Print
