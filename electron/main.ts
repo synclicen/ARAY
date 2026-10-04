@@ -552,6 +552,46 @@ function registerIPC() {
     if (!fs.existsSync(filePath)) throw new Error('File not found')
     return fs.readFileSync(filePath).toString('base64')
   }))
+
+  // v4.3.5: New IPC — return file size info (untuk debug + check besar/kecil)
+  ipcMain.handle('media.getFileInfo', (_e, filePath: string) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: 'File not found' }
+      }
+      const stat = fs.statSync(filePath)
+      return {
+        success: true,
+        data: {
+          size: stat.size,
+          sizeMB: Math.round(stat.size / 1024 / 1024 * 100) / 100,
+          exists: true
+        }
+      }
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
+  })
+
+  // v4.3.5: Open folder + select file di Windows Explorer
+  // Sebelumnya hanya buka event folder. Sekarang buka folder yang contain
+  // file lalu select file tsb.
+  ipcMain.handle('media.openInFolder', (_e, filePath: string) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        log(`[media.openInFolder] File not found: ${filePath}`)
+        return { success: false, error: 'File not found' }
+      }
+      const { shell } = require('electron')
+      // shell.showItemInFolder buka Explorer + select file
+      shell.showItemInFolder(filePath)
+      log(`[media.openInFolder] Opened: ${filePath}`)
+      return { success: true }
+    } catch (e: any) {
+      log(`[media.openInFolder] Error: ${e.message}`)
+      return { success: false, error: e.message }
+    }
+  })
   ipcMain.handle('media.updateSyncStatus', (_e, id: string, status: string, remoteId?: string, error?: string) => wrap(() => {
     const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === id)
     if (idx === -1) return { success: false }
@@ -885,6 +925,20 @@ protocol.registerSchemesAsPrivileged([
       corsEnabled: true,
       stream: true
     }
+  },
+  // v4.3.5: aray-file:// protocol untuk stream video/media langsung dari disk.
+  // Ini menghindari base64 data URL yang bisa choke Chromium pada file besar.
+  // Renderer pakai: <video src="aray-file:///C:/Users/.../video.webm">
+  {
+    scheme: 'aray-file',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      bypassCSP: true
+    }
   }
 ])
 
@@ -955,6 +1009,63 @@ app.whenReady().then(() => {
     }
   })
   log(`app:// protocol registered — serving from ${rendererDir}`)
+
+  // v4.3.5: Register aray-file:// protocol — stream media files from disk.
+  // URL format: aray-file:///C:/Users/.../video.webm
+  // Renderer pakai: <video src="aray-file:///${path}">
+  // Ini efficient — tidak perlu base64 encode, stream langsung dari disk.
+  protocol.handle('aray-file', (request) => {
+    try {
+      // Parse URL: aray-file:///C:/Users/.../file.webm
+      // URL.pathname = /C:/Users/.../file.webm (Windows path dengan drive letter)
+      let urlPath = request.url.replace(/^aray-file:\/\/\/?/, '')
+      // Decode URI component
+      urlPath = decodeURIComponent(urlPath)
+      // Fix Windows path: /C:/Users -> C:\Users
+      const filePath = process.platform === 'win32'
+        ? urlPath.replace(/\//g, '\\')
+        : urlPath
+
+      log(`[aray-file://] Request: ${request.url} -> ${filePath}`)
+
+      if (!fs.existsSync(filePath)) {
+        log(`[aray-file://] 404: ${filePath}`)
+        return new Response('Not Found', { status: 404 })
+      }
+
+      const ext = path.extname(filePath).toLowerCase()
+      const mimeTypes: Record<string, string> = {
+        '.webm': 'video/webm',
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif'
+      }
+      const mime = mimeTypes[ext] || 'application/octet-stream'
+
+      // v4.3.5: Stream file langsung — pakai fs.createReadStream untuk efficiency.
+      // Electron protocol.handle support Response dari Node stream.
+      const { Readable } = require('stream')
+      const stream = fs.createReadStream(filePath)
+      const readableStream = Readable.toWeb(stream)
+
+      const headers = new Headers({
+        'Content-Type': mime,
+        'Access-Control-Allow-Origin': '*',
+        'Accept-Ranges': 'bytes'
+      })
+
+      return new Response(readableStream as any, { status: 200, headers })
+    } catch (e: any) {
+      log(`[aray-file://] Error: ${e.message}`)
+      return new Response('Internal Error', { status: 500 })
+    }
+  })
+  log(`aray-file:// protocol registered — streaming media from disk`)
 
   try {
     ensureStoragePath(); log('Storage path ensured')

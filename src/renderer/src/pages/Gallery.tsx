@@ -443,6 +443,8 @@ function MediaDetailModal({
   onNext: () => void
 }) {
   const [imgSrc, setImgSrc] = useState<string | null>(null)
+  const [videoSrc, setVideoSrc] = useState<string | null>(null)
+  const [fileInfo, setFileInfo] = useState<{ sizeMB: number } | null>(null)
   const isVideo = media.type === 'video'
 
   useEffect(() => {
@@ -450,10 +452,33 @@ function MediaDetailModal({
     async function load() {
       const path = media.original_path
       if (!path) return
+
+      // v4.3.5: For video, pakai aray-file:// protocol (stream dari disk).
+      // Base64 data URL choke pada file besar (>10MB) -> video stuck di 0:00.
+      if (isVideo) {
+        // aray-file:// protocol format: aray-file:///C:/Users/.../file.webm
+        // Windows path: C:\Users\... -> replace \ with / -> aray-file:///C:/Users/...
+        const normalizedPath = path.replace(/\\/g, '/')
+        const url = `aray-file:///${normalizedPath}`
+        console.log('[Gallery] Video URL:', url)
+        if (!cancelled) setVideoSrc(url)
+
+        // Get file info untuk debug
+        try {
+          const info = await window.aray.media.getFileInfo(path)
+          if (!cancelled && info?.success) {
+            setFileInfo({ sizeMB: (info.data as any).sizeMB })
+          }
+        } catch (e) {
+          console.error('[Gallery] getFileInfo failed:', e)
+        }
+        return
+      }
+
+      // For photo, pakai base64 (file kecil, OK)
       try {
         const result = await window.aray.media.readFile(path)
         if (!cancelled && result.success) {
-          // v4.3.4: Set MIME based on media type + file extension
           const ext = path.toLowerCase().split('.').pop() || ''
           let mime: string
           if (isVideo) {
@@ -508,17 +533,19 @@ function MediaDetailModal({
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
-          {imgSrc ? (
-            isVideo ? (
+          {isVideo ? (
+            videoSrc ? (
               <video
-                src={imgSrc}
+                src={videoSrc}
                 controls
                 autoPlay
                 className="max-w-full max-h-[70vh] object-contain"
               />
             ) : (
-              <img src={imgSrc} alt={media.id} className="max-w-full max-h-[70vh] object-contain" />
+              <div className="text-silver-500">Loading video...</div>
             )
+          ) : imgSrc ? (
+            <img src={imgSrc} alt={media.id} className="max-w-full max-h-[70vh] object-contain" />
           ) : (
             <div className="text-silver-500">Loading...</div>
           )}
@@ -545,17 +572,14 @@ function MediaDetailModal({
               variant="ghost"
               icon={<FolderOpen className="w-4 h-4" />}
               onClick={async () => {
-                // Open the event folder that contains this media
-                if (media.event_id) {
+                // v4.3.5: Open folder + select file di Explorer.
+                // Pakai media.openInFolder (shell.showItemInFolder) — buka folder
+                // yang contain file lalu select file tsb.
+                if (media.original_path) {
+                  await window.aray.media.openInFolder(media.original_path)
+                } else if (media.event_id) {
+                  // Fallback: open event folder
                   await window.aray.events.openFolder(media.event_id)
-                } else {
-                  // Fallback: try to open parent folder of the file
-                  const sep = media.original_path.includes('\\') ? '\\' : '/'
-                  const parts = media.original_path.split(sep)
-                  // Go up to the event folder (usually 3 levels: Photos/Original/file)
-                  let folder = parts.slice(0, -3).join(sep)
-                  if (!folder) folder = parts.slice(0, -1).join(sep)
-                  window.aray.storage.openFolder(folder)
                 }
               }}
             >

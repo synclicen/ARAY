@@ -37,6 +37,8 @@ contextBridge.exposeInMainWorld('aray', {
     saveVideo: (payload: any) => ipcRenderer.invoke('media.saveVideo', payload),
     saveComposite: (payload: any) => ipcRenderer.invoke('media.saveComposite', payload),
     readFile: (path: string) => ipcRenderer.invoke('media.readFile', path),
+    getFileInfo: (path: string) => ipcRenderer.invoke('media.getFileInfo', path),
+    openInFolder: (path: string) => ipcRenderer.invoke('media.openInFolder', path),
     updateSyncStatus: (id: string, status: string, remoteId?: string | null, error?: string | null) =>
       ipcRenderer.invoke('media.updateSyncStatus', id, status, remoteId, error)
   },

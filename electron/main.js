@@ -634,6 +634,39 @@ function registerIPC() {
     if (!fs.existsSync(filePath)) throw new Error("File not found");
     return fs.readFileSync(filePath).toString("base64");
   }));
+  import_electron.ipcMain.handle("media.getFileInfo", (_e, filePath) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: "File not found" };
+      }
+      const stat = fs.statSync(filePath);
+      return {
+        success: true,
+        data: {
+          size: stat.size,
+          sizeMB: Math.round(stat.size / 1024 / 1024 * 100) / 100,
+          exists: true
+        }
+      };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+  import_electron.ipcMain.handle("media.openInFolder", (_e, filePath) => {
+    try {
+      if (!fs.existsSync(filePath)) {
+        log(`[media.openInFolder] File not found: ${filePath}`);
+        return { success: false, error: "File not found" };
+      }
+      const { shell: shell2 } = require("electron");
+      shell2.showItemInFolder(filePath);
+      log(`[media.openInFolder] Opened: ${filePath}`);
+      return { success: true };
+    } catch (e) {
+      log(`[media.openInFolder] Error: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  });
   import_electron.ipcMain.handle("media.updateSyncStatus", (_e, id, status, remoteId, error) => wrap(() => {
     const db = loadDB();
     const idx = db.media.findIndex((m) => m.id === id);
@@ -918,6 +951,20 @@ import_electron.protocol.registerSchemesAsPrivileged([
       corsEnabled: true,
       stream: true
     }
+  },
+  // v4.3.5: aray-file:// protocol untuk stream video/media langsung dari disk.
+  // Ini menghindari base64 data URL yang bisa choke Chromium pada file besar.
+  // Renderer pakai: <video src="aray-file:///C:/Users/.../video.webm">
+  {
+    scheme: "aray-file",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+      bypassCSP: true
+    }
   }
 ]);
 import_electron.app.whenReady().then(() => {
@@ -978,6 +1025,44 @@ import_electron.app.whenReady().then(() => {
     }
   });
   log(`app:// protocol registered \u2014 serving from ${rendererDir}`);
+  import_electron.protocol.handle("aray-file", (request) => {
+    try {
+      let urlPath = request.url.replace(/^aray-file:\/\/\/?/, "");
+      urlPath = decodeURIComponent(urlPath);
+      const filePath = process.platform === "win32" ? urlPath.replace(/\//g, "\\") : urlPath;
+      log(`[aray-file://] Request: ${request.url} -> ${filePath}`);
+      if (!fs.existsSync(filePath)) {
+        log(`[aray-file://] 404: ${filePath}`);
+        return new Response("Not Found", { status: 404 });
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes = {
+        ".webm": "video/webm",
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif"
+      };
+      const mime = mimeTypes[ext] || "application/octet-stream";
+      const { Readable } = require("stream");
+      const stream = fs.createReadStream(filePath);
+      const readableStream = Readable.toWeb(stream);
+      const headers = new Headers({
+        "Content-Type": mime,
+        "Access-Control-Allow-Origin": "*",
+        "Accept-Ranges": "bytes"
+      });
+      return new Response(readableStream, { status: 200, headers });
+    } catch (e) {
+      log(`[aray-file://] Error: ${e.message}`);
+      return new Response("Internal Error", { status: 500 });
+    }
+  });
+  log(`aray-file:// protocol registered \u2014 streaming media from disk`);
   try {
     ensureStoragePath();
     log("Storage path ensured");
