@@ -637,25 +637,74 @@ function registerIPC() {
   import_electron.ipcMain.handle("settings.getDefaultStoragePath", () => wrap(() => getDefaultStoragePath()));
   import_electron.ipcMain.handle("print.listPrinters", async () => {
     try {
-      if (!mainWindow) {
-        log("[print.listPrinters] No main window");
-        return { success: true, data: [] };
+      log("[print.listPrinters] Starting printer detection...");
+      let printers = [];
+      if (mainWindow) {
+        try {
+          log("[print.listPrinters] Strategy 1: Electron getPrinters()...");
+          printers = await mainWindow.webContents.getPrinters();
+          log(`[print.listPrinters] Strategy 1 found ${printers.length} printer(s)`);
+          printers.forEach((p) => log(`  - ${p.name} (${p.displayName || "no display name"}) status=${p.status} isDefault=${p.isDefault}`));
+        } catch (e) {
+          log(`[print.listPrinters] Strategy 1 failed: ${e.message}`);
+        }
       }
-      log("[print.listPrinters] Calling mainWindow.webContents.getPrinters()...");
-      const printers = await mainWindow.webContents.getPrinters();
-      log(`[print.listPrinters] Found ${printers.length} printer(s):`);
-      printers.forEach((p) => log(`  - ${p.name} (${p.displayName || "no display name"}) status=${p.status} isDefault=${p.isDefault}`));
+      if (printers.length === 0 && process.platform === "win32") {
+        try {
+          log("[print.listPrinters] Strategy 2: PowerShell Get-Printer...");
+          const { execSync } = require("child_process");
+          const output = execSync(
+            'powershell -Command "Get-Printer | Select-Object Name, Shared, PortName | ConvertTo-Json"',
+            { timeout: 1e4, encoding: "utf8", windowsHide: true }
+          );
+          log(`[print.listPrinters] PowerShell output: ${output.substring(0, 500)}`);
+          const parsed = JSON.parse(output);
+          const psPrinters = Array.isArray(parsed) ? parsed : [parsed];
+          printers = psPrinters.map((p) => ({
+            name: p.Name,
+            displayName: p.Name,
+            isDefault: false,
+            status: 0,
+            isDefault: false
+          }));
+          log(`[print.listPrinters] Strategy 2 found ${printers.length} printer(s)`);
+        } catch (e) {
+          log(`[print.listPrinters] Strategy 2 failed: ${e.message}`);
+        }
+      }
+      if (printers.length === 0 && process.platform === "win32") {
+        try {
+          log("[print.listPrinters] Strategy 3: wmic printer get...");
+          const { execSync } = require("child_process");
+          const output = execSync(
+            "wmic printer get Name,Default /format:csv",
+            { timeout: 1e4, encoding: "utf8", windowsHide: true }
+          );
+          log(`[print.listPrinters] wmic output: ${output.substring(0, 500)}`);
+          const lines = output.split("\n").filter((l) => l.trim() && !l.includes("Node,"));
+          printers = lines.map((line) => {
+            const parts = line.split(",").map((s) => s.trim()).filter(Boolean);
+            if (parts.length >= 2) {
+              return { name: parts[1], displayName: parts[1], isDefault: parts[0] === "TRUE", status: 0 };
+            }
+            return null;
+          }).filter(Boolean);
+          log(`[print.listPrinters] Strategy 3 found ${printers.length} printer(s)`);
+        } catch (e) {
+          log(`[print.listPrinters] Strategy 3 failed: ${e.message}`);
+        }
+      }
       const result = printers.map((p) => ({
         id: p.name,
         name: p.displayName || p.name,
-        is_default: p.isDefault,
-        status: p.status,
-        is_connected: p.status === 0
-        // 0 = ready
+        is_default: p.isDefault || false,
+        status: p.status || 0,
+        is_connected: (p.status || 0) === 0
       }));
+      log(`[print.listPrinters] Final result: ${result.length} printer(s)`);
       return { success: true, data: result };
     } catch (e) {
-      log(`[print.listPrinters] Error: ${e.message}`);
+      log(`[print.listPrinters] Fatal error: ${e.message}`);
       log(`[print.listPrinters] Stack: ${e.stack}`);
       return { success: false, error: { code: "PRINTER_DETECT_FAILED", message: e.message } };
     }

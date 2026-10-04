@@ -198,9 +198,12 @@ export function PrinterPage() {
           <AlertCircle className="w-5 h-5 text-yellow-300 mt-0.5 shrink-0" />
           <div>
             <h4 className="font-semibold text-yellow-200 mb-1">Resilience Promise</h4>
-            <p className="text-sm text-silver-300 leading-relaxed">
+            <p className="text-sm text-silver-300 leading-relaxed mb-2">
               If the printer disconnects mid-event, ARAY will never lose a capture. Files save first,
               print jobs queue patiently, and you can reprint anything from the Gallery at any time.
+            </p>
+            <p className="text-xs text-silver-500">
+              <strong>Debug:</strong> Buka <code className="text-purple-haze-300">%APPDATA%/ARAY/aray-startup.log</code> untuk lihat detail detection (strategi 1/2/3).
             </p>
           </div>
         </div>
