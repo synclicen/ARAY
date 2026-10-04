@@ -392,13 +392,20 @@ export function BoothPage() {
           if (activeEvent) {
             let sessionId = (window as any).__aray_current_session_id
             if (!sessionId) {
+              console.log('[Booth] Creating new video session...')
               const sr = await window.aray.sessions.create(activeEvent.id, 'video', 1)
               if (sr.success) {
                 sessionId = (sr.data as any).id
                 ;(window as any).__aray_current_session_id = sessionId
+                console.log('[Booth] Video session created:', sessionId)
+              } else {
+                console.error('[Booth] Failed to create video session:', sr)
+                setError('Failed to create video session: ' + ((sr as any).error?.message || 'unknown'))
+                setPhase('error')
+                return
               }
             }
-            console.log('[Booth] Saving video...')
+            console.log('[Booth] Saving video, session:', sessionId, 'template:', template.id)
             const saveResult = await window.aray.media.saveVideo({
               event_id: activeEvent.id,
               session_id: sessionId,
@@ -413,7 +420,8 @@ export function BoothPage() {
               console.log('[Booth] Video saved successfully!')
             } else {
               console.error('[Booth] Save failed:', (saveResult as any).error)
-              setError('Failed to save video')
+              setError('Failed to save video: ' + ((saveResult as any).error?.message || 'unknown'))
+              setPhase('error')
             }
           }
         } catch (e: any) {

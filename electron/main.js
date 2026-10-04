@@ -176,7 +176,8 @@ function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
 function getVideoPath(event, sessionId, ext = "webm") {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
-  return path.join(eventPath, "Videos", "Original", `${eventName}.webm`);
+  const sid = (sessionId || "").slice(0, 8) || "nosession";
+  return path.join(eventPath, "Videos", "Original", `${eventName}_${sid}.${ext}`);
 }
 function getCompositePath(event, sessionId) {
   const eventPath = ensureEventStorage(event);
@@ -527,13 +528,28 @@ function registerIPC() {
     return media;
   }));
   import_electron.ipcMain.handle("media.saveVideo", (_e, payload) => wrap(() => {
+    log(`[media.saveVideo] Request: event=${payload.event_id}, session=${payload.session_id}, mime=${payload.mime_type}, style=${payload.video_style}`);
     const event = getEventById(payload.event_id);
-    if (!event) throw new Error("Event not found");
+    if (!event) {
+      log(`[media.saveVideo] Event not found: ${payload.event_id}`);
+      throw new Error("Event not found");
+    }
     ensureEventStorage(event);
+    if (!payload.session_id) {
+      log(`[media.saveVideo] ERROR: session_id is missing`);
+      throw new Error("session_id is required for video save");
+    }
     const ext = payload.mime_type === "video/mp4" ? "mp4" : "webm";
     const videoPath = getVideoPath(event, payload.session_id, ext);
+    log(`[media.saveVideo] Saving to: ${videoPath}`);
     const base64Data = payload.video_base64.replace(/^data:video\/\w+;base64,/, "");
-    fs.writeFileSync(videoPath, Buffer.from(base64Data, "base64"));
+    const buffer = Buffer.from(base64Data, "base64");
+    log(`[media.saveVideo] Video buffer: ${buffer.length} bytes`);
+    if (buffer.length === 0) {
+      log(`[media.saveVideo] ERROR: video buffer is empty`);
+      throw new Error("Video buffer is empty");
+    }
+    fs.writeFileSync(videoPath, buffer);
     const checksum = calculateChecksum(videoPath);
     const media = createMedia({
       event_id: payload.event_id,
@@ -543,7 +559,7 @@ function registerIPC() {
       thumbnail_path: null,
       checksum
     });
-    log(`Video saved: ${path.basename(videoPath)}`);
+    log(`[media.saveVideo] Video saved: ${path.basename(videoPath)} (media id: ${media.id})`);
     const settings = getSettings();
     if (settings.auto_backup && settings.backup_folder) {
       const r = backupFile(videoPath, path.basename(videoPath));
