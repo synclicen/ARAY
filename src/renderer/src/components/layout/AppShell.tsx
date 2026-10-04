@@ -85,10 +85,11 @@ export function AppShell({ children }: AppShellProps) {
     }
 
     // In kiosk mode, hide navigation. Hanya booth yang tampil.
+    // v4.3.9: Footer tetap tampil di kiosk mode (clean view).
     return (
       <>
-        <div className="h-full w-full relative">
-          {children}
+        <div className="h-full w-full relative flex flex-col">
+          <div className="flex-1 overflow-hidden">{children}</div>
           {/* Kiosk exit button — kecil di pojok kanan atas.
               Klik → password modal (jika password diset) atau langsung exit. */}
           <button
@@ -98,6 +99,18 @@ export function AppShell({ children }: AppShellProps) {
           >
             <X className="w-4 h-4 text-silver-300" />
           </button>
+          {/* Footer — tetap tampil di kiosk mode */}
+          <footer className="h-10 px-2 flex items-center justify-center gap-1.5 border-t border-silver-300/10 bg-black/40 flex-wrap shrink-0">
+            <span className="text-[10px] text-silver-600">© 2026 ·</span>
+            <span className="text-[10px] text-silver-500">Made by</span>
+            <span className="text-[10px] text-gold-400 font-semibold">Fajrianor</span>
+            <span className="text-[10px] text-silver-600">-</span>
+            <span className="text-[10px] text-purple-haze-300 font-medium">ARAY: Are You Ready? and....Yapping!</span>
+            <span className="text-[10px] text-silver-600">-</span>
+            <span className="text-[10px] text-silver-400">Pusat Humas dan Keterbukaan Informasi</span>
+            <span className="text-[10px] text-silver-600">·</span>
+            <span className="text-[10px] text-silver-300">UIN Antasari Banjarmasin</span>
+          </footer>
         </div>
 
         {/* Password modal untuk exit kiosk */}
@@ -219,12 +232,19 @@ export function AppShell({ children }: AppShellProps) {
             <div className="text-xs text-silver-500">ARAY v1.0</div>
           </div>
         </header>
-        <div className="h-[calc(100%-3.5rem-2rem)] overflow-y-auto">{children}</div>
-        {/* v4.3.8: Footer — © 2026 · Made by Fajrianor */}
-        <footer className="h-8 px-6 flex items-center justify-center border-t border-silver-300/10 bg-surface-raised/40">
-          <span className="text-xs text-silver-500">
-            © 2026 · Made by <span className="text-silver-300 font-medium">Fajrianor</span>
-          </span>
+        <div className="h-[calc(100%-3.5rem-2.5rem)] overflow-y-auto">{children}</div>
+        {/* v4.3.9: Footer — © 2026 · Made by Fajrianor - ARAY: ... - Pusat Humas ...
+            Multi-phrase dengan style berbeda, fit 9:16 vertical. */}
+        <footer className="h-10 px-2 flex items-center justify-center gap-1.5 border-t border-silver-300/10 bg-surface-raised/40 flex-wrap">
+          <span className="text-[10px] text-silver-600">© 2026 ·</span>
+          <span className="text-[10px] text-silver-500">Made by</span>
+          <span className="text-[10px] text-gold-400 font-semibold">Fajrianor</span>
+          <span className="text-[10px] text-silver-600">-</span>
+          <span className="text-[10px] text-purple-haze-300 font-medium">ARAY: Are You Ready? and....Yapping!</span>
+          <span className="text-[10px] text-silver-600">-</span>
+          <span className="text-[10px] text-silver-400">Pusat Humas dan Keterbukaan Informasi</span>
+          <span className="text-[10px] text-silver-600">·</span>
+          <span className="text-[10px] text-silver-300">UIN Antasari Banjarmasin</span>
         </footer>
       </main>
     </div>

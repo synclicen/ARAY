@@ -1426,6 +1426,22 @@ export function BoothPage() {
           </button>
         </div>
       )}
+
+      {/* v4.3.9: Footer — tampil di booth fullscreen mode juga.
+          Multi-phrase dengan style berbeda, fit 9:16 vertical. */}
+      {fullscreenBooth && (
+        <footer className="absolute bottom-0 left-0 right-0 h-10 px-2 flex items-center justify-center gap-1.5 bg-black/40 flex-wrap z-20">
+          <span className="text-[10px] text-silver-600">© 2026 ·</span>
+          <span className="text-[10px] text-silver-500">Made by</span>
+          <span className="text-[10px] text-gold-400 font-semibold">Fajrianor</span>
+          <span className="text-[10px] text-silver-600">-</span>
+          <span className="text-[10px] text-purple-haze-300 font-medium">ARAY: Are You Ready? and....Yapping!</span>
+          <span className="text-[10px] text-silver-600">-</span>
+          <span className="text-[10px] text-silver-400">Pusat Humas dan Keterbukaan Informasi</span>
+          <span className="text-[10px] text-silver-600">·</span>
+          <span className="text-[10px] text-silver-300">UIN Antasari Banjarmasin</span>
+        </footer>
+      )}
     </div>
   )
 }
