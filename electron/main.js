@@ -619,18 +619,106 @@ function registerIPC() {
   import_electron.ipcMain.handle("settings.get", () => wrap(() => getSettings()));
   import_electron.ipcMain.handle("settings.update", (_e, partial) => wrap(() => updateSettings(partial)));
   import_electron.ipcMain.handle("settings.getDefaultStoragePath", () => wrap(() => getDefaultStoragePath()));
-  import_electron.ipcMain.handle("print.queue", (_e, mediaId, _pn, copies) => wrap(() => ({
-    id: crypto.randomUUID(),
-    media_id: mediaId,
-    printer_name: _pn || "Default",
-    paper_size: "4x6",
-    copies: copies || 1,
-    status: "queued",
-    created_at: (/* @__PURE__ */ new Date()).toISOString(),
-    completed_at: null,
-    error: null
-  })));
-  import_electron.ipcMain.handle("print.listPrinters", () => wrap(() => []));
+  import_electron.ipcMain.handle("print.listPrinters", () => {
+    try {
+      if (!mainWindow) {
+        log("[print.listPrinters] No main window");
+        return wrap(() => []);
+      }
+      const printers = mainWindow.webContents.getPrinters();
+      log(`[print.listPrinters] Found ${printers.length} printer(s):`);
+      printers.forEach((p) => log(`  - ${p.name} (${p.displayName || "no display name"}) status=${p.status} isDefault=${p.isDefault}`));
+      const result = printers.map((p) => ({
+        id: p.name,
+        name: p.displayName || p.name,
+        is_default: p.isDefault,
+        status: p.status,
+        is_connected: p.status === 0
+        // 0 = ready
+      }));
+      return wrap(() => result);
+    } catch (e) {
+      log(`[print.listPrinters] Error: ${e.message}`);
+      return wrap(() => []);
+    }
+  });
+  import_electron.ipcMain.handle("print.queue", async (_e, mediaId, printerName, copies) => {
+    try {
+      log(`[print.queue] Request: mediaId=${mediaId}, printer=${printerName || "default"}, copies=${copies || 1}`);
+      const db = loadDB();
+      const media = db.media.find((m) => m.id === mediaId);
+      if (!media) {
+        log(`[print.queue] Media not found: ${mediaId}`);
+        return { success: false, error: "Media not found" };
+      }
+      const filePath = media.processed_path || media.original_path;
+      if (!filePath || !fs.existsSync(filePath)) {
+        log(`[print.queue] File not found: ${filePath}`);
+        return { success: false, error: "File not found: " + filePath };
+      }
+      log(`[print.queue] Printing file: ${filePath}`);
+      const buffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase().slice(1);
+      const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+      const base64 = buffer.toString("base64");
+      const dataUrl = `data:${mime};base64,${base64}`;
+      const { BrowserWindow: BrowserWindow2 } = require("electron");
+      const printWin = new BrowserWindow2({
+        show: false,
+        width: 800,
+        height: 600,
+        webPreferences: { offscreen: true }
+      });
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { margin: 0; }
+  body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+</style>
+</head>
+<body>
+  <img src="${dataUrl}" />
+</body>
+</html>`;
+      await printWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
+      const printOptions = {
+        silent: true,
+        printBackground: true,
+        copies: copies || 1
+      };
+      if (printerName && printerName !== "Default") {
+        printOptions.deviceName = printerName;
+      }
+      log(`[print.queue] Print options:`, JSON.stringify(printOptions));
+      return new Promise((resolve2) => {
+        printWin.webContents.print(printOptions, (success, failureReason) => {
+          log(`[print.queue] Print callback: success=${success}, reason=${failureReason || "none"}`);
+          printWin.close();
+          if (success) {
+            resolve2(wrap(() => ({
+              id: crypto.randomUUID(),
+              media_id: mediaId,
+              printer_name: printerName || "Default",
+              paper_size: "4x6",
+              copies: copies || 1,
+              status: "printed",
+              created_at: (/* @__PURE__ */ new Date()).toISOString(),
+              completed_at: (/* @__PURE__ */ new Date()).toISOString(),
+              error: null
+            })));
+          } else {
+            resolve2({ success: false, error: failureReason || "Print failed" });
+          }
+        });
+      });
+    } catch (e) {
+      log(`[print.queue] Error: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  });
   import_electron.ipcMain.handle("googleDrive.connect", () => wrap(async () => {
     const result = await import_electron.dialog.showOpenDialog({
       title: "Select your Google Drive folder (or any cloud sync folder)",

@@ -1,7 +1,65 @@
-import { Printer as PrinterIcon, Plus, Settings as SettingsIcon, AlertCircle } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Printer as PrinterIcon, RefreshCw, Check, AlertCircle, Printer as PrinterLucide } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayLogo } from '../components/ui'
+import { useSettingsStore } from '../stores/settings'
+
+interface PrinterInfo {
+  id: string
+  name: string
+  is_default: boolean
+  status: number
+  is_connected: boolean
+}
 
 export function PrinterPage() {
+  const { settings, updateSettings } = useSettingsStore()
+  const [printers, setPrinters] = useState<PrinterInfo[]>([])
+  const [loading, setLoading] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<string | null>(null)
+
+  const detectPrinters = async () => {
+    setLoading(true)
+    setTestResult(null)
+    try {
+      const result = await window.aray.print.listPrinters()
+      if (result?.success) {
+        setPrinters(result.data as PrinterInfo[])
+      }
+    } catch (e: any) {
+      console.error('Detect printers failed:', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    detectPrinters()
+  }, [])
+
+  const selectPrinter = async (printer: PrinterInfo) => {
+    await updateSettings({ printer_name: printer.name })
+  }
+
+  const testPrint = async () => {
+    if (!settings?.printer_name) return
+    setTesting(true)
+    setTestResult(null)
+    try {
+      // Print a test page — find any media, or create a simple test
+      const result = await window.aray.print.queue('test', settings.printer_name, 1)
+      if (result?.success) {
+        setTestResult('✓ Test print berhasil dikirim ke ' + settings.printer_name)
+      } else {
+        setTestResult('✗ Test print gagal: ' + (result as any)?.error || 'unknown error')
+      }
+    } catch (e: any) {
+      setTestResult('✗ Error: ' + e.message)
+    } finally {
+      setTesting(false)
+    }
+  }
+
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between">
@@ -11,41 +69,115 @@ export function PrinterPage() {
             Print memories straight from the booth. <span className="italic">Say cheese!</span>
           </p>
         </div>
-        <ArayButton variant="gold" icon={<Plus className="w-4 h-4" />}>
-          Add Printer
+        <ArayButton
+          variant="silver"
+          icon={<RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />}
+          onClick={detectPrinters}
+          disabled={loading}
+        >
+          {loading ? 'Detecting...' : 'Refresh'}
         </ArayButton>
       </div>
 
-      <ArayCard className="p-8 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-purple-haze-500/15 flex items-center justify-center mx-auto mb-4">
-          <PrinterIcon className="w-8 h-8 text-purple-haze-200" />
+      {/* Printer list */}
+      <ArayCard className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold">Available Printers</h3>
+          {printers.length > 0 && (
+            <ArayBadge variant="silver">{printers.length} found</ArayBadge>
+          )}
         </div>
-        <h3 className="text-xl font-semibold mb-2">No printers configured</h3>
-        <p className="text-silver-400 text-sm mb-6 max-w-md mx-auto">
-          ARAY supports any Windows printer. Add one to enable auto-print and the print queue. Even
-          without a printer, all captures are saved safely to local storage.
-        </p>
-        <ArayButton variant="primary" icon={<SettingsIcon className="w-4 h-4" />}>
-          Detect Printers
-        </ArayButton>
+
+        {printers.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 rounded-2xl bg-purple-haze-500/15 flex items-center justify-center mx-auto mb-4">
+              <PrinterIcon className="w-8 h-8 text-purple-haze-200" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">
+              {loading ? 'Mendeteksi printer...' : 'No printers detected'}
+            </h3>
+            <p className="text-silver-400 text-sm mb-4 max-w-md mx-auto">
+              {loading
+                ? 'Tunggu sebentar, sedang scan printer yang terhubung...'
+                : 'Pastikan printer terhubung ke komputer dan driver terinstall. Klik Refresh untuk scan ulang.'}
+            </p>
+            {!loading && (
+              <ArayButton variant="primary" icon={<RefreshCw className="w-4 h-4" />} onClick={detectPrinters}>
+                Detect Printers
+              </ArayButton>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {printers.map((p) => (
+              <div
+                key={p.id}
+                className={`flex items-center justify-between p-4 rounded-lg border transition-all cursor-pointer ${
+                  settings?.printer_name === p.name
+                    ? 'bg-gold-400/10 border-gold-400/40 shadow-glow-gold'
+                    : 'bg-surface-elevated/40 border-silver-300/10 hover:border-purple-haze-500/30'
+                }`}
+                onClick={() => selectPrinter(p)}
+              >
+                <div className="flex items-center gap-3">
+                  <PrinterLucide className={`w-5 h-5 ${
+                    settings?.printer_name === p.name ? 'text-gold-400' : 'text-silver-400'
+                  }`} />
+                  <div>
+                    <div className="text-sm font-medium text-silver-100">{p.name}</div>
+                    <div className="text-xs text-silver-500">
+                      {p.is_default ? 'Default printer · ' : ''}
+                      Status: {p.is_connected ? 'Ready' : 'Offline'}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {p.is_default && <ArayBadge variant="purple">Default</ArayBadge>}
+                  {settings?.printer_name === p.name && (
+                    <ArayBadge variant="success">
+                      <Check className="w-3 h-3" /> Selected
+                    </ArayBadge>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </ArayCard>
 
-      <ArayCard className="p-6">
-        <h3 className="font-semibold mb-4">Print Queue</h3>
-        <div className="space-y-2">
-          {['Queued', 'Printing', 'Printed', 'Failed'].map((status) => (
-            <div
-              key={status}
-              className="flex items-center justify-between p-3 rounded-lg bg-surface-elevated/40"
-            >
-              <span className="text-sm text-silver-300">{status}</span>
-              <ArayBadge variant={status === 'Printed' ? 'success' : status === 'Failed' ? 'danger' : 'silver'}>
-                0 jobs
-              </ArayBadge>
+      {/* Selected printer + test print */}
+      {settings?.printer_name && (
+        <ArayCard className="p-6">
+          <h3 className="font-semibold mb-4">Selected Printer</h3>
+          <div className="flex items-center justify-between p-4 rounded-lg bg-surface-elevated/40 mb-4">
+            <div className="flex items-center gap-3">
+              <PrinterLucide className="w-5 h-5 text-gold-400" />
+              <div>
+                <div className="text-sm font-medium text-silver-100">{settings.printer_name}</div>
+                <div className="text-xs text-silver-500">Active printer untuk booth</div>
+              </div>
             </div>
-          ))}
-        </div>
-      </ArayCard>
+          </div>
+          <ArayButton
+            variant="gold"
+            icon={<PrinterLucide className="w-4 h-4" />}
+            onClick={testPrint}
+            disabled={testing}
+            className="w-full"
+          >
+            {testing ? 'Printing test page...' : 'Test Print'}
+          </ArayButton>
+          {testResult && (
+            <div className={`mt-3 p-3 rounded-lg text-sm ${
+              testResult.startsWith('✓')
+                ? 'bg-green-500/10 border border-green-500/20 text-green-300'
+                : 'bg-red-500/10 border border-red-500/20 text-red-300'
+            }`}>
+              {testResult}
+            </div>
+          )}
+        </ArayCard>
+      )}
 
       <ArayCard className="p-6 bg-gradient-to-br from-yellow-500/5 to-transparent border-yellow-500/20">
         <div className="flex items-start gap-3">

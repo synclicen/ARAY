@@ -1236,7 +1236,15 @@ export function BoothPage() {
             </div>
 
             <div className="flex items-center gap-3 flex-wrap justify-center">
-              <ArayButton variant="silver" icon={<Printer className="w-4 h-4" />} onClick={() => window.aray.print.queue(compositeMediaId ?? capturedShots[0]?.mediaId ?? '')}>
+              <ArayButton
+                variant="silver"
+                icon={<Printer className="w-4 h-4" />}
+                onClick={async () => {
+                  const mediaId = compositeMediaId ?? capturedShots[0]?.mediaId ?? ''
+                  if (!mediaId) return
+                  await window.aray.print.queue(mediaId, settings?.printer_name || undefined, 1)
+                }}
+              >
                 Print
               </ArayButton>
               {settings?.share_qr_enabled && settings?.share_qr_link && (
