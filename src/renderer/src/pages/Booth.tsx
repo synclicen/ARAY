@@ -287,28 +287,60 @@ export function BoothPage() {
   const rafRecordRef = useRef<number | null>(null)
   const recordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop()
+  // v4.5.0: cleanupAllRecording — bersihkan SEMUA refs/timers dari recording sebelumnya.
+  // Dipanggil sebelum startRecording dan saat Retake/Done untuk prevent:
+  // - Double countdown (timer lama masih running)
+  // - Flicker (recordingTimer interval masih jalan)
+  // - Draw loop conflict (rafRecordRef lama masih jalan)
+  // - Video tidak tersimpan (MediaRecorder state conflict)
+  const cleanupAllRecording = useCallback(() => {
+    console.log('[Booth] cleanupAllRecording — clearing all refs/timers')
+    // Stop MediaRecorder
+    if (mediaRecorderRef.current) {
+      try {
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop()
+        }
+      } catch (e) {
+        console.warn('[Booth] Error stopping MediaRecorder:', e)
+      }
+      mediaRecorderRef.current = null
     }
+    // Cancel draw loop
     if (rafRecordRef.current) {
       cancelAnimationFrame(rafRecordRef.current)
       rafRecordRef.current = null
     }
+    // Clear recording timer (interval yang update recordingTime)
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current)
       recordingTimerRef.current = null
     }
+    // Clear auto-stop timeout
     if (recordTimeoutRef.current) {
       clearTimeout(recordTimeoutRef.current)
       recordTimeoutRef.current = null
     }
+    // Reset state
     setIsRecording(false)
+    setRecordingTime(0)
+    setVideoDuration(0)
+    setCountdown(0)
+    // Clear recorded chunks
+    recordedChunksRef.current = []
   }, [])
+
+  const stopRecording = useCallback(() => {
+    cleanupAllRecording()
+  }, [cleanupAllRecording])
 
   const startRecording = useCallback(() => {
     const video = videoRef.current
     if (!video || !streamRef.current) return
+
+    // v4.5.0: Cleanup any leftover recording state from previous session.
+    // Ini prevent: double countdown, flicker, draw loop conflict, video tidak tersimpan.
+    cleanupAllRecording()
 
     // Get selected video template
     const template = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
@@ -468,7 +500,7 @@ export function BoothPage() {
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia, selectedVideoTemplate, aspectRatio])
+  }, [activeEvent, addMedia, selectedVideoTemplate, aspectRatio, cleanupAllRecording])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
@@ -1343,6 +1375,7 @@ export function BoothPage() {
                 variant="ghost"
                 icon={<RotateCcw className="w-4 h-4" />}
                 onClick={() => {
+                  cleanupAllRecording()  // v4.5.0: clear all recording state
                   setCapturedShots([])
                   setCurrentShot(1)
                   setCompositeUrl(null)
@@ -1357,6 +1390,7 @@ export function BoothPage() {
                 variant="gold"
                 icon={<Sparkles className="w-4 h-4" />}
                 onClick={() => {
+                  cleanupAllRecording()  // v4.5.0: clear all recording state
                   setCapturedShots([])
                   setCurrentShot(1)
                   setCompositeUrl(null)
