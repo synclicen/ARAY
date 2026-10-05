@@ -96,9 +96,8 @@ function buildEventFolderName(event: any): string {
 function ensureEventStorage(event: any): string {
   // If event already has a storage_path and it exists, use it directly
   if (event.storage_path && fs.existsSync(event.storage_path)) {
-    // Make sure subdirs exist
-    for (const sub of ['Photos/Original', 'Photos/Edited', 'Photos/Prints', 'Photos/Thumbnails',
-      'Videos/Original', 'Videos/Edited', 'GIF', 'Boomerang', '360', 'Metadata']) {
+    // v4.4.8: Simplified — hanya Photos/ dan Videos/ (sama dengan backup structure)
+    for (const sub of ['Photos', 'Videos']) {
       const p = path.join(event.storage_path, sub)
       if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
     }
@@ -108,8 +107,8 @@ function ensureEventStorage(event: any): string {
   // Otherwise compute from storage base + event name
   const base = ensureStoragePath()
   const eventPath = path.join(base, 'Events', buildEventFolderName(event))
-  for (const sub of ['Photos/Original', 'Photos/Edited', 'Photos/Prints', 'Photos/Thumbnails',
-    'Videos/Original', 'Videos/Edited', 'GIF', 'Boomerang', '360', 'Metadata']) {
+  // v4.4.8: Simplified — hanya Photos/ dan Videos/
+  for (const sub of ['Photos', 'Videos']) {
     const p = path.join(eventPath, sub)
     if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true })
   }
@@ -126,36 +125,34 @@ function ensureEventStorage(event: any): string {
 
 function getPhotoPaths(event: any, sessionId: string, shotNumber: number, ext = 'jpg') {
   const eventPath = ensureEventStorage(event)
+  // v4.4.8: Langsung ke Photos/ (tidak ada subfolder Original/Thumbnails)
   const eventDir = path.join(eventPath, 'Photos')
-  // v4.3.4: Format filename = EventName_YYYY-MM-DD_001
-  // (event name + date + sequence number, no random UUID/sessionId)
   const eventName = sanitizeFilename(event.name || 'ARAY')
   const dateStr = getDateStr(event)
-  const seq = getSequenceNumber(eventPath, 'Photos/Original', eventName, dateStr, ext)
+  const seq = getSequenceNumber(eventPath, 'Photos', eventName, dateStr, ext)
   const filename = `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}`
   return {
-    original: path.join(eventDir, 'Original', `${filename}.${ext}`),
-    thumbnail: path.join(eventDir, 'Thumbnails', `${filename}_thumb.${ext}`)
+    original: path.join(eventDir, `${filename}.${ext}`),
+    thumbnail: path.join(eventDir, `${filename}.${ext}`)  // v4.4.8: thumbnail = original (sama folder)
   }
 }
 
 function getVideoPath(event: any, sessionId: string, ext = 'webm'): string {
   const eventPath = ensureEventStorage(event)
   const eventName = sanitizeFilename(event.name || 'ARAY')
-  // v4.3.4: Format filename = EventName_YYYY-MM-DD_001.webm
-  // (event name + date + sequence number, no random sessionId)
   const dateStr = getDateStr(event)
-  const seq = getSequenceNumber(eventPath, 'Videos/Original', eventName, dateStr, ext)
-  return path.join(eventPath, 'Videos', 'Original', `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.${ext}`)
+  // v4.4.8: Langsung ke Videos/ (tidak ada subfolder Original)
+  const seq = getSequenceNumber(eventPath, 'Videos', eventName, dateStr, ext)
+  return path.join(eventPath, 'Videos', `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.${ext}`)
 }
 
 function getCompositePath(event: any, sessionId: string): string {
   const eventPath = ensureEventStorage(event)
   const eventName = sanitizeFilename(event.name || 'ARAY')
-  // v4.3.4: Format filename = EventName_YYYY-MM-DD_001.jpg
   const dateStr = getDateStr(event)
-  const seq = getSequenceNumber(eventPath, 'Photos/Prints', eventName, dateStr, 'jpg')
-  return path.join(eventPath, 'Photos', 'Prints', `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.jpg`)
+  // v4.4.8: Langsung ke Photos/ (tidak ada subfolder Prints)
+  const seq = getSequenceNumber(eventPath, 'Photos', eventName, dateStr, 'jpg')
+  return path.join(eventPath, 'Photos', `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.jpg`)
 }
 
 // v4.3.4: Helper — dapatkan date string YYYY-MM-DD dari event atau today
@@ -255,8 +252,8 @@ function getBackupStats() {
   } catch (e: any) { return { connected: false, totalFiles: 0, folder: null } }
 }
 
-// v4.4.7: Backup struktur disederhanakan — hanya 2 folder per event:
-// {backupFolder}/Events/{EventName}/Photos/  → semua file foto (composite + raw)
+// v4.4.8: Backup struktur sama dengan local storage — hanya Photos/ dan Videos/
+// {backupFolder}/Events/{EventName}/Photos/  → semua file foto
 // {backupFolder}/Events/{EventName}/Videos/  → semua file video
 function backupFile(localPath: string, filename?: string) {
   const f = getBackupFolder()
@@ -264,12 +261,11 @@ function backupFile(localPath: string, filename?: string) {
   try {
     if (!fs.existsSync(localPath)) return { success: false, copied: false, message: 'Local not found' }
 
-    const normalizedLocal = localPath.replace(/\//g, path.sep)
     const basename = path.basename(localPath)
+    const ext = path.extname(localPath).toLowerCase()
 
-    // v4.4.7: Cari nama event di path. Event folder = folder setelah "Events\"
-    // localPath = ...\ARAY\Events\Wisuda-61\Photos\Prints\file.jpg
-    //                        ^^^^^^^^^^ ini nama event
+    // v4.4.8: Cari nama event di path
+    const normalizedLocal = localPath.replace(/\//g, path.sep)
     let eventName = 'Unknown-Event'
     const eventsIdx = normalizedLocal.indexOf(path.sep + 'Events' + path.sep)
     if (eventsIdx !== -1) {
@@ -280,20 +276,17 @@ function backupFile(localPath: string, filename?: string) {
       }
     }
 
-    // Tentukan folder: Photos atau Videos berdasarkan path
-    const isVideo = normalizedLocal.toLowerCase().includes(path.sep + 'videos' + path.sep)
+    // v4.4.8: Tentukan folder berdasarkan extension (bukan path)
+    const isVideo = ['.webm', '.mp4', '.mov', '.avi'].includes(ext)
     const subFolder = isVideo ? 'Videos' : 'Photos'
 
-    // Dest: {backupFolder}/Events/{EventName}/{Photos|Videos}/{filename}
     const dest = path.join(f, 'Events', eventName, subFolder, basename)
     const destDir = path.dirname(dest)
 
-    // Buat folder jika belum ada
     if (!fs.existsSync(destDir)) {
       fs.mkdirSync(destDir, { recursive: true })
     }
 
-    // Skip jika sudah ada dan ukuran sama
     if (fs.existsSync(dest)) {
       if (fs.statSync(localPath).size === fs.statSync(dest).size) {
         return { success: true, copied: false, message: 'Already backed up' }

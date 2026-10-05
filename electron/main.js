@@ -421,18 +421,7 @@ function buildEventFolderName(event) {
 }
 function ensureEventStorage(event) {
   if (event.storage_path && fs2.existsSync(event.storage_path)) {
-    for (const sub of [
-      "Photos/Original",
-      "Photos/Edited",
-      "Photos/Prints",
-      "Photos/Thumbnails",
-      "Videos/Original",
-      "Videos/Edited",
-      "GIF",
-      "Boomerang",
-      "360",
-      "Metadata"
-    ]) {
+    for (const sub of ["Photos", "Videos"]) {
       const p = path2.join(event.storage_path, sub);
       if (!fs2.existsSync(p)) fs2.mkdirSync(p, { recursive: true });
     }
@@ -440,18 +429,7 @@ function ensureEventStorage(event) {
   }
   const base = ensureStoragePath();
   const eventPath = path2.join(base, "Events", buildEventFolderName(event));
-  for (const sub of [
-    "Photos/Original",
-    "Photos/Edited",
-    "Photos/Prints",
-    "Photos/Thumbnails",
-    "Videos/Original",
-    "Videos/Edited",
-    "GIF",
-    "Boomerang",
-    "360",
-    "Metadata"
-  ]) {
+  for (const sub of ["Photos", "Videos"]) {
     const p = path2.join(eventPath, sub);
     if (!fs2.existsSync(p)) fs2.mkdirSync(p, { recursive: true });
   }
@@ -469,26 +447,27 @@ function getPhotoPaths(event, sessionId, shotNumber, ext = "jpg") {
   const eventDir = path2.join(eventPath, "Photos");
   const eventName = sanitizeFilename(event.name || "ARAY");
   const dateStr = getDateStr(event);
-  const seq = getSequenceNumber(eventPath, "Photos/Original", eventName, dateStr, ext);
+  const seq = getSequenceNumber(eventPath, "Photos", eventName, dateStr, ext);
   const filename = `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}`;
   return {
-    original: path2.join(eventDir, "Original", `${filename}.${ext}`),
-    thumbnail: path2.join(eventDir, "Thumbnails", `${filename}_thumb.${ext}`)
+    original: path2.join(eventDir, `${filename}.${ext}`),
+    thumbnail: path2.join(eventDir, `${filename}.${ext}`)
+    // v4.4.8: thumbnail = original (sama folder)
   };
 }
 function getVideoPath(event, sessionId, ext = "webm") {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
   const dateStr = getDateStr(event);
-  const seq = getSequenceNumber(eventPath, "Videos/Original", eventName, dateStr, ext);
-  return path2.join(eventPath, "Videos", "Original", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.${ext}`);
+  const seq = getSequenceNumber(eventPath, "Videos", eventName, dateStr, ext);
+  return path2.join(eventPath, "Videos", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.${ext}`);
 }
 function getCompositePath(event, sessionId) {
   const eventPath = ensureEventStorage(event);
   const eventName = sanitizeFilename(event.name || "ARAY");
   const dateStr = getDateStr(event);
-  const seq = getSequenceNumber(eventPath, "Photos/Prints", eventName, dateStr, "jpg");
-  return path2.join(eventPath, "Photos", "Prints", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.jpg`);
+  const seq = getSequenceNumber(eventPath, "Photos", eventName, dateStr, "jpg");
+  return path2.join(eventPath, "Photos", `${eventName}_${dateStr}_${String(seq).padStart(3, "0")}.jpg`);
 }
 function getDateStr(event) {
   if (event.event_date) {
@@ -598,8 +577,9 @@ function backupFile(localPath, filename) {
   if (!f) return { success: false, copied: false, message: "No backup folder" };
   try {
     if (!fs2.existsSync(localPath)) return { success: false, copied: false, message: "Local not found" };
-    const normalizedLocal = localPath.replace(/\//g, path2.sep);
     const basename2 = path2.basename(localPath);
+    const ext = path2.extname(localPath).toLowerCase();
+    const normalizedLocal = localPath.replace(/\//g, path2.sep);
     let eventName = "Unknown-Event";
     const eventsIdx = normalizedLocal.indexOf(path2.sep + "Events" + path2.sep);
     if (eventsIdx !== -1) {
@@ -609,7 +589,7 @@ function backupFile(localPath, filename) {
         eventName = afterEvents.substring(0, nextSep);
       }
     }
-    const isVideo = normalizedLocal.toLowerCase().includes(path2.sep + "videos" + path2.sep);
+    const isVideo = [".webm", ".mp4", ".mov", ".avi"].includes(ext);
     const subFolder = isVideo ? "Videos" : "Photos";
     const dest = path2.join(f, "Events", eventName, subFolder, basename2);
     const destDir = path2.dirname(dest);
