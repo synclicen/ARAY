@@ -628,7 +628,8 @@ export function BoothPage() {
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
   useEffect(() => {
-    if (phase !== 'preview' || !settings?.palm_trigger) return
+    // v4.5.4: Don't activate palm trigger during recording — prevent re-trigger
+    if (phase !== 'preview' || !settings?.palm_trigger || isRecording) return
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -700,7 +701,7 @@ export function BoothPage() {
         setPalmState('none')
       }
     }
-  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity])
+  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording])
 
   // No active event
   if (!activeEvent) {
@@ -1133,11 +1134,11 @@ export function BoothPage() {
                   </div>
                 </div>
 
-                {/* v4.5.3: Big "RECORDING" overlay di tengah bawah — jelas sedang direkam */}
-                <div className="absolute bottom-32 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+                {/* v4.5.4: Big "RECORDING" overlay di tengah — tidak tertumpuk dengan shutter */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
                   <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 0.9, scale: 1 }}
                     className="flex items-center gap-3 bg-red-600/80 backdrop-blur-sm rounded-full px-8 py-3 shadow-2xl"
                   >
                     <div className="w-4 h-4 rounded-full bg-white animate-pulse" />
