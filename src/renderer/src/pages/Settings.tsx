@@ -17,7 +17,7 @@ import { useSettingsStore } from '../stores/settings'
 import { VIDEO_TEMPLATES } from '../services/video-templates'
 
 export function SettingsPage() {
-  const { settings, storageInfo, updateSettings, setStoragePath, loadStorageInfo } = useSettingsStore()
+  const { settings, storageInfo, updateSettings, setStoragePath, loadStorageInfo, loadSettings } = useSettingsStore()
   const [busy, setBusy] = useState(false)
 
   if (!settings) return null
@@ -255,10 +255,35 @@ export function SettingsPage() {
 
       {/* Google Drive */}
       <ArayCard className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <Cloud className="w-5 h-5 text-purple-haze-300" />
-          <h3 className="font-semibold">Google Drive</h3>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Cloud className="w-5 h-5 text-purple-haze-300" />
+            <h3 className="font-semibold">Google Drive</h3>
+          </div>
+          {/* v4.4.5: Connect/Disconnect button di Settings page */}
+          {!settings.google_drive_connected ? (
+            <ArayButton variant="silver" onClick={async () => {
+              const result = await window.aray.googleDrive.connect()
+              if (result?.connected) {
+                await loadSettings()
+              }
+            }}>
+              Connect
+            </ArayButton>
+          ) : (
+            <ArayButton variant="ghost" onClick={async () => {
+              await window.aray.googleDrive.disconnect()
+              await loadSettings()
+            }}>
+              Disconnect
+            </ArayButton>
+          )}
         </div>
+        {settings.google_drive_connected && settings.backup_folder && (
+          <div className="mb-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-xs text-green-300">
+            <strong>Connected:</strong> {settings.backup_folder}
+          </div>
+        )}
         <div className="space-y-4">
           <SettingRow
             icon={<Cloud className="w-4 h-4" />}

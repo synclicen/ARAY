@@ -17,7 +17,7 @@ import { useSettingsStore } from '../stores/settings'
 
 export function SyncCenterPage() {
   const { stats, loadStats } = useMediaStore()
-  const { settings } = useSettingsStore()
+  const { settings, loadSettings } = useSettingsStore()
   const [syncing, setSyncing] = useState(false)
 
   useEffect(() => {
@@ -93,11 +93,20 @@ export function SyncCenterPage() {
             </p>
           </div>
           <div className="flex flex-col gap-2">
-            <ArayButton variant="silver" onClick={() => window.aray.googleDrive.connect()}>
+            <ArayButton variant="silver" onClick={async () => {
+              const result = await window.aray.googleDrive.connect()
+              if (result?.connected) {
+                // v4.4.5: Refresh settings store agar google_drive_connected update
+                await loadSettings()
+              }
+            }}>
               {settings?.google_drive_connected ? 'Manage' : 'Connect'}
             </ArayButton>
             {settings?.google_drive_connected && (
-              <ArayButton variant="ghost" onClick={() => window.aray.googleDrive.disconnect()}>
+              <ArayButton variant="ghost" onClick={async () => {
+                await window.aray.googleDrive.disconnect()
+                await loadSettings()
+              }}>
                 Disconnect
               </ArayButton>
             )}
