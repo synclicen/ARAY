@@ -95,10 +95,11 @@ export function SyncCenterPage() {
           <div className="flex flex-col gap-2">
             <ArayButton variant="silver" onClick={async () => {
               const result = await window.aray.googleDrive.connect()
-              if (result?.connected) {
-                // v4.4.5: Refresh settings store agar google_drive_connected update
-                await loadSettings()
-              }
+              // v4.4.9 FIX: Always refresh settings after connect attempt.
+              // Sebelumnya: if (result?.connected) — BUG karena result = {success, data}
+              // dan result.connected = undefined -> loadSettings() tidak pernah dipanggil.
+              console.log('[SyncCenter] Connect result:', result)
+              await loadSettings()
             }}>
               {settings?.google_drive_connected ? 'Manage' : 'Connect'}
             </ArayButton>

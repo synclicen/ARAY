@@ -263,10 +263,9 @@ export function SettingsPage() {
           {/* v4.4.5: Connect/Disconnect button di Settings page */}
           {!settings.google_drive_connected ? (
             <ArayButton variant="silver" onClick={async () => {
-              const result = await window.aray.googleDrive.connect()
-              if (result?.connected) {
-                await loadSettings()
-              }
+              await window.aray.googleDrive.connect()
+              // v4.4.9 FIX: Always refresh — sebelumnya pakai if(result?.connected) yang bug
+              await loadSettings()
             }}>
               Connect
             </ArayButton>
