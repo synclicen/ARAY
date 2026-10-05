@@ -599,18 +599,22 @@ function backupFile(localPath, filename) {
   try {
     if (!fs2.existsSync(localPath)) return { success: false, copied: false, message: "Local not found" };
     const normalizedLocal = localPath.replace(/\//g, path2.sep);
+    const basename2 = path2.basename(localPath);
+    let eventName = "Unknown-Event";
     const eventsIdx = normalizedLocal.indexOf(path2.sep + "Events" + path2.sep);
-    let relativePath;
     if (eventsIdx !== -1) {
-      relativePath = normalizedLocal.substring(eventsIdx + 1);
-    } else {
-      relativePath = filename || path2.basename(localPath);
+      const afterEvents = normalizedLocal.substring(eventsIdx + path2.sep.length + "Events".length + path2.sep.length);
+      const nextSep = afterEvents.indexOf(path2.sep);
+      if (nextSep !== -1) {
+        eventName = afterEvents.substring(0, nextSep);
+      }
     }
-    const dest = path2.join(f, relativePath);
+    const isVideo = normalizedLocal.toLowerCase().includes(path2.sep + "videos" + path2.sep);
+    const subFolder = isVideo ? "Videos" : "Photos";
+    const dest = path2.join(f, "Events", eventName, subFolder, basename2);
     const destDir = path2.dirname(dest);
     if (!fs2.existsSync(destDir)) {
       fs2.mkdirSync(destDir, { recursive: true });
-      log(`[backupFile] Created folder: ${destDir}`);
     }
     if (fs2.existsSync(dest)) {
       if (fs2.statSync(localPath).size === fs2.statSync(dest).size) {
@@ -618,7 +622,6 @@ function backupFile(localPath, filename) {
       }
     }
     fs2.copyFileSync(localPath, dest);
-    log(`[backupFile] Copied: ${path2.basename(localPath)} -> ${dest}`);
     return { success: true, copied: true, message: "OK" };
   } catch (e) {
     log(`Backup fail: ${e.message}`);
