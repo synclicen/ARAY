@@ -658,19 +658,13 @@ export function BoothPage() {
         },
         onPalmLeft: () => {
           // Confirmed hand left frame → START TIMER/RECORDING!
-          // v4.3.7: Video mode langsung start recording (no countdown).
-          // Photo mode: countdown then capture.
+          // v4.5.3: Video mode JUGA pakai countdown (3 detik) sebelum recording.
+          // Sebelumnya langsung start — tangan yang baru dilepas masuk rekaman.
           setPalmState('triggered')
           setPalmTriggerActive(false)
-          if (mode === 'video') {
-            // Video mode: langsung start recording (video tidak perlu countdown)
-            setPhase('preview')  // tetap di preview agar recording overlay tampil
-            startRecordingRef.current()
-          } else {
-            // Photo mode: countdown then capture
-            setPhase('countdown')
-            runCountdownRef.current()
-          }
+          // Both modes: countdown first, then capture/record
+          setPhase('countdown')
+          runCountdownRef.current()
         },
         onStateChange: (newState) => {
           setPalmState(newState)
@@ -1112,11 +1106,8 @@ export function BoothPage() {
 
             {/* Video recording: no overlay (clean preview, auto-stop handles everything) */}
 
-            {/* v4.3.7: Video recording indicator BESAR dengan countdown timer di atas.
-                User bisa lihat detik rekaman dengan jelas.
-                - Big countdown number (text-8xl) di tengah atas
-                - REC badge + remaining time
-                - Red border glow untuk emphasize recording active */}
+            {/* v4.5.3: Video recording indicator — overlay "RECORDING" yang jelas +
+                big countdown timer di atas + REC badge + red border glow */}
             {mode === 'video' && isRecording && (
               <>
                 {/* Big countdown timer di tengah atas */}
@@ -1140,6 +1131,20 @@ export function BoothPage() {
                   <div className="text-2xl font-bold text-silver-300 mt-1">
                     {videoDuration - recordingTime <= 3 ? 'seconds left!' : 'seconds'}
                   </div>
+                </div>
+
+                {/* v4.5.3: Big "RECORDING" overlay di tengah bawah — jelas sedang direkam */}
+                <div className="absolute bottom-32 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-3 bg-red-600/80 backdrop-blur-sm rounded-full px-8 py-3 shadow-2xl"
+                  >
+                    <div className="w-4 h-4 rounded-full bg-white animate-pulse" />
+                    <span className="text-white text-2xl font-extrabold tracking-wider">
+                      RECORDING
+                    </span>
+                  </motion.div>
                 </div>
 
                 {/* REC badge — kecil di pojok kanan atas */}
