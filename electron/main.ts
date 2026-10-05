@@ -18,7 +18,20 @@ function getLogPath(): string {
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`
-  try { fs.appendFileSync(getLogPath(), line) } catch {}
+  try {
+    const logPath = getLogPath()
+    // v4.5.1: Log rotation — cap file at 5MB, rotate to .old
+    try {
+      const stat = fs.statSync(logPath)
+      if (stat.size > 5 * 1024 * 1024) {
+        // Rotate: rename current to .old, start fresh
+        const oldPath = logPath + '.old'
+        try { fs.unlinkSync(oldPath) } catch {}
+        fs.renameSync(logPath, oldPath)
+      }
+    } catch {}
+    fs.appendFileSync(logPath, line)
+  } catch {}
   console.log(`[ARAY] ${msg}`)
 }
 
@@ -29,25 +42,41 @@ function getDbPath(): string {
   return path.join(dir, 'data.json')
 }
 
+// v4.5.1: In-memory DB cache — load once, keep in memory, save on change.
+// Sebelumnya: loadDB() read+parse JSON file setiap IPC call.
+// Dengan 5000 media entries (~10MB file), setiap loadDB = 10MB read + parse = SLOW.
+// Sekarang: cache di memory, saveDB write ke disk (debounced).
+let dbCache: any = null
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+
 function loadDB(): any {
+  if (dbCache) return dbCache
   try {
     const dbPath = getDbPath()
     if (!fs.existsSync(dbPath)) {
       const empty = { events: [], sessions: [], media: [], settings: {} }
+      dbCache = empty
       saveDB(empty); return empty
     }
     const data = JSON.parse(fs.readFileSync(dbPath, 'utf8'))
-    return { events: data.events || [], sessions: data.sessions || [], media: data.media || [], settings: data.settings || {} }
-  } catch (err: any) { log(`DB load error: ${err.message}`); return { events: [], sessions: [], media: [], settings: {} } }
+    dbCache = { events: data.events || [], sessions: data.sessions || [], media: data.media || [], settings: data.settings || {} }
+    return dbCache
+  } catch (err: any) { log(`DB load error: ${err.message}`); dbCache = { events: [], sessions: [], media: [], settings: {} }; return dbCache }
 }
 
 function saveDB(db: any): void {
-  try {
-    const dbPath = getDbPath()
-    const tmpPath = dbPath + '.tmp'
-    fs.writeFileSync(tmpPath, JSON.stringify(db, null, 2), 'utf8')
-    fs.renameSync(tmpPath, dbPath)
-  } catch (err: any) { log(`DB save error: ${err.message}`) }
+  dbCache = db  // Update cache immediately
+  // v4.5.1: Debounce disk writes — batch multiple saves within 500ms.
+  // Sebelumnya: setiap saveDB = write 10MB file. Dengan 5000 entries, ini blocking.
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    try {
+      const dbPath = getDbPath()
+      const tmpPath = dbPath + '.tmp'
+      fs.writeFileSync(tmpPath, JSON.stringify(db, null, 2), 'utf8')
+      fs.renameSync(tmpPath, dbPath)
+    } catch (err: any) { log(`DB save error: ${err.message}`) }
+  }, 500)
 }
 
 // ─── STORAGE ────────────────────────────────────────────────────
@@ -1266,5 +1295,26 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
+
+// v4.5.1: Flush DB cache to disk on quit (saveDB is debounced, need to force write)
+app.on('before-quit', () => {
+  log('[App] before-quit — flushing DB to disk')
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  if (dbCache) {
+    try {
+      const dbPath = getDbPath()
+      const tmpPath = dbPath + '.tmp'
+      fs.writeFileSync(tmpPath, JSON.stringify(dbCache, null, 2), 'utf8')
+      fs.renameSync(tmpPath, dbPath)
+      log('[App] DB flushed successfully')
+    } catch (e: any) {
+      log(`[App] DB flush error: ${e.message}`)
+    }
+  }
+})
+
 process.on('uncaughtException', (err) => { log(`UNCAUGHT: ${err.message}`); log(`Stack: ${err.stack}`) })
 process.on('unhandledRejection', (r) => { log(`UNHANDLED: ${String(r)}`) })

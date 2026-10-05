@@ -341,7 +341,20 @@ function log(msg) {
   const line = `[${(/* @__PURE__ */ new Date()).toISOString()}] ${msg}
 `;
   try {
-    fs2.appendFileSync(getLogPath(), line);
+    const logPath = getLogPath();
+    try {
+      const stat = fs2.statSync(logPath);
+      if (stat.size > 5 * 1024 * 1024) {
+        const oldPath = logPath + ".old";
+        try {
+          fs2.unlinkSync(oldPath);
+        } catch {
+        }
+        fs2.renameSync(logPath, oldPath);
+      }
+    } catch {
+    }
+    fs2.appendFileSync(logPath, line);
   } catch {
   }
   console.log(`[ARAY] ${msg}`);
@@ -351,30 +364,40 @@ function getDbPath() {
   if (!fs2.existsSync(dir)) fs2.mkdirSync(dir, { recursive: true });
   return path2.join(dir, "data.json");
 }
+var dbCache = null;
+var saveTimer = null;
 function loadDB() {
+  if (dbCache) return dbCache;
   try {
     const dbPath = getDbPath();
     if (!fs2.existsSync(dbPath)) {
       const empty = { events: [], sessions: [], media: [], settings: {} };
+      dbCache = empty;
       saveDB(empty);
       return empty;
     }
     const data = JSON.parse(fs2.readFileSync(dbPath, "utf8"));
-    return { events: data.events || [], sessions: data.sessions || [], media: data.media || [], settings: data.settings || {} };
+    dbCache = { events: data.events || [], sessions: data.sessions || [], media: data.media || [], settings: data.settings || {} };
+    return dbCache;
   } catch (err2) {
     log(`DB load error: ${err2.message}`);
-    return { events: [], sessions: [], media: [], settings: {} };
+    dbCache = { events: [], sessions: [], media: [], settings: {} };
+    return dbCache;
   }
 }
 function saveDB(db) {
-  try {
-    const dbPath = getDbPath();
-    const tmpPath = dbPath + ".tmp";
-    fs2.writeFileSync(tmpPath, JSON.stringify(db, null, 2), "utf8");
-    fs2.renameSync(tmpPath, dbPath);
-  } catch (err2) {
-    log(`DB save error: ${err2.message}`);
-  }
+  dbCache = db;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      const dbPath = getDbPath();
+      const tmpPath = dbPath + ".tmp";
+      fs2.writeFileSync(tmpPath, JSON.stringify(db, null, 2), "utf8");
+      fs2.renameSync(tmpPath, dbPath);
+    } catch (err2) {
+      log(`DB save error: ${err2.message}`);
+    }
+  }, 500);
 }
 function getDefaultStoragePath() {
   try {
@@ -1514,6 +1537,24 @@ Log: ${getLogPath()}`);
 });
 import_electron2.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") import_electron2.app.quit();
+});
+import_electron2.app.on("before-quit", () => {
+  log("[App] before-quit \u2014 flushing DB to disk");
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (dbCache) {
+    try {
+      const dbPath = getDbPath();
+      const tmpPath = dbPath + ".tmp";
+      fs2.writeFileSync(tmpPath, JSON.stringify(dbCache, null, 2), "utf8");
+      fs2.renameSync(tmpPath, dbPath);
+      log("[App] DB flushed successfully");
+    } catch (e) {
+      log(`[App] DB flush error: ${e.message}`);
+    }
+  }
 });
 process.on("uncaughtException", (err2) => {
   log(`UNCAUGHT: ${err2.message}`);
