@@ -598,12 +598,27 @@ function backupFile(localPath, filename) {
   if (!f) return { success: false, copied: false, message: "No backup folder" };
   try {
     if (!fs2.existsSync(localPath)) return { success: false, copied: false, message: "Local not found" };
-    if (!fs2.existsSync(f)) fs2.mkdirSync(f, { recursive: true });
-    const dest = path2.join(f, filename || path2.basename(localPath));
+    const normalizedLocal = localPath.replace(/\//g, path2.sep);
+    const eventsIdx = normalizedLocal.indexOf(path2.sep + "Events" + path2.sep);
+    let relativePath;
+    if (eventsIdx !== -1) {
+      relativePath = normalizedLocal.substring(eventsIdx + 1);
+    } else {
+      relativePath = filename || path2.basename(localPath);
+    }
+    const dest = path2.join(f, relativePath);
+    const destDir = path2.dirname(dest);
+    if (!fs2.existsSync(destDir)) {
+      fs2.mkdirSync(destDir, { recursive: true });
+      log(`[backupFile] Created folder: ${destDir}`);
+    }
     if (fs2.existsSync(dest)) {
-      if (fs2.statSync(localPath).size === fs2.statSync(dest).size) return { success: true, copied: false, message: "Already" };
+      if (fs2.statSync(localPath).size === fs2.statSync(dest).size) {
+        return { success: true, copied: false, message: "Already backed up" };
+      }
     }
     fs2.copyFileSync(localPath, dest);
+    log(`[backupFile] Copied: ${path2.basename(localPath)} -> ${dest}`);
     return { success: true, copied: true, message: "OK" };
   } catch (e) {
     log(`Backup fail: ${e.message}`);

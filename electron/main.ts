@@ -255,19 +255,53 @@ function getBackupStats() {
   } catch (e: any) { return { connected: false, totalFiles: 0, folder: null } }
 }
 
+// v4.4.6: backupFile sekarang buat struktur folder yang sama dengan local storage.
+// Local: Events/{EventName}/Photos/Original, Photos/Prints, Videos/Original, dll
+// Backup: {backupFolder}/Events/{EventName}/Photos/Original, dll (mirror)
 function backupFile(localPath: string, filename?: string) {
   const f = getBackupFolder()
   if (!f) return { success: false, copied: false, message: 'No backup folder' }
   try {
     if (!fs.existsSync(localPath)) return { success: false, copied: false, message: 'Local not found' }
-    if (!fs.existsSync(f)) fs.mkdirSync(f, { recursive: true })
-    const dest = path.join(f, filename || path.basename(localPath))
-    if (fs.existsSync(dest)) {
-      if (fs.statSync(localPath).size === fs.statSync(dest).size) return { success: true, copied: false, message: 'Already' }
+
+    // v4.4.6: Mirror local folder structure ke backup folder.
+    // localPath = C:\...\ARAY\Events\Wisuda-61\Photos\Prints\Wisuda-61_2026-10-04_001.jpg
+    // Kita cari "Events\" di path, lalu ambil sisanya sebagai relative path.
+    // dest = {backupFolder}\Events\Wisuda-61\Photos\Prints\Wisuda-61_2026-10-04_001.jpg
+    const normalizedLocal = localPath.replace(/\//g, path.sep)
+    const eventsIdx = normalizedLocal.indexOf(path.sep + 'Events' + path.sep)
+    let relativePath: string
+    if (eventsIdx !== -1) {
+      // Ambil dari "Events\..." sampai akhir
+      relativePath = normalizedLocal.substring(eventsIdx + 1) // +1 to skip leading separator
+    } else {
+      // Fallback: kalau tidak ada "Events" di path, pakai nama file saja
+      relativePath = filename || path.basename(localPath)
     }
+
+    const dest = path.join(f, relativePath)
+    const destDir = path.dirname(dest)
+
+    // Buat folder structure (recursive) jika belum ada
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true })
+      log(`[backupFile] Created folder: ${destDir}`)
+    }
+
+    // Skip jika sudah ada dan ukuran sama (sudah di-backup)
+    if (fs.existsSync(dest)) {
+      if (fs.statSync(localPath).size === fs.statSync(dest).size) {
+        return { success: true, copied: false, message: 'Already backed up' }
+      }
+    }
+
     fs.copyFileSync(localPath, dest)
+    log(`[backupFile] Copied: ${path.basename(localPath)} -> ${dest}`)
     return { success: true, copied: true, message: 'OK' }
-  } catch (e: any) { log(`Backup fail: ${e.message}`); return { success: false, copied: false, message: e.message } }
+  } catch (e: any) {
+    log(`Backup fail: ${e.message}`)
+    return { success: false, copied: false, message: e.message }
+  }
 }
 
 function backupAllPendingMedia() {
