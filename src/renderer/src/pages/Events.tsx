@@ -296,25 +296,28 @@ function CreateEventModal({
           <Field label="Event Name *" hint="A friendly name for this event">
             <input
               className="aray-input"
-              placeholder="Wedding of Alex & Jamie"
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
             />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Client">
-              <input className="aray-input" placeholder="Alex & Jamie" value={client} onChange={(e) => setClient(e.target.value)} />
+              <input className="aray-input" value={client} onChange={(e) => setClient(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck={false} />
             </Field>
             <Field label="Operator">
-              <input className="aray-input" placeholder="Your name" value={operator} onChange={(e) => setOperator(e.target.value)} />
+              <input className="aray-input" value={operator} onChange={(e) => setOperator(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck={false} />
             </Field>
           </div>
           <Field label="Venue">
-            <input className="aray-input" placeholder="Grand Ballroom Hotel" value={venue} onChange={(e) => setVenue(e.target.value)} />
+            <input className="aray-input" value={venue} onChange={(e) => setVenue(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck={false} />
           </Field>
           <Field label="Event Date">
-            <input type="date" className="aray-input" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+            <input type="date" className="aray-input" value={eventDate} onChange={(e) => setEventDate(e.target.value)} autoComplete="off" />
           </Field>
         </div>
         <div className="flex items-center justify-end gap-3 p-5 border-t border-silver-300/10">
