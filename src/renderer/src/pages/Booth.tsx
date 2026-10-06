@@ -1134,16 +1134,16 @@ export function BoothPage() {
                   </div>
                 </div>
 
-                {/* v4.5.6: "RECORDING" overlay di tengah bawah — gabung dengan REC info.
-                    Hapus REC badge pojok kanan atas (terlalu ramai).
-                    Posisi: bottom-24 (di atas shutter button). */}
+                {/* v4.5.7: "RECORDING + elapsed/total" overlay di tengah bawah — pulse.
+                    Hapus red border glow (terlalu ramai). */}
                 <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     className="flex items-center gap-3 bg-red-600/80 backdrop-blur-sm rounded-full px-8 py-3 shadow-2xl"
+                    style={{ animation: 'pulse 1.5s ease-in-out infinite' }}
                   >
-                    <div className="w-4 h-4 rounded-full bg-white animate-pulse" />
+                    <div className="w-4 h-4 rounded-full bg-white" />
                     <span className="text-white text-xl font-extrabold tracking-wider">
                       RECORDING
                     </span>
@@ -1152,12 +1152,6 @@ export function BoothPage() {
                     </span>
                   </motion.div>
                 </div>
-
-                {/* Red border glow untuk emphasize recording */}
-                <div className="absolute inset-0 pointer-events-none z-10" style={{
-                  boxShadow: 'inset 0 0 100px rgba(239, 68, 68, 0.3)',
-                  animation: 'pulse 2s ease-in-out infinite'
-                }} />
               </>
             )}
 
