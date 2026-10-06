@@ -1134,26 +1134,23 @@ export function BoothPage() {
                   </div>
                 </div>
 
-                {/* v4.5.4: Big "RECORDING" overlay di tengah — tidak tertumpuk dengan shutter */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none">
+                {/* v4.5.6: "RECORDING" overlay di tengah bawah — gabung dengan REC info.
+                    Hapus REC badge pojok kanan atas (terlalu ramai).
+                    Posisi: bottom-24 (di atas shutter button). */}
+                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
                   <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 0.9, scale: 1 }}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
                     className="flex items-center gap-3 bg-red-600/80 backdrop-blur-sm rounded-full px-8 py-3 shadow-2xl"
                   >
                     <div className="w-4 h-4 rounded-full bg-white animate-pulse" />
-                    <span className="text-white text-2xl font-extrabold tracking-wider">
+                    <span className="text-white text-xl font-extrabold tracking-wider">
                       RECORDING
                     </span>
+                    <span className="text-white/80 text-sm font-mono">
+                      {recordingTime}s / {videoDuration}s
+                    </span>
                   </motion.div>
-                </div>
-
-                {/* REC badge — kecil di pojok kanan atas */}
-                <div className="absolute top-4 right-4 flex items-center gap-2 bg-red-500/30 border border-red-500/50 rounded-full px-4 py-2 z-20">
-                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                  <span className="text-sm font-mono font-bold text-red-200">
-                    REC {recordingTime}s / {videoDuration}s
-                  </span>
                 </div>
 
                 {/* Red border glow untuk emphasize recording */}
