@@ -287,11 +287,11 @@ export function SettingsPage() {
           <SettingRow
             icon={<Cloud className="w-4 h-4" />}
             label="Auto-sync to Google Drive"
-            hint="Upload captures in the background"
+            hint="Otomatis backup setiap capture ke Google Drive folder"
           >
             <Toggle
-              value={settings.auto_sync}
-              onChange={(v) => updateSettings({ auto_sync: v })}
+              value={settings.auto_backup || false}
+              onChange={(v) => updateSettings({ auto_backup: v, auto_sync: v })}
               disabled={!settings.google_drive_connected}
             />
           </SettingRow>

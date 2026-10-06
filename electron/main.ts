@@ -691,6 +691,19 @@ function registerIPC() {
       processed_path: compositePath
     })
     log(`Composite saved: ${path.basename(compositePath)}`)
+    // v4.5.8: Auto-backup composite ke Google Drive (sebelumnya tidak ada!)
+    const settings = getSettings()
+    if (settings.auto_backup && settings.backup_folder) {
+      log(`[saveComposite] Auto-backup to: ${settings.backup_folder}`)
+      const r = backupFile(compositePath, path.basename(compositePath))
+      if (r.success) {
+        log(`[saveComposite] Auto-backup success: ${r.message}`)
+        const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
+        if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
+      } else {
+        log(`[saveComposite] Auto-backup failed: ${r.message}`)
+      }
+    }
     return media
   }))
 
