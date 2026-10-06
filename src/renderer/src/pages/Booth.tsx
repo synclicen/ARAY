@@ -1174,10 +1174,8 @@ export function BoothPage() {
 
             {mode === 'video' ? (
               isRecording ? (
-                // During recording: red circle only (auto-stop, no button)
-                <div className="w-24 h-24 rounded-full bg-red-500/20 border-4 border-red-500 flex items-center justify-center">
-                  <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                </div>
+                // v4.5.10: During recording — no red circle (RECORDING overlay di bawah sudah cukup)
+                null
               ) : (
                 // Before recording: record button
                 <button
