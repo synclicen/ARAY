@@ -633,7 +633,11 @@ function backupFile(localPath, filename) {
 }
 function backupAllPendingMedia() {
   const db = loadDB();
-  if (!db.settings.auto_backup || !db.settings.backup_folder) return { backed: 0, skipped: 0, failed: 0 };
+  if (!db.settings.backup_folder) {
+    log("[backupAllPendingMedia] No backup folder set \u2014 skipping");
+    return { backed: 0, skipped: 0, failed: 0, error: "No backup folder connected" };
+  }
+  log(`[backupAllPendingMedia] Starting sync to: ${db.settings.backup_folder}`);
   let backed = 0, skipped = 0, failed = 0;
   for (const m of db.media) {
     if (m.sync_status === "SYNCED") {
@@ -641,6 +645,7 @@ function backupAllPendingMedia() {
       continue;
     }
     if (!fs2.existsSync(m.original_path)) {
+      log(`[backupAllPendingMedia] File not found: ${m.original_path}`);
       failed++;
       continue;
     }
@@ -649,9 +654,14 @@ function backupAllPendingMedia() {
       m.sync_status = "SYNCED";
       m.uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
       backed++;
-    } else failed++;
+      log(`[backupAllPendingMedia] Backed up: ${m.original_path}`);
+    } else {
+      log(`[backupAllPendingMedia] Failed: ${m.original_path} \u2014 ${r.message}`);
+      failed++;
+    }
   }
   saveDB(db);
+  log(`[backupAllPendingMedia] Done: backed=${backed}, skipped=${skipped}, failed=${failed}`);
   return { backed, skipped, failed };
 }
 function generateEventCode() {

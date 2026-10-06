@@ -19,6 +19,7 @@ export function SyncCenterPage() {
   const { stats, loadStats } = useMediaStore()
   const { settings, loadSettings } = useSettingsStore()
   const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
 
   useEffect(() => {
     loadStats()
@@ -32,10 +33,30 @@ export function SyncCenterPage() {
   const runSync = async () => {
     setSyncing(true)
     try {
-      await window.aray.sync.start()
+      const result = await window.aray.sync.start()
+      console.log('[SyncCenter] Sync result:', result)
       await loadStats()
+      // v4.5.5: Tampilkan hasil sync ke user
+      if (result?.success) {
+        const data = (result as any).data || result
+        const backed = data.backed ?? 0
+        const failed = data.failed ?? 0
+        if (backed > 0) {
+          setSyncMessage(`✓ Sync berhasil: ${backed} file di-backup`)
+        } else if (failed > 0) {
+          setSyncMessage(`⚠ Sync selesai: ${failed} file gagal. Cek log.`)
+        } else {
+          setSyncMessage('Semua file sudah di-backup')
+        }
+      } else {
+        setSyncMessage('✗ Sync gagal. Pastikan Google Drive connected.')
+      }
+    } catch (e: any) {
+      console.error('[SyncCenter] Sync error:', e)
+      setSyncMessage('✗ Error: ' + e.message)
     } finally {
       setSyncing(false)
+      setTimeout(() => setSyncMessage(null), 5000)
     }
   }
 
@@ -60,6 +81,19 @@ export function SyncCenterPage() {
           </ArayButton>
         </div>
       </div>
+
+      {/* v4.5.5: Sync result message */}
+      {syncMessage && (
+        <div className={`p-3 rounded-lg text-sm ${
+          syncMessage.startsWith('✓')
+            ? 'bg-green-500/10 border border-green-500/20 text-green-300'
+            : syncMessage.startsWith('⚠')
+              ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-300'
+              : 'bg-red-500/10 border border-red-500/20 text-red-300'
+        }`}>
+          {syncMessage}
+        </div>
+      )}
 
       {/* Connection status */}
       <ArayCard className="p-6">

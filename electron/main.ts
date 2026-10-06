@@ -332,16 +332,35 @@ function backupFile(localPath: string, filename?: string) {
 
 function backupAllPendingMedia() {
   const db = loadDB()
-  if (!db.settings.auto_backup || !db.settings.backup_folder) return { backed: 0, skipped: 0, failed: 0 }
+  // v4.5.5: Manual sync (Sync Now button) harus work meskipun auto_backup false.
+  // Cek backup_folder saja — kalau ada folder, sync bisa jalan.
+  // auto_backup hanya untuk auto-sync saat capture, bukan untuk manual sync.
+  if (!db.settings.backup_folder) {
+    log('[backupAllPendingMedia] No backup folder set — skipping')
+    return { backed: 0, skipped: 0, failed: 0, error: 'No backup folder connected' }
+  }
+  log(`[backupAllPendingMedia] Starting sync to: ${db.settings.backup_folder}`)
   let backed = 0, skipped = 0, failed = 0
   for (const m of db.media) {
     if (m.sync_status === 'SYNCED') { skipped++; continue }
-    if (!fs.existsSync(m.original_path)) { failed++; continue }
+    if (!fs.existsSync(m.original_path)) {
+      log(`[backupAllPendingMedia] File not found: ${m.original_path}`)
+      failed++
+      continue
+    }
     const r = backupFile(m.original_path, path.basename(m.original_path))
-    if (r.success) { m.sync_status = 'SYNCED'; m.uploaded_at = new Date().toISOString(); backed++ }
-    else failed++
+    if (r.success) {
+      m.sync_status = 'SYNCED'
+      m.uploaded_at = new Date().toISOString()
+      backed++
+      log(`[backupAllPendingMedia] Backed up: ${m.original_path}`)
+    } else {
+      log(`[backupAllPendingMedia] Failed: ${m.original_path} — ${r.message}`)
+      failed++
+    }
   }
   saveDB(db)
+  log(`[backupAllPendingMedia] Done: backed=${backed}, skipped=${skipped}, failed=${failed}`)
   return { backed, skipped, failed }
 }
 
