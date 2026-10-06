@@ -1134,8 +1134,8 @@ export function BoothPage() {
                   </div>
                 </div>
 
-                {/* v4.5.7: "RECORDING + elapsed/total" overlay di tengah bawah — pulse.
-                    Hapus red border glow (terlalu ramai). */}
+                {/* v4.5.9: "RECORDING" overlay di tengah bawah — pulse.
+                    Hapus elapsed/total (sudah ada countdown di atas). */}
                 <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
@@ -1146,9 +1146,6 @@ export function BoothPage() {
                     <div className="w-4 h-4 rounded-full bg-white" />
                     <span className="text-white text-xl font-extrabold tracking-wider">
                       RECORDING
-                    </span>
-                    <span className="text-white/80 text-sm font-mono">
-                      {recordingTime}s / {videoDuration}s
                     </span>
                   </motion.div>
                 </div>
