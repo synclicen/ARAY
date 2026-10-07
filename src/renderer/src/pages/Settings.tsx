@@ -11,7 +11,8 @@ import {
   HardDrive,
   Share2,
   Link,
-  Video
+  Video,
+  Printer
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayProgress } from '../components/ui'
 import { useSettingsStore } from '../stores/settings'
@@ -310,10 +311,31 @@ export function SettingsPage() {
               autoComplete="off"
             />
           </SettingRow>
+
+          {/* v4.6.3: Toggle Print & Share buttons visibility */}
+          <SettingRow
+            icon={<Printer className="w-4 h-4" />}
+            label="Show Print button"
+            hint="Tampilkan tombol Print di result screen booth"
+          >
+            <Toggle
+              value={settings.show_print_button !== false}
+              onChange={(v) => updateSettings({ show_print_button: v })}
+            />
+          </SettingRow>
+
+          <SettingRow
+            icon={<Share2 className="w-4 h-4" />}
+            label="Show Share button"
+            hint="Tampilkan tombol Share di result screen booth"
+          >
+            <Toggle
+              value={settings.show_share_button !== false}
+              onChange={(v) => updateSettings({ show_share_button: v })}
+            />
+          </SettingRow>
         </div>
       </ArayCard>
-
-      {/* Google Drive */}
       <ArayCard className="p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">

@@ -123,6 +123,15 @@ export interface AraySettings {
    */
   share_qr_link?: string
   /**
+   * Show Print button di result screen. Default true.
+   */
+  show_print_button?: boolean
+  /**
+   * Show Share button di result screen. Default true.
+   * (Jika share_qr_enabled false, Share tetap hidden regardless)
+   */
+  show_share_button?: boolean
+  /**
    * Print settings — dipakai saat print dari booth result.
    */
   print_paper_size?: '4x6' | '5x7' | 'A4' | 'Letter' | 'A6' | 'custom'

@@ -1332,6 +1332,7 @@ export function BoothPage() {
                 — tidak professional untuk event display */}
 
             <div className="flex items-center gap-3 flex-wrap justify-center">
+              {settings?.show_print_button !== false && (
               <ArayButton
                 variant="silver"
                 icon={<Printer className="w-4 h-4" />}
@@ -1359,7 +1360,8 @@ export function BoothPage() {
               >
                 Print
               </ArayButton>
-              {settings?.share_qr_enabled && settings?.share_qr_link && (
+              )}
+              {settings?.show_share_button !== false && settings?.share_qr_enabled && settings?.share_qr_link && (
                 <ArayButton
                   variant="silver"
                   icon={<Share2 className="w-4 h-4" />}
