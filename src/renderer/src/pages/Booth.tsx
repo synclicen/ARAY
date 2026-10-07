@@ -1265,10 +1265,6 @@ export function BoothPage() {
             )}
             {mode === 'photo' && compositeUrl && (
               <div className="mb-6 max-w-sm mx-auto">
-                <div className="text-xs text-gold-300 mb-2 flex items-center gap-1.5 justify-center">
-                  <LayoutTemplate className="w-3.5 h-3.5" />
-                  Template composite ready
-                </div>
                 <img
                   src={compositeUrl}
                   alt="Template composite"
@@ -1294,24 +1290,10 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Video recorded indicator */}
-            {mode === 'video' && (
-              <div className="mb-8 flex items-center gap-3 bg-green-500/10 border border-green-500/30 rounded-xl px-6 py-4">
-                <Video className="w-6 h-6 text-green-400" />
-                <span className="text-green-200 font-medium">Video saved successfully!</span>
-              </div>
-            )}
+            {/* v4.5.11: Hapus "Video saved successfully" — tidak professional */}
 
-            <div className="flex items-center gap-2 mb-6">
-              <ArayBadge variant="success">
-                <Check className="w-3 h-3" /> Saved locally
-              </ArayBadge>
-              {settings?.google_drive_connected && (
-                <ArayBadge variant="purple">
-                  <RefreshCw className="w-3 h-3" /> Syncing to Google Drive...
-                </ArayBadge>
-              )}
-            </div>
+            {/* v4.5.11: Hapus badge "Saved locally" dan "Syncing to Google Drive"
+                — tidak professional untuk event display */}
 
             <div className="flex items-center gap-3 flex-wrap justify-center">
               <ArayButton
