@@ -243,7 +243,7 @@ export function BoothPage() {
     return { full, thumb }
   }, [mirror, activeFilter, currentAspectRatio])
 
-  const performCapture = useCallback(async () => {
+  const performCapture = useCallback(async (retakeShotNumber?: number) => {
     if (!activeEvent) {
       setError('No active event selected. Create one in Events first.')
       setPhase('error')
@@ -262,7 +262,6 @@ export function BoothPage() {
     setTimeout(() => setLastFlash(false), 220)
 
     try {
-      // Create session lazily on first shot (needed for composite save later)
       let sessionId = (window as any).__aray_current_session_id as string | undefined
       if (!sessionId) {
         const sessionResult = await window.aray.sessions.create(activeEvent.id, 'photo', totalShots)
@@ -271,16 +270,18 @@ export function BoothPage() {
         ;(window as any).__aray_current_session_id = sessionId
       }
 
-      // v4.0.4: Don't save raw shots to disk/media table.
-      // Only keep them in-memory for composite generation.
-      // This saves storage (1 file per session instead of N+1) and
-      // de-clutters the Gallery (only composites show up).
-      // If composite fails, user can retake — raw shots are ephemeral.
-      setCapturedShots((prev) => [
-        ...prev,
-        { shotNumber: currentShot, mediaId: `temp_${currentShot}`, dataUrl: frames.full }
-      ])
-      console.log('[Booth] Shot', currentShot, 'captured (in-memory only, not saved to disk)')
+      const shotNum = retakeShotNumber ?? currentShot
+      setCapturedShots((prev) => {
+        // v4.6.2: Retake individual shot — replace existing shot data
+        const idx = prev.findIndex(s => s.shotNumber === shotNum)
+        if (idx !== -1) {
+          const updated = [...prev]
+          updated[idx] = { shotNumber: shotNum, mediaId: `temp_${shotNum}`, dataUrl: frames.full }
+          return updated
+        }
+        return [...prev, { shotNumber: shotNum, mediaId: `temp_${shotNum}`, dataUrl: frames.full }]
+      })
+      console.log('[Booth] Shot', shotNum, retakeShotNumber ? 'RETAKE' : '', 'captured (in-memory only)')
     } catch (e: any) {
       setError(e.message)
       setPhase('error')
@@ -575,9 +576,22 @@ export function BoothPage() {
     }
   }, [phase, mode, capturedShots, compositeUrl, runComposite])
 
+  // v4.6.2: Retake individual shot — user klik foto hasil di result screen,
+  // hanya foto itu yang di-retake, bukan dari awal.
+  const [retakeShotNumber, setRetakeShotNumber] = useState<number | null>(null)
+
+  const retakeShot = useCallback((shotNumber: number) => {
+    console.log('[Booth] Retake shot', shotNumber)
+    setRetakeShotNumber(shotNumber)
+    setCurrentShot(shotNumber)
+    setCompositeUrl(null)
+    setCompositeMediaId(null)
+    setPhase('preview')
+  }, [])
+
+  // v4.6.2: runCountdown support retake individual shot
   const runCountdown = useCallback(async () => {
     if (mode === 'video') {
-      // Video mode: countdown THEN start recording
       for (let i = countdownSeconds; i > 0; i--) {
         setCountdown(i)
         setPhase('countdown')
@@ -585,28 +599,32 @@ export function BoothPage() {
       }
       setCountdown(0)
       setPhase('preview')
-      // Small delay then start recording
       await sleep(200)
       startRecording()
       return
     }
 
+    const shotToCapture = retakeShotNumber ?? currentShot
     for (let i = countdownSeconds; i > 0; i--) {
       setCountdown(i)
       await sleep(1000)
     }
     setCountdown(0)
     setPhase('flash')
-    await performCapture()
+    await performCapture(shotToCapture)
     await sleep(400)
 
-    if (currentShot < totalShots) {
+    // v4.6.2: If retaking, go back to result. Otherwise continue sequence.
+    if (retakeShotNumber) {
+      setRetakeShotNumber(null)
+      setPhase('result')
+    } else if (currentShot < totalShots) {
       setCurrentShot((n) => n + 1)
       setPhase('preview')
     } else {
       setPhase('result')
     }
-  }, [countdownSeconds, performCapture, currentShot, totalShots, mode, startRecording])
+  }, [countdownSeconds, performCapture, currentShot, totalShots, mode, startRecording, retakeShotNumber])
 
   // Keep runCountdownRef in sync so the palm trigger callback always calls the
   // latest runCountdown (otherwise shot 2+ would re-run shot 1's closure).
@@ -1278,19 +1296,32 @@ export function BoothPage() {
               </div>
             )}
 
-            {/* Individual photos */}
+            {/* v4.6.2: Individual photos — KLIK untuk retake foto tersebut saja */}
             {mode === 'photo' && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl mb-8">
                 {capturedShots.map((shot) => (
-                  <motion.div
+                  <motion.button
                     key={shot.shotNumber}
                     initial={{ scale: 0.8, opacity: 0, y: 20 }}
                     animate={{ scale: 1, opacity: 1, y: 0 }}
                     transition={{ delay: shot.shotNumber * 0.1 }}
-                    className="aspect-[3/2] rounded-xl overflow-hidden border-2 border-purple-haze-500/30 shadow-card"
+                    onClick={() => retakeShot(shot.shotNumber)}
+                    className="relative aspect-[3/2] rounded-xl overflow-hidden border-2 border-purple-haze-500/30 hover:border-gold-400/60 shadow-card group cursor-pointer transition-all"
+                    title={`Retake shot ${shot.shotNumber}`}
                   >
                     <img src={shot.dataUrl} alt={`Shot ${shot.shotNumber}`} className="w-full h-full object-cover" />
-                  </motion.div>
+                    {/* Retake overlay on hover */}
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <div className="text-center">
+                        <RotateCcw className="w-8 h-8 text-gold-400 mx-auto mb-1" />
+                        <span className="text-gold-300 text-xs font-medium">Retake</span>
+                      </div>
+                    </div>
+                    {/* Shot number badge */}
+                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] font-bold rounded px-1.5 py-0.5">
+                      {shot.shotNumber}
+                    </div>
+                  </motion.button>
                 ))}
               </div>
             )}
