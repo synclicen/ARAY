@@ -10,7 +10,8 @@ import {
   AlertTriangle,
   HardDrive,
   Share2,
-  Link
+  Link,
+  Video
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayProgress } from '../components/ui'
 import { useSettingsStore } from '../stores/settings'
@@ -79,13 +80,12 @@ export function SettingsPage() {
         </div>
       </ArayCard>
 
-      {/* Booth */}
+      {/* ─── PHOTO SETTINGS ─── */}
       <ArayCard className="p-6">
         <div className="flex items-center gap-2 mb-4">
           <Camera className="w-5 h-5 text-gold-300" />
-          <h3 className="font-semibold">Booth Settings</h3>
+          <h3 className="font-semibold">Photo Booth Settings</h3>
         </div>
-
         <div className="space-y-4">
           <SettingRow
             icon={<Hash className="w-4 h-4" />}
@@ -104,33 +104,26 @@ export function SettingsPage() {
           </SettingRow>
 
           <SettingRow
-            icon={<Clock className="w-4 h-4" />}
-            label="Countdown seconds"
-            hint="Delay before each capture"
+            icon={<Camera className="w-4 h-4" />}
+            label="Photo aspect ratio"
+            hint="Output dimensions for photos"
           >
             <select
               className="aray-input max-w-[120px]"
-              value={settings.booth_countdown_seconds}
-              onChange={(e) => updateSettings({ booth_countdown_seconds: parseInt(e.target.value, 10) })}
+              value={settings.aspect_ratio || '9:16'}
+              onChange={(e) => updateSettings({ aspect_ratio: e.target.value })}
             >
-              {[3, 5, 7, 10].map((n) => (
-                <option key={n} value={n}>{n}s</option>
-              ))}
+              <option value="9:16">9:16 (Portrait)</option>
+              <option value="1:1">1:1 (Square)</option>
+              <option value="4:3">4:3 (Classic)</option>
+              <option value="16:9">16:9 (Landscape)</option>
             </select>
           </SettingRow>
 
           <SettingRow
-            icon={<Save className="w-4 h-4" />}
-            label="Auto-print after capture"
-            hint="Send every capture straight to the printer"
-          >
-            <Toggle value={settings.auto_print} onChange={(v) => updateSettings({ auto_print: v })} />
-          </SettingRow>
-
-          <SettingRow
             icon={<Camera className="w-4 h-4" />}
-            label="Default camera effect"
-            hint="Cinematic filter applied to photos and videos"
+            label="Photo camera effect"
+            hint="Cinematic filter applied to photos"
           >
             <select
               className="aray-input max-w-[200px]"
@@ -150,24 +143,24 @@ export function SettingsPage() {
           </SettingRow>
 
           <SettingRow
-            icon={<Camera className="w-4 h-4" />}
-            label="Aspect ratio"
-            hint="Output dimensions for photos and videos"
+            icon={<Save className="w-4 h-4" />}
+            label="Auto-print after capture"
+            hint="Send every capture straight to the printer"
           >
-            <select
-              className="aray-input max-w-[120px]"
-              value={settings.aspect_ratio || '9:16'}
-              onChange={(e) => updateSettings({ aspect_ratio: e.target.value })}
-            >
-              <option value="9:16">9:16 (Portrait)</option>
-              <option value="1:1">1:1 (Square)</option>
-              <option value="4:3">4:3 (Classic)</option>
-              <option value="16:9">16:9 (Landscape)</option>
-            </select>
+            <Toggle value={settings.auto_print} onChange={(v) => updateSettings({ auto_print: v })} />
           </SettingRow>
+        </div>
+      </ArayCard>
 
+      {/* ─── VIDEO SETTINGS ─── */}
+      <ArayCard className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Video className="w-5 h-5 text-purple-haze-300" />
+          <h3 className="font-semibold">Video Booth Settings</h3>
+        </div>
+        <div className="space-y-4">
           <SettingRow
-            icon={<Camera className="w-4 h-4" />}
+            icon={<Video className="w-4 h-4" />}
             label="Video template"
             hint="Motion effect for video booth recordings"
           >
@@ -183,6 +176,71 @@ export function SettingsPage() {
               ))}
             </select>
           </SettingRow>
+
+          <SettingRow
+            icon={<Video className="w-4 h-4" />}
+            label="Video aspect ratio"
+            hint="Output dimensions for videos"
+          >
+            <select
+              className="aray-input max-w-[120px]"
+              value={settings.aspect_ratio || '9:16'}
+              onChange={(e) => updateSettings({ aspect_ratio: e.target.value })}
+            >
+              <option value="9:16">9:16 (Portrait)</option>
+              <option value="1:1">1:1 (Square)</option>
+              <option value="4:3">4:3 (Classic)</option>
+              <option value="16:9">16:9 (Landscape)</option>
+            </select>
+          </SettingRow>
+
+          <SettingRow
+            icon={<Video className="w-4 h-4" />}
+            label="Video camera effect"
+            hint="Cinematic filter applied to videos"
+          >
+            <select
+              className="aray-input max-w-[200px]"
+              value={settings.camera_effect || 'original'}
+              onChange={(e) => updateSettings({ camera_effect: e.target.value })}
+            >
+              <option value="original">Original</option>
+              <option value="purple-haze">Purple Haze</option>
+              <option value="vintage">Vintage</option>
+              <option value="noir">Noir B&W</option>
+              <option value="cool-blue">Cool Blue</option>
+              <option value="warm-sunset">Warm Sunset</option>
+              <option value="cinematic">Cinematic</option>
+              <option value="vintage-film">Vintage Film</option>
+              <option value="neon-pulse">Neon Pulse</option>
+            </select>
+          </SettingRow>
+        </div>
+      </ArayCard>
+
+      {/* ─── SHARED SETTINGS ─── */}
+      <ArayCard className="p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <Clock className="w-5 h-5 text-silver-300" />
+          <h3 className="font-semibold">Shared Settings</h3>
+        </div>
+        <div className="space-y-4">
+          <SettingRow
+            icon={<Clock className="w-4 h-4" />}
+            label="Countdown seconds"
+            hint="Delay before each capture (photo & video)"
+          >
+            <select
+              className="aray-input max-w-[120px]"
+              value={settings.booth_countdown_seconds}
+              onChange={(e) => updateSettings({ booth_countdown_seconds: parseInt(e.target.value, 10) })}
+            >
+              {[3, 5, 7, 10].map((n) => (
+                <option key={n} value={n}>{n}s</option>
+              ))}
+            </select>
+          </SettingRow>
+
           <SettingRow
             icon={<Camera className="w-4 h-4" />}
             label="Palm trigger (hands-free)"
@@ -222,6 +280,7 @@ export function SettingsPage() {
               value={settings.booth_fullscreen_password ?? 'aray'}
               onChange={(e) => updateSettings({ booth_fullscreen_password: e.target.value })}
               placeholder="aray"
+              autoComplete="off"
             />
           </SettingRow>
 
@@ -248,6 +307,7 @@ export function SettingsPage() {
               onChange={(e) => updateSettings({ share_qr_link: e.target.value })}
               disabled={!settings.share_qr_enabled}
               placeholder="https://drive.google.com/..."
+              autoComplete="off"
             />
           </SettingRow>
         </div>
