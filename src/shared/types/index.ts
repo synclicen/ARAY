@@ -98,8 +98,10 @@ export interface AraySettings {
   booth_mode: 'photo' | 'video'
   backup_folder: string | null
   auto_backup: boolean
-  camera_effect: string
-  aspect_ratio: string
+  camera_effect: string       // photo camera effect
+  camera_effect_video: string // video camera effect (separate)
+  aspect_ratio: string        // photo aspect ratio
+  aspect_ratio_video: string  // video aspect ratio (separate)
   video_template: string
   palm_trigger: boolean
   palm_trigger_sensitivity: number

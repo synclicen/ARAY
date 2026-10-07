@@ -89,7 +89,9 @@ export function BoothPage() {
   const [mirror, setMirror] = useState(true)
   const [mode, setMode] = useState<BoothMode>('photo')
   const [activeFilterId, setActiveFilterId] = useState('original')
+  const [activeFilterIdVideo, setActiveFilterIdVideo] = useState('original')
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
+  const [aspectRatioVideo, setAspectRatioVideo] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
   const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('plain')
   const [videoDuration, setVideoDuration] = useState(15)
   const [isRecording, setIsRecording] = useState(false)
@@ -125,8 +127,9 @@ export function BoothPage() {
   const activeEvent = events.find((e) => e.id === activeEventId) ?? events[0]
   const totalShots = settings?.booth_shot_count ?? 4
   const countdownSeconds = settings?.booth_countdown_seconds ?? 3
-  const activeFilter = FILTERS.find(f => f.id === activeFilterId) || FILTERS[0]
+  const activeFilter = FILTERS.find(f => f.id === (mode === 'video' ? activeFilterIdVideo : activeFilterId)) || FILTERS[0]
   const activeVideoTemplate = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
+  const currentAspectRatio = mode === 'video' ? aspectRatioVideo : aspectRatio
 
   // Refs to avoid stale closures in async recording callbacks
       const activeFilterRef = useRef(activeFilter)
@@ -148,7 +151,9 @@ export function BoothPage() {
     // Load booth settings from Settings page
     if (settings) {
       if (settings.camera_effect) setActiveFilterId(settings.camera_effect)
+      if (settings.camera_effect_video) setActiveFilterIdVideo(settings.camera_effect_video)
       if (settings.aspect_ratio) setAspectRatio(settings.aspect_ratio as any)
+      if (settings.aspect_ratio_video) setAspectRatioVideo(settings.aspect_ratio_video as any)
       if (settings.video_template) setSelectedVideoTemplate(settings.video_template)
     }
   }, [events.length, loadEvents, settings])
@@ -187,7 +192,7 @@ export function BoothPage() {
     if (!video || !canvas) return null
     if (video.videoWidth === 0 || video.videoHeight === 0) return null
 
-    const dims = aspectDims[aspectRatio] || aspectDims['9:16']
+    const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
     const w = dims.w
     const h = dims.h
     canvas.width = w
@@ -236,7 +241,7 @@ export function BoothPage() {
     tctx.setTransform(1, 0, 0, 1, 0, 0)
     const thumb = tc.toDataURL('image/jpeg', 0.8)
     return { full, thumb }
-  }, [mirror, activeFilter, aspectRatio])
+  }, [mirror, activeFilter, currentAspectRatio])
 
   const performCapture = useCallback(async () => {
     if (!activeEvent) {
@@ -357,7 +362,7 @@ export function BoothPage() {
 
     try {
       const canvas = document.createElement('canvas')
-      const dims = aspectDims[aspectRatio] || aspectDims['9:16']
+      const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
       const w = dims.w
       const h = dims.h
       canvas.width = w
@@ -500,7 +505,7 @@ export function BoothPage() {
       setError(e.message)
       setPhase('error')
     }
-  }, [activeEvent, addMedia, selectedVideoTemplate, aspectRatio, cleanupAllRecording])
+  }, [activeEvent, addMedia, selectedVideoTemplate, currentAspectRatio, cleanupAllRecording])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
   const runComposite = useCallback(async () => {
@@ -531,11 +536,11 @@ export function BoothPage() {
       if (customTemplate) {
         // Custom template: use compositeCustomTemplate
         console.log('[Booth] Compositing with custom template:', customTemplate.name)
-        composite = await compositeCustomTemplate(customTemplate, photoUrls, aspectRatio)
+        composite = await compositeCustomTemplate(customTemplate, photoUrls, currentAspectRatio)
       } else if (builtinTemplate) {
         // Built-in template: use compositeTemplate
         console.log('[Booth] Compositing with built-in template:', builtinTemplate.name)
-        composite = await compositeTemplate(builtinTemplate, photoUrls, aspectRatio)
+        composite = await compositeTemplate(builtinTemplate, photoUrls, currentAspectRatio)
       }
 
       if (composite && activeEvent) {
@@ -738,11 +743,11 @@ export function BoothPage() {
           }`}
           style={{
             filter: activeFilter.css,
-            aspectRatio: aspectRatio.replace(':', ' / '),
+            aspectRatio: currentAspectRatio.replace(':', ' / '),
             maxHeight: '100vh',
             maxWidth: '100%',
-            width: aspectRatio === '16:9' ? '100%' : 'auto',
-            height: aspectRatio === '16:9' ? '100%' : '100vh'
+            width: currentAspectRatio === '16:9' ? '100%' : 'auto',
+            height: currentAspectRatio === '16:9' ? '100%' : '100vh'
           }}
         />
       </div>

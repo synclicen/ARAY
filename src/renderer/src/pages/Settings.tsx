@@ -178,14 +178,14 @@ export function SettingsPage() {
           </SettingRow>
 
           <SettingRow
-            icon={<Video className="w-4 h-4" />}
+            icon={<Camera className="w-4 h-4" />}
             label="Video aspect ratio"
             hint="Output dimensions for videos"
           >
             <select
               className="aray-input max-w-[120px]"
-              value={settings.aspect_ratio || '9:16'}
-              onChange={(e) => updateSettings({ aspect_ratio: e.target.value })}
+              value={settings.aspect_ratio_video || settings.aspect_ratio || '9:16'}
+              onChange={(e) => updateSettings({ aspect_ratio_video: e.target.value })}
             >
               <option value="9:16">9:16 (Portrait)</option>
               <option value="1:1">1:1 (Square)</option>
@@ -201,8 +201,8 @@ export function SettingsPage() {
           >
             <select
               className="aray-input max-w-[200px]"
-              value={settings.camera_effect || 'original'}
-              onChange={(e) => updateSettings({ camera_effect: e.target.value })}
+              value={settings.camera_effect_video || settings.camera_effect || 'original'}
+              onChange={(e) => updateSettings({ camera_effect_video: e.target.value })}
             >
               <option value="original">Original</option>
               <option value="purple-haze">Purple Haze</option>
