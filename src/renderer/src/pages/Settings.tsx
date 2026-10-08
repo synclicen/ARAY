@@ -226,6 +226,23 @@ export function SettingsPage() {
           <h3 className="font-semibold">Shared Settings</h3>
         </div>
         <div className="space-y-4">
+          {/* v4.6.4: Booth mode — Photo only, Video only, or Combined */}
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Booth mode"
+            hint="Photo only = khusus foto. Video only = khusus video. Combined = user pilih di booth."
+          >
+            <select
+              className="aray-input max-w-[180px]"
+              value={settings.booth_mode || 'combined'}
+              onChange={(e) => updateSettings({ booth_mode: e.target.value as any })}
+            >
+              <option value="combined">Combined (Photo + Video)</option>
+              <option value="photo">Photo Only</option>
+              <option value="video">Video Only</option>
+            </select>
+          </SettingRow>
+
           <SettingRow
             icon={<Clock className="w-4 h-4" />}
             label="Countdown seconds"

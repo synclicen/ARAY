@@ -88,6 +88,7 @@ export function BoothPage() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [mirror, setMirror] = useState(true)
   const [mode, setMode] = useState<BoothMode>('photo')
+  const boothModeSetting = settings?.booth_mode || 'combined'
   const [activeFilterId, setActiveFilterId] = useState('original')
   const [activeFilterIdVideo, setActiveFilterIdVideo] = useState('original')
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
@@ -640,6 +641,17 @@ export function BoothPage() {
     }
   }, [stopCamera])
 
+  // v4.6.4: Auto-set mode from settings. If 'photo' or 'video', lock mode.
+  // If 'combined', user can switch in greeting screen.
+  useEffect(() => {
+    if (boothModeSetting === 'photo') setMode('photo')
+    else if (boothModeSetting === 'video') setMode('video')
+    // combined: don't override, let user choose
+  }, [boothModeSetting])
+
+  // v4.6.4: Determine if mode selector should be shown in greeting
+  const showModeSelector = boothModeSetting === 'combined'
+
   // Auto-start camera on greeting screen for live background
   useEffect(() => {
     if (phase === 'greeting' && !streamRef.current) {
@@ -965,7 +977,9 @@ export function BoothPage() {
               <ArayLogo size="xl" animated className="mb-8" />
               <p className="text-silver-300 text-xl italic mb-8">Let's make a memory.</p>
 
-              {/* Mode selector: Photo / Video */}
+              {/* v4.6.4: Mode selector — hanya tampil jika booth_mode = 'combined'.
+                  Photo only / Video only: mode sudah locked, selector hidden. */}
+              {showModeSelector && (
               <div className="mb-8 flex items-center justify-center gap-2">
                 <button
                   onClick={() => setMode('photo')}
@@ -988,6 +1002,7 @@ export function BoothPage() {
                   <Video className="w-4 h-4" /> Video
                 </button>
               </div>
+              )}
 
               <ArayButton
                 variant="gold"

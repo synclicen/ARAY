@@ -95,7 +95,7 @@ export interface AraySettings {
   booth_countdown_seconds: number
   booth_shot_count: number
   selected_template_id: string
-  booth_mode: 'photo' | 'video'
+  booth_mode: 'photo' | 'video' | 'combined'
   backup_folder: string | null
   auto_backup: boolean
   camera_effect: string       // photo camera effect
