@@ -35,3 +35,36 @@ Stage Summary:
 - Fix utama: window.aray sekarang ter-register sebelum React render
 - Kalau masih crash, perlu logcat — user install Android Studio atau pakai `adb logcat`
 - PAT user masih aktif, harus di-rotate
+
+---
+Task ID: android-camera-permission-fix
+Agent: main
+Task: Fix "Permission denied" saat buka Booth page di Android
+
+Work Log:
+- User kirim screenshot: error "Permission denied — Your camera took a little break. Please reconnect it." di Booth page
+- Analisis Booth.tsx: pakai navigator.mediaDevices.getUserMedia() (browser native API)
+- Akar masalah:
+  1. Capacitor generate AndroidManifest.xml tanpa CAMERA permission
+  2. Android 6+ wajib runtime permission request, tidak otomatis
+  3. WebView tanpa CAMERA permission granted → getUserMedia reject → Booth error page
+- Fix:
+  - Buat android-app/android-patches/MainActivity.java — custom BridgeActivity yang call
+    ActivityCompat.requestPermissions(CAMERA) di onCreate()
+  - Update workflow: tambah step "Patch native Android" yang:
+    1. Inject CAMERA + RECORD_AUDIO + storage permissions ke AndroidManifest.xml via awk
+    2. Replace MainActivity.java dengan custom version
+    3. Pastikan androidx.core dependency ada di build.gradle
+- Build #15 (v1.0.15) gagal: Python heredoc PYEOF indent issue di YAML
+- Fix: rewrite patch pakai awk one-liner (no heredoc)
+- Build #16 (v1.0.16) sukses dalam 236 detik, semua 19 step lulus
+- Verifikasi APK: extract AndroidManifest.xml binary, parse string pool
+  → ditemukan: CAMERA, RECORD_AUDIO, MODIFY_AUDIO_SETTINGS, READ/WRITE_EXTERNAL_STORAGE,
+    ACCESS_NETWORK_STATE, plus hardware.camera + autofocus features
+- MainActivity.java custom ter-bundle (request runtime permission saat app start)
+
+Stage Summary:
+- Release: https://github.com/synclicen/ARAY/releases/tag/android-v1.0.16
+- Saat install, Android akan prompt "Allow ARAY to take pictures and record video?"
+- User tap Allow → getUserMedia berhasil → Booth page jalan
+- Kalau user tap Deny, masih gagal — perlu tambah UI "Open Settings" supaya user bisa grant permission manual
