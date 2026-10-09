@@ -1,0 +1,105 @@
+name: Build Android APK
+
+on:
+  push:
+    tags:
+      - 'android-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag (e.g., android-v1.0.0)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-34
+            build-tools;34.0.0
+
+      - name: Install Capacitor CLI
+        run: npm install -g @capacitor/cli
+
+      - name: Install Android app dependencies
+        working-directory: android-app
+        run: npm install
+
+      - name: Build web assets
+        working-directory: android-app
+        run: npm run build:web
+
+      - name: Add Android platform
+        working-directory: android-app
+        run: npx cap add android || true
+
+      - name: Sync Capacitor
+        working-directory: android-app
+        run: npx cap sync android
+
+      - name: Build Debug APK
+        working-directory: android-app/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARAY-Android-APK
+          path: android-app/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 90
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/android-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ARAY Android ${{ github.ref_name }}
+          body: |
+            # ARAY Android ${{ github.ref_name }}
+
+            **Are you Ready? and....Yapping!** — Android Edition
+
+            ## Download
+            - `ARAY-Android-debug.apk` — Debug build, sideload ke Android device
+
+            ## Cara Install
+            1. Download APK file
+            2. Enable "Install from unknown sources" di Android Settings
+            3. Buka APK file → Install
+            4. Buka ARAY app
+
+            ## Catatan
+            - Versi Android ini menggunakan Capacitor + WebView
+            - Camera access via browser getUserMedia API
+            - Storage via Capacitor Preferences (key-value)
+            - Print tidak tersedia di Android
+            - Google Drive sync tidak tersedia di Android
+            - License system simplified (always valid for now)
+          files: |
+            android-app/android/app/build/outputs/apk/debug/*.apk
+          draft: false
+          prerelease: false

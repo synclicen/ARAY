@@ -1,0 +1,28 @@
+{
+  "name": "aray-android",
+  "version": "4.6.4",
+  "description": "ARAY — Android Photo Booth App",
+  "main": "index.js",
+  "scripts": {
+    "build:web": "vite build --config vite.android.config.ts",
+    "sync": "cap sync android",
+    "build:android": "npm run build:web && npm run sync && cd android && ./gradlew assembleDebug",
+    "build:release": "npm run build:web && npm run sync && cd android && ./gradlew assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/filesystem": "^6.0.0",
+    "@capacitor/preferences": "^6.0.0",
+    "@capacitor/camera": "^6.0.0",
+    "@capacitor/share": "^6.0.0",
+    "@capacitor/haptics": "^6.0.0",
+    "@capacitor-community/sqlite": "^6.0.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.1",
+    "@vitejs/plugin-react": "^4.3.1"
+  }
+}
