@@ -63,6 +63,62 @@ jobs:
         working-directory: android-app
         run: npx cap add android || true
 
+      - name: Patch native Android (camera permission + runtime request)
+        working-directory: android-app
+        run: |
+          set -e
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          
+          echo "=== Before patch: AndroidManifest.xml ==="
+          cat "$MANIFEST"
+          
+          # Inject CAMERA permission + hardware feature if not present
+          if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
+            python3 << 'PYEOF'
+            import re
+            path = "android/app/src/main/AndroidManifest.xml"
+            with open(path) as f:
+                content = f.read()
+            
+            perms = '''    <uses-permission android:name="android.permission.CAMERA" />
+            <uses-feature android:name="android.hardware.camera" android:required="false" />
+            <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+            <uses-permission android:name="android.permission.RECORD_AUDIO" />
+            <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+            '''
+            
+            # Insert permissions right after <manifest ...> opening tag
+            content = re.sub(r'(<manifest[^>]*>)',
+                            r'\1\n' + perms,
+                            content, count=1)
+            
+            with open(path, 'w') as f:
+                f.write(content)
+            PYEOF
+            echo "✓ Injected CAMERA + storage permissions into AndroidManifest.xml"
+          else
+            echo "✓ CAMERA permission already present"
+          fi
+          
+          echo ""
+          echo "=== After patch: AndroidManifest.xml ==="
+          cat "$MANIFEST"
+
+          # Replace MainActivity.java with custom version that requests runtime permission
+          MAIN_ACTIVITY="android/app/src/main/java/com/aray/booth/MainActivity.java"
+          mkdir -p "$(dirname "$MAIN_ACTIVITY")"
+          cp android-patches/MainActivity.java "$MAIN_ACTIVITY"
+          echo "✓ Replaced MainActivity.java with permission-requesting version"
+
+          # Verify the androidx.core dependency exists in build.gradle (Capacitor 6 includes it by default)
+          if ! grep -q "androidx.core:core" android/app/build.gradle; then
+            echo "  → Adding androidx.core dependency"
+            sed -i '/implementation "com.getcapacitor:haptics"/a \    implementation "androidx.core:core:1.13.1"' android/app/build.gradle 2>/dev/null || true
+          fi
+
       - name: Sync Capacitor
         working-directory: android-app
         run: npx cap sync android
