@@ -74,33 +74,26 @@ jobs:
           
           # Inject CAMERA permission + hardware feature if not present
           if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
-            python3 << 'PYEOF'
-            import re
-            path = "android/app/src/main/AndroidManifest.xml"
-            with open(path) as f:
-                content = f.read()
-            
-            perms = '''    <uses-permission android:name="android.permission.CAMERA" />
-            <uses-feature android:name="android.hardware.camera" android:required="false" />
-            <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-            <uses-permission android:name="android.permission.RECORD_AUDIO" />
-            <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-            <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-            <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-            '''
-            
-            # Insert permissions right after <manifest ...> opening tag
-            content = re.sub(r'(<manifest[^>]*>)',
-                            r'\1\n' + perms,
-                            content, count=1)
-            
-            with open(path, 'w') as f:
-                f.write(content)
-            PYEOF
-            echo "✓ Injected CAMERA + storage permissions into AndroidManifest.xml"
+            # Use awk to insert permissions right after <manifest ...> opening tag
+            awk '
+              /^<manifest[^>]*>/ && !done {
+                print
+                print "    <uses-permission android:name=\"android.permission.CAMERA\" />"
+                print "    <uses-feature android:name=\"android.hardware.camera\" android:required=\"false\" />"
+                print "    <uses-feature android:name=\"android.hardware.camera.autofocus\" android:required=\"false\" />"
+                print "    <uses-permission android:name=\"android.permission.RECORD_AUDIO\" />"
+                print "    <uses-permission android:name=\"android.permission.MODIFY_AUDIO_SETTINGS\" />"
+                print "    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"28\" />"
+                print "    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />"
+                print "    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />"
+                done=1
+                next
+              }
+              { print }
+            ' "$MANIFEST" > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+            echo "OK Injected CAMERA + storage permissions into AndroidManifest.xml"
           else
-            echo "✓ CAMERA permission already present"
+            echo "OK CAMERA permission already present"
           fi
           
           echo ""
@@ -111,12 +104,12 @@ jobs:
           MAIN_ACTIVITY="android/app/src/main/java/com/aray/booth/MainActivity.java"
           mkdir -p "$(dirname "$MAIN_ACTIVITY")"
           cp android-patches/MainActivity.java "$MAIN_ACTIVITY"
-          echo "✓ Replaced MainActivity.java with permission-requesting version"
+          echo "OK Replaced MainActivity.java with permission-requesting version"
 
-          # Verify the androidx.core dependency exists in build.gradle (Capacitor 6 includes it by default)
+          # Ensure androidx.core dependency in app/build.gradle (Capacitor 6 usually includes it transitively)
           if ! grep -q "androidx.core:core" android/app/build.gradle; then
-            echo "  → Adding androidx.core dependency"
-            sed -i '/implementation "com.getcapacitor:haptics"/a \    implementation "androidx.core:core:1.13.1"' android/app/build.gradle 2>/dev/null || true
+            echo "  -> Adding androidx.core dependency"
+            sed -i '/dependencies {/a \    implementation "androidx.core:core:1.13.1"' android/app/build.gradle
           fi
 
       - name: Sync Capacitor
