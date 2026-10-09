@@ -13,6 +13,15 @@ export default defineConfig({
       '@shared': resolve(__dirname, '../src/shared')
     }
   },
+  // Use postcss.config.js from android-app/ dir, not repo root
+  css: {
+    postcss: {
+      plugins: [
+        require('tailwindcss')(resolve(__dirname, 'tailwind.config.ts')),
+        require('autoprefixer'),
+      ],
+    },
+  },
   build: {
     outDir: resolve(__dirname, 'dist'),
     emptyOutDir: true,
