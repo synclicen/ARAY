@@ -774,10 +774,10 @@ export function BoothPage() {
           style={{
             filter: activeFilter.css,
             aspectRatio: currentAspectRatio.replace(':', ' / '),
-            maxHeight: '100vh',
+            maxHeight: '100dvh',
             maxWidth: '100%',
             width: currentAspectRatio === '16:9' ? '100%' : 'auto',
-            height: currentAspectRatio === '16:9' ? '100%' : '100vh'
+            height: currentAspectRatio === '16:9' ? '100%' : '100dvh'
           }}
         />
       </div>
@@ -798,20 +798,20 @@ export function BoothPage() {
       {/* Top bar — hidden saat fullscreenBooth ATAU kiosk mode.
           Di fullscreen/kiosk, hanya tombol X kecil yang tampil (untuk exit). */}
       {!fullscreenBooth && !settings?.kiosk_mode && (
-        <div className="absolute top-0 left-0 right-0 z-20 p-5 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent">
+        <div className="absolute top-0 left-0 right-0 z-20 p-3 sm:p-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between bg-gradient-to-b from-black/60 to-transparent" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}>
           <button
             onClick={() => {
               stopCamera()
               navigate('/dashboard')
             }}
-            className="text-silver-300 hover:text-white flex items-center gap-2 text-sm"
+            className="text-silver-300 hover:text-white flex items-center gap-2 text-sm min-h-[44px]"
           >
             <ChevronLeft className="w-5 h-5" />
             Exit Booth
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
-            <ArayBadge variant="gold">{activeEvent.name}</ArayBadge>
+            <ArayBadge variant="gold" className="hidden xs:inline-flex sm:inline-flex">{activeEvent.name}</ArayBadge>
           </div>
         </div>
       )}
@@ -1088,7 +1088,7 @@ export function BoothPage() {
                   <motion.div
                     animate={{ scale: [1, 1.08, 1] }}
                     transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
-                    className="text-[180px] font-extrabold aray-gradient-text leading-none"
+                    className="text-[64px] xs:text-[90px] sm:text-[120px] md:text-[180px] font-extrabold aray-gradient-text leading-none"
                     style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.7)' }}
                   >
                     SIAP
@@ -1154,7 +1154,7 @@ export function BoothPage() {
                   <motion.div
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    className={`text-[120px] font-extrabold leading-none ${
+                    className={`text-[48px] xs:text-[72px] sm:text-[90px] md:text-[120px] font-extrabold leading-none ${
                       videoDuration - recordingTime <= 3
                         ? 'text-red-400'
                         : 'text-white'
@@ -1287,7 +1287,7 @@ export function BoothPage() {
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ type: 'spring', stiffness: 200, damping: 12 }}
-                className="text-5xl font-extrabold mb-2 aray-gradient-text"
+                className="text-3xl xs:text-4xl sm:text-5xl font-extrabold mb-2 aray-gradient-text"
               >
                 LOOK AT YOU!
               </motion.h1>

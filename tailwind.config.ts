@@ -3,6 +3,15 @@ import type { Config } from 'tailwindcss'
 const config: Config = {
   content: ['./src/renderer/index.html', './src/renderer/src/**/*.{ts,tsx}'],
   theme: {
+    // Add xs breakpoint for fine-grained mobile control (phones 400-640px)
+    screens: {
+      xs: '400px',
+      sm: '640px',
+      md: '768px',
+      lg: '1024px',
+      xl: '1280px',
+      '2xl': '1536px'
+    },
     extend: {
       colors: {
         // PURPLE HAZE — primary brand color

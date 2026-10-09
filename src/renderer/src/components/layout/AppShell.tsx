@@ -165,9 +165,9 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-surface-base">
-      {/* Sidebar */}
+      {/* Sidebar — desktop only (md+). Mobile uses bottom nav. */}
       <aside
-        className={`relative flex flex-col bg-surface-raised/80 backdrop-blur-xl border-r border-silver-300/10 transition-all duration-300 ${
+        className={`relative hidden md:flex flex-col bg-surface-raised/80 backdrop-blur-xl border-r border-silver-300/10 transition-all duration-300 ${
           collapsed ? 'w-20' : 'w-64'
         }`}
       >
@@ -217,25 +217,24 @@ export function AppShell({ children }: AppShellProps) {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 overflow-hidden">
-        <header className="h-14 px-6 flex items-center justify-between border-b border-silver-300/10 bg-surface-raised/40 backdrop-blur-md">
+      <main className="flex-1 overflow-hidden flex flex-col">
+        <header className="h-14 px-4 sm:px-6 flex items-center justify-between border-b border-silver-300/10 bg-surface-raised/40 backdrop-blur-md shrink-0">
           <div className="flex items-center gap-2 text-silver-400 text-sm">
             <Sparkles className="w-4 h-4 text-gold-400" />
-            <span className="italic">Yap. Snap. Repeat.</span>
+            <span className="italic hidden sm:inline">Yap. Snap. Repeat.</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {settings?.google_drive_connected ? (
-              <ArayBadge variant="success">Google Drive Connected</ArayBadge>
+              <ArayBadge variant="success" className="hidden sm:inline-flex">Google Drive Connected</ArayBadge>
             ) : (
-              <ArayBadge variant="silver">Local-Only Mode</ArayBadge>
+              <ArayBadge variant="silver">Local-Only</ArayBadge>
             )}
             <div className="text-xs text-silver-500">ARAY v1.0</div>
           </div>
         </header>
-        <div className="h-[calc(100%-3.5rem-2.5rem)] overflow-y-auto">{children}</div>
-        {/* v4.3.9: Footer — © 2026 · Made by Fajrianor - ARAY: ... - Pusat Humas ...
-            Multi-phrase dengan style berbeda, fit 9:16 vertical. */}
-        <footer className="h-10 px-2 flex items-center justify-center gap-1.5 border-t border-silver-300/10 bg-surface-raised/40 flex-wrap">
+        <div className="flex-1 overflow-y-auto">{children}</div>
+        {/* Footer — desktop only on row layout; mobile hides (bottom nav replaces) */}
+        <footer className="hidden md:flex h-10 px-2 items-center justify-center gap-1.5 border-t border-silver-300/10 bg-surface-raised/40 flex-wrap shrink-0">
           <span className="text-[10px] text-silver-600">© 2026 ·</span>
           <span className="text-[10px] text-silver-500">Made by</span>
           <span className="text-[10px] text-gold-400 font-semibold">Fajrianor</span>
@@ -247,6 +246,132 @@ export function AppShell({ children }: AppShellProps) {
           <span className="text-[10px] text-silver-300">UIN Antasari Banjarmasin</span>
         </footer>
       </main>
+
+      {/* Bottom navigation — mobile only (below md). Replaces sidebar.
+          5 primary items; "More" opens drawer with secondary items. */}
+      <nav
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 flex items-stretch justify-around h-16 px-2 border-t border-silver-300/10 bg-surface-raised/95 backdrop-blur-xl"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        {[
+          { to: '/dashboard', label: 'Home', icon: LayoutDashboard },
+          { to: '/events', label: 'Events', icon: CalendarDays },
+          { to: '/booth', label: 'Booth', icon: Camera, primary: true },
+          { to: '/gallery', label: 'Gallery', icon: Images },
+          { to: '/settings', label: 'Settings', icon: SettingsIcon }
+        ].map((item) => {
+          const Icon = item.icon
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                `flex flex-col items-center justify-center gap-1 px-3 min-w-[60px] transition-all ${
+                  item.primary
+                    ? 'relative -mt-4'
+                    : ''
+                }`
+              }
+            >
+              {({ isActive }) => (
+                <>
+                  {item.primary ? (
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center shadow-glow-purple transition-all ${
+                      isActive
+                        ? 'bg-gradient-to-br from-purple-haze-400 to-purple-haze-600 scale-105'
+                        : 'bg-gradient-to-br from-purple-haze-500 to-purple-haze-700'
+                    }`}>
+                      <Icon className="w-5 h-5 text-white" />
+                    </div>
+                  ) : (
+                    <Icon className={`w-5 h-5 transition-colors ${isActive ? 'text-purple-haze-300' : 'text-silver-500'}`} />
+                  )}
+                  <span className={`text-[10px] font-medium transition-colors ${isActive ? 'text-purple-haze-300' : 'text-silver-500'} ${item.primary ? 'mt-0' : ''}`}>
+                    {item.label}
+                  </span>
+                </>
+              )}
+            </NavLink>
+          )
+        })}
+      </nav>
+
+      {/* Mobile secondary nav drawer — accessed via long-press on Settings or via a "More" button.
+          For simplicity, we add a small "More" button on the header (mobile) that opens this drawer. */}
+      <MobileMoreMenu />
     </div>
+  )
+}
+
+/** Mobile "More" menu — opens a bottom sheet with secondary nav items (Templates, Sync, Printer). */
+function MobileMoreMenu() {
+  const [open, setOpen] = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Listen for a custom event to open this drawer (triggered from header "More" button)
+  useEffect(() => {
+    const handler = () => setOpen(true)
+    window.addEventListener('aray:open-more', handler)
+    return () => window.removeEventListener('aray:open-more', handler)
+  }, [])
+
+  // Close on route change
+  useEffect(() => { setOpen(false) }, [location.pathname])
+
+  const secondary = [
+    { to: '/templates', label: 'Templates', icon: LayoutTemplate },
+    { to: '/sync', label: 'Sync Center', icon: RefreshCw },
+    { to: '/printer', label: 'Printer', icon: Printer }
+  ]
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="md:hidden fixed right-3 z-30 w-10 h-10 rounded-full bg-surface-elevated/95 border border-silver-300/15 flex items-center justify-center shadow-card"
+        style={{ top: 'calc(env(safe-area-inset-top) + 0.5rem)' }}
+        aria-label="More menu"
+      >
+        <span className="text-silver-300 text-lg leading-none">⋯</span>
+      </button>
+    )
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setOpen(false)}
+        className="md:hidden fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+        aria-label="Close menu"
+      />
+      <div
+        className="md:hidden fixed bottom-20 left-3 right-3 z-50 bg-surface-raised border border-silver-300/15 rounded-2xl shadow-card p-3"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <div className="text-xs text-silver-500 px-2 py-1 mb-2">More</div>
+        <div className="grid grid-cols-3 gap-2">
+          {secondary.map((item) => {
+            const Icon = item.icon
+            return (
+              <button
+                key={item.to}
+                onClick={() => navigate(item.to)}
+                className="flex flex-col items-center gap-2 p-3 rounded-xl bg-surface-elevated/60 hover:bg-purple-haze-500/20 transition-all min-h-[80px]"
+              >
+                <Icon className="w-5 h-5 text-purple-haze-300" />
+                <span className="text-xs text-silver-300">{item.label}</span>
+              </button>
+            )
+          })}
+        </div>
+        <button
+          onClick={() => setOpen(false)}
+          className="w-full mt-3 py-2 text-xs text-silver-500 hover:text-silver-300"
+        >
+          Close
+        </button>
+      </div>
+    </>
   )
 }

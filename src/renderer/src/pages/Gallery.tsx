@@ -151,8 +151,8 @@ export function GalleryPage() {
   }
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="page-padding space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold mb-1 aray-gradient-text">Gallery</h1>
           <p className="text-silver-400 text-sm">
@@ -587,20 +587,21 @@ function MediaDetailModal({
           </button>
         </div>
 
-        <div className="flex items-center justify-between p-4 border-t border-silver-300/10">
-          <div className="text-xs text-silver-500 font-mono truncate max-w-md">
+        <div className="flex flex-col gap-3 p-4 border-t border-silver-300/10">
+          <div className="text-xs text-silver-500 font-mono truncate hidden sm:block">
             {media.original_path}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             <ArayButton variant="ghost" icon={<Printer className="w-4 h-4" />} onClick={() => window.aray.print.queue(media.id)}>
-              Print
+              <span className="hidden sm:inline">Print</span>
             </ArayButton>
             <ArayButton variant="ghost" icon={<Share2 className="w-4 h-4" />}>
-              Share
+              <span className="hidden sm:inline">Share</span>
             </ArayButton>
             <ArayButton
               variant="ghost"
               icon={<FolderOpen className="w-4 h-4" />}
+              className="hidden sm:inline-flex"
               onClick={async () => {
                 // v4.3.5: Open folder + select file di Explorer.
                 // Pakai media.openInFolder (shell.showItemInFolder) — buka folder
@@ -625,7 +626,7 @@ function MediaDetailModal({
                 }
               }}
             >
-              Delete
+              <span className="hidden sm:inline">Delete</span>
             </ArayButton>
           </div>
         </div>

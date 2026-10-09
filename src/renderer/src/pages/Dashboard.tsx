@@ -37,9 +37,9 @@ export function DashboardPage() {
   const storageWarning = storageInfo?.warning ?? false
 
   return (
-    <div className="p-8 space-y-8">
+    <div className="page-padding space-y-6 md:space-y-8">
       {/* Hero */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold mb-1">
             <span className="aray-gradient-text">Dashboard</span>
@@ -128,20 +128,20 @@ export function DashboardPage() {
             </ArayBadge>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 mb-5">
+          <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-5">
             <div>
-              <div className="text-xs text-silver-500 uppercase tracking-wide">Total</div>
-              <div className="text-xl font-bold">{formatBytes(storageInfo?.total_bytes ?? 0)}</div>
+              <div className="text-[10px] sm:text-xs text-silver-500 uppercase tracking-wide">Total</div>
+              <div className="text-base sm:text-xl font-bold">{formatBytes(storageInfo?.total_bytes ?? 0)}</div>
             </div>
             <div>
-              <div className="text-xs text-silver-500 uppercase tracking-wide">Used</div>
-              <div className="text-xl font-bold text-purple-haze-200">
+              <div className="text-[10px] sm:text-xs text-silver-500 uppercase tracking-wide">Used</div>
+              <div className="text-base sm:text-xl font-bold text-purple-haze-200">
                 {formatBytes(storageInfo?.used_bytes ?? 0)}
               </div>
             </div>
             <div>
-              <div className="text-xs text-silver-500 uppercase tracking-wide">Free</div>
-              <div className="text-xl font-bold text-gold-300">
+              <div className="text-[10px] sm:text-xs text-silver-500 uppercase tracking-wide">Free</div>
+              <div className="text-base sm:text-xl font-bold text-gold-300">
                 {formatBytes(storageInfo?.free_bytes ?? 0)}
               </div>
             </div>

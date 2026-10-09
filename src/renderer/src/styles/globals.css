@@ -23,29 +23,40 @@
     color: #ededf1;
     overflow: hidden;
     user-select: none;
+    /* Safe area for notch / gesture bar (Android Capacitor) */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 
-  /* Custom scrollbar */
-  ::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-  }
-  ::-webkit-scrollbar-track {
-    background: #120d24;
-  }
-  ::-webkit-scrollbar-thumb {
-    background: #392b5a;
-    border-radius: 6px;
-    border: 2px solid #120d24;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #7b61a8;
+  /* Custom scrollbar — desktop only (mobile uses touch) */
+  @media (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #120d24;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #392b5a;
+      border-radius: 6px;
+      border: 2px solid #120d24;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #7b61a8;
+    }
   }
 
   input,
   textarea,
-  select {
+  select,
+  [contenteditable] {
     user-select: text;
+  }
+
+  /* Prevent iOS/Android rubber-band scroll on body but allow inner scroll */
+  @media (max-width: 767px) {
+    html, body { overscroll-behavior: contain; }
+    body { font-size: 14px; }
   }
 }
 
@@ -69,7 +80,7 @@
   }
 
   .aray-btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all;
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all min-h-[44px];
     background: linear-gradient(135deg, #7b61a8 0%, #654e8e 100%);
     color: #f4f0fa;
     box-shadow: 0 4px 16px rgba(123, 97, 168, 0.35);
@@ -84,7 +95,7 @@
   }
 
   .aray-btn-gold {
-    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all;
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all min-h-[44px];
     background: linear-gradient(135deg, #d4af37 0%, #b8932b 100%);
     color: #1a1404;
     box-shadow: 0 4px 16px rgba(212, 175, 55, 0.35);
@@ -95,7 +106,7 @@
   }
 
   .aray-btn-silver {
-    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all;
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all min-h-[44px];
     background: rgba(192, 192, 200, 0.08);
     color: #dcdce3;
     border: 1px solid rgba(192, 192, 200, 0.18);
@@ -106,7 +117,7 @@
   }
 
   .aray-btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-medium text-sm transition-all min-h-[44px];
     color: #a8a8b2;
   }
   .aray-btn-ghost:hover {
@@ -115,7 +126,7 @@
   }
 
   .aray-input {
-    @apply w-full px-4 py-2.5 rounded-xl text-sm transition-all outline-none;
+    @apply w-full px-4 py-3 sm:py-2.5 rounded-xl text-sm transition-all outline-none min-h-[44px];
     background: rgba(18, 13, 36, 0.6);
     border: 1px solid rgba(192, 192, 200, 0.16);
     color: #ededf1;
@@ -135,7 +146,7 @@
   }
   .portrait-container > video {
     aspect-ratio: 9 / 16;
-    max-height: 100vh;
+    max-height: 100dvh;
     margin: 0 auto;
   }
   .square-container {
@@ -144,7 +155,7 @@
   }
   .square-container > video {
     aspect-ratio: 1 / 1;
-    max-height: 100vh;
+    max-height: 100dvh;
     margin: 0 auto;
   }
   .ratio43-container {
@@ -153,7 +164,7 @@
   }
   .ratio43-container > video {
     aspect-ratio: 4 / 3;
-    max-height: 100vh;
+    max-height: 100dvh;
     margin: 0 auto;
   }
   .landscape-container {
@@ -168,5 +179,13 @@
 
   .aray-badge {
     @apply inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  /* Mobile-first utility helpers */
+  .page-padding {
+    @apply p-4 sm:p-6 md:p-8;
+  }
+  .hero-row {
+    @apply flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between;
   }
 }

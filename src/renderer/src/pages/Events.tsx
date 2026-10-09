@@ -35,8 +35,8 @@ export function EventsPage() {
   )
 
   return (
-    <div className="p-8 space-y-6" onClick={() => setMenuOpenId(null)}>
-      <div className="flex items-center justify-between">
+    <div className="page-padding space-y-6" onClick={() => setMenuOpenId(null)}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold mb-1 aray-gradient-text">Events</h1>
           <p className="text-silver-400 text-sm">
@@ -305,7 +305,7 @@ function CreateEventModal({
               spellCheck={false}
             />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Client">
               <input className="aray-input" value={client} onChange={(e) => setClient(e.target.value)} autoComplete="off" autoCorrect="off" spellCheck={false} />
             </Field>

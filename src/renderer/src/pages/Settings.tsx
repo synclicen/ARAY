@@ -37,7 +37,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="p-8 space-y-6 max-w-4xl">
+    <div className="page-padding space-y-6 max-w-4xl">
       <div>
         <h1 className="text-3xl font-bold mb-1 aray-gradient-text">Settings</h1>
         <p className="text-silver-400 text-sm">
@@ -94,7 +94,7 @@ export function SettingsPage() {
             hint="How many photos per session"
           >
             <select
-              className="aray-input max-w-[120px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[120px]"
               value={settings.booth_shot_count}
               onChange={(e) => updateSettings({ booth_shot_count: parseInt(e.target.value, 10) })}
             >
@@ -110,7 +110,7 @@ export function SettingsPage() {
             hint="Output dimensions for photos"
           >
             <select
-              className="aray-input max-w-[120px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[120px]"
               value={settings.aspect_ratio || '9:16'}
               onChange={(e) => updateSettings({ aspect_ratio: e.target.value })}
             >
@@ -127,7 +127,7 @@ export function SettingsPage() {
             hint="Cinematic filter applied to photos"
           >
             <select
-              className="aray-input max-w-[200px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[200px]"
               value={settings.camera_effect || 'original'}
               onChange={(e) => updateSettings({ camera_effect: e.target.value })}
             >
@@ -166,7 +166,7 @@ export function SettingsPage() {
             hint="Motion effect for video booth recordings"
           >
             <select
-              className="aray-input max-w-[300px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[300px]"
               value={settings.video_template || 'viral-bounce-10'}
               onChange={(e) => updateSettings({ video_template: e.target.value })}
             >
@@ -184,7 +184,7 @@ export function SettingsPage() {
             hint="Output dimensions for videos"
           >
             <select
-              className="aray-input max-w-[120px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[120px]"
               value={settings.aspect_ratio_video || settings.aspect_ratio || '9:16'}
               onChange={(e) => updateSettings({ aspect_ratio_video: e.target.value })}
             >
@@ -201,7 +201,7 @@ export function SettingsPage() {
             hint="Cinematic filter applied to videos"
           >
             <select
-              className="aray-input max-w-[200px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[200px]"
               value={settings.camera_effect_video || settings.camera_effect || 'original'}
               onChange={(e) => updateSettings({ camera_effect_video: e.target.value })}
             >
@@ -233,7 +233,7 @@ export function SettingsPage() {
             hint="Photo only = khusus foto. Video only = khusus video. Combined = user pilih di booth."
           >
             <select
-              className="aray-input max-w-[180px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[180px]"
               value={settings.booth_mode || 'combined'}
               onChange={(e) => updateSettings({ booth_mode: e.target.value as any })}
             >
@@ -249,7 +249,7 @@ export function SettingsPage() {
             hint="Delay before each capture (photo & video)"
           >
             <select
-              className="aray-input max-w-[120px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[120px]"
               value={settings.booth_countdown_seconds}
               onChange={(e) => updateSettings({ booth_countdown_seconds: parseInt(e.target.value, 10) })}
             >
@@ -276,7 +276,7 @@ export function SettingsPage() {
             hint="Semakin tinggi = semakin mudah mendeteksi telapak tangan"
           >
             <select
-              className="aray-input max-w-[160px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[160px]"
               value={settings.palm_trigger_sensitivity || 0.6}
               onChange={(e) => updateSettings({ palm_trigger_sensitivity: parseFloat(e.target.value) })}
               disabled={!settings.palm_trigger}
@@ -294,7 +294,7 @@ export function SettingsPage() {
           >
             <input
               type="text"
-              className="aray-input max-w-[200px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[200px]"
               value={settings.booth_fullscreen_password ?? 'aray'}
               onChange={(e) => updateSettings({ booth_fullscreen_password: e.target.value })}
               placeholder="aray"
@@ -320,7 +320,7 @@ export function SettingsPage() {
           >
             <input
               type="url"
-              className="aray-input max-w-[280px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[280px]"
               value={settings.share_qr_link || ''}
               onChange={(e) => updateSettings({ share_qr_link: e.target.value })}
               disabled={!settings.share_qr_enabled}
@@ -401,7 +401,7 @@ export function SettingsPage() {
             hint="How often pending files upload"
           >
             <select
-              className="aray-input max-w-[180px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[180px]"
               value={settings.sync_interval}
               onChange={(e) => updateSettings({ sync_interval: e.target.value as any })}
               disabled={!settings.google_drive_connected}
@@ -490,7 +490,7 @@ function SettingRow({
   danger?: boolean
 }) {
   return (
-    <div className="flex items-center justify-between py-2">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between py-3">
       <div className="flex items-start gap-3">
         <div className={`${danger ? 'text-yellow-300' : 'text-silver-400'} mt-0.5`}>{icon}</div>
         <div>
@@ -498,7 +498,7 @@ function SettingRow({
           {hint && <div className="text-xs text-silver-500 mt-0.5">{hint}</div>}
         </div>
       </div>
-      {children}
+      <div className="w-full sm:w-auto sm:max-w-[320px]">{children}</div>
     </div>
   )
 }

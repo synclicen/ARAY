@@ -18,11 +18,11 @@ const variantClass: Record<Variant, string> = {
   silver: 'aray-btn-silver',
   ghost: 'aray-btn-ghost',
   danger:
-    'inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25'
+    'inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm transition-all min-h-[44px] bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25'
 }
 
 const sizeClass: Record<Size, string> = {
-  sm: 'text-xs px-3 py-1.5',
+  sm: 'text-xs px-3 py-1.5 min-h-[36px] sm:min-h-[auto]',
   md: 'text-sm px-5 py-2.5',
   lg: 'text-base px-6 py-3',
   xl: 'text-lg px-8 py-4'

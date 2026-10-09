@@ -104,8 +104,8 @@ export function TemplatesPage() {
   }
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="page-padding space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold mb-1 aray-gradient-text">Templates</h1>
           <p className="text-silver-400 text-sm">
@@ -202,7 +202,7 @@ export function TemplatesPage() {
                   <ArayBadge variant={template.variant}>{template.variant}</ArayBadge>
                 </div>
                 <p className="text-xs text-silver-500 mb-2">{template.description}</p>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <span className="text-xs text-silver-600">{template.shotCount} photos</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); setPreviewTemplate(template) }}
@@ -251,7 +251,7 @@ export function TemplatesPage() {
                   <p className="text-xs text-silver-500 mb-2">
                     Layout: {LAYOUTS.find(l => l.id === custom.layout)?.name || custom.layout}
                   </p>
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-xs text-silver-600">{custom.shotCount} photos</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDeleteCustom(custom.id) }}
