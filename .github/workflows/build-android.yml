@@ -49,6 +49,9 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools" >> $GITHUB_ENV
 
+      - name: Install root dependencies (for module resolution)
+        run: npm install
+
       - name: Install Capacitor CLI
         run: npm install -g @capacitor/cli
 
