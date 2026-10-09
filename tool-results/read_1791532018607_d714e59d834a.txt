@@ -1,0 +1,1513 @@
+     1→import { useEffect, useRef, useState, useCallback } from 'react'
+     2→import { useNavigate } from 'react-router-dom'
+     3→import { motion, AnimatePresence } from 'framer-motion'
+     4→import {
+     5→  Camera,
+     6→  RefreshCw,
+     7→  Check,
+     8→  X,
+     9→  ChevronLeft,
+    10→  Printer,
+    11→  Share2,
+    12→  RotateCcw,
+    13→  Sparkles,
+    14→  AlertTriangle,
+    15→  Video,
+    16→  Image as ImageIcon,
+    17→  LayoutTemplate,
+    18→  Maximize2
+    19→} from 'lucide-react'
+    20→import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
+    21→import { useEventStore } from '../stores/events'
+    22→import { useMediaStore } from '../stores/media'
+    23→import { useSettingsStore } from '../stores/settings'
+    24→import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
+    25→import { VIDEO_TEMPLATES, drawMotionFrame, type VideoTemplate } from '../services/video-templates'
+    26→import { PalmTrigger } from '../services/palm-trigger'
+    27→
+    28→// Aspect ratio dimensions helper
+    29→const aspectDims: Record<string, { w: number; h: number }> = {
+    30→  '16:9': { w: 1280, h: 720 },
+    31→  '9:16': { w: 720, h: 1280 },
+    32→  '1:1': { w: 1080, h: 1080 },
+    33→  '4:3': { w: 1024, h: 768 }
+    34→}
+    35→
+    36→
+    37→import type { ArayMedia } from '@shared/types'
+    38→import QRCode from 'qrcode'
+    39→
+    40→type BoothPhase = 'greeting' | 'preview' | 'countdown' | 'flash' | 'review' | 'result' | 'error'
+    41→type BoothMode = 'photo' | 'video'
+    42→
+    43→// ─── CINEMATIC FILTERS (5 styles) ───────────────────────────────
+    44→interface CameraFilter {
+    45→  id: string
+    46→  name: string
+    47→  css: string
+    48→  canvasFilter: string
+    49→}
+    50→
+    51→const FILTERS: CameraFilter[] = [
+    52→  { id: 'original', name: 'Original', css: 'none', canvasFilter: 'none' },
+    53→  { id: 'purple-haze', name: 'Purple Haze', css: 'hue-rotate(270deg) saturate(1.4) contrast(1.15) brightness(1.05)', canvasFilter: 'hue-rotate(270deg) saturate(1.4) contrast(1.15) brightness(1.05)' },
+    54→  { id: 'vintage', name: 'Vintage', css: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)', canvasFilter: 'sepia(0.5) contrast(1.1) brightness(1.1) saturate(1.3)' },
+    55→  { id: 'noir', name: 'Noir B&W', css: 'grayscale(1) contrast(1.4) brightness(1.05)', canvasFilter: 'grayscale(1) contrast(1.4) brightness(1.05)' },
+    56→  { id: 'cool-blue', name: 'Cool Blue', css: 'hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)', canvasFilter: 'hue-rotate(180deg) saturate(1.2) contrast(1.1) brightness(0.95)' },
+    57→  { id: 'warm-sunset', name: 'Warm Sunset', css: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)', canvasFilter: 'sepia(0.3) saturate(1.6) hue-rotate(-10deg) brightness(1.1)' },
+    58→  { id: 'cinematic', name: 'Cinematic', css: 'contrast(1.15) saturate(1.1)', canvasFilter: 'contrast(1.15) saturate(1.1)' },
+    59→  { id: 'vintage-film', name: 'Vintage Film', css: 'sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)', canvasFilter: 'sepia(0.4) contrast(1.1) saturate(1.3) brightness(1.05)' },
+    60→  { id: 'neon-pulse', name: 'Neon Pulse', css: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)', canvasFilter: 'hue-rotate(270deg) saturate(1.5) contrast(1.2) brightness(1.1)' }
+    61→]
+    62→
+    63→// Video templates defined in services/video-templates.ts
+    64→
+    65→interface CapturedShot {
+    66→  shotNumber: number
+    67→  mediaId: string
+    68→  dataUrl: string
+    69→}
+    70→
+    71→export function BoothPage() {
+    72→  const navigate = useNavigate()
+    73→  const videoRef = useRef<HTMLVideoElement>(null)
+    74→  const canvasRef = useRef<HTMLCanvasElement>(null)
+    75→  const streamRef = useRef<MediaStream | null>(null)
+    76→
+    77→  const { events, loadEvents, activeEventId, setActiveEvent } = useEventStore()
+    78→  const { addMedia } = useMediaStore()
+    79→  const { settings } = useSettingsStore()
+    80→
+    81→  const [phase, setPhase] = useState<BoothPhase>('greeting')
+    82→  const [countdown, setCountdown] = useState<number>(0)
+    83→  const [capturedShots, setCapturedShots] = useState<CapturedShot[]>([])
+    84→  const [currentShot, setCurrentShot] = useState(1)
+    85→  const [error, setError] = useState<string | null>(null)
+    86→  const [lastFlash, setLastFlash] = useState(false)
+    87→  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+    88→  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+    89→  const [mirror, setMirror] = useState(true)
+    90→  const [mode, setMode] = useState<BoothMode>('photo')
+    91→  const boothModeSetting = settings?.booth_mode || 'combined'
+    92→  const [activeFilterId, setActiveFilterId] = useState('original')
+    93→  const [activeFilterIdVideo, setActiveFilterIdVideo] = useState('original')
+    94→  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
+    95→  const [aspectRatioVideo, setAspectRatioVideo] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
+    96→  const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('plain')
+    97→  const [videoDuration, setVideoDuration] = useState(15)
+    98→  const [isRecording, setIsRecording] = useState(false)
+    99→  const [recordingTime, setRecordingTime] = useState(0)
+   100→  const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
+   101→  const [compositing, setCompositing] = useState(false)
+   102→  const [compositeMediaId, setCompositeMediaId] = useState<string | null>(null)
+   103→  const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
+   104→  const [palmTriggerActive, setPalmTriggerActive] = useState(false)
+   105→  const [palmState, setPalmState] = useState<'none' | 'searching' | 'hand_detected' | 'confirmed' | 'triggered'>('none')
+   106→  const [palmStatus, setPalmStatus] = useState<'unloaded' | 'loading_scripts' | 'loading_model' | 'model_ready' | 'detecting' | 'stopped' | 'error'>('unloaded')
+   107→  const [palmError, setPalmError] = useState<string | null>(null)
+   108→  const [palmDebug, setPalmDebug] = useState<{
+   109→    handDetected: boolean
+   110→    landmarkCount: number
+   111→    openPalm: boolean
+   112→    fingerStatus: { finger: string; extended: boolean }[]
+   113→  } | null>(null)
+   114→  const palmTriggerRef = useRef<PalmTrigger | null>(null)
+   115→  // v4.1.3: Fullscreen booth mode — hide all UI except camera + palm overlay.
+   116→  // Toggle button di pojok kanan atas. Exit butuh password (configurable di Settings).
+   117→  const [fullscreenBooth, setFullscreenBooth] = useState(false)
+   118→  const [showPasswordModal, setShowPasswordModal] = useState(false)
+   119→  const [passwordInput, setPasswordInput] = useState('')
+   120→  const [passwordError, setPasswordError] = useState(false)
+   121→  // v4.2.1: Share QR modal — tampilkan QR code dari share_qr_link
+   122→  const [showQrModal, setShowQrModal] = useState(false)
+   123→  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+   124→  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+   125→  const recordedChunksRef = useRef<Blob[]>([])
+   126→  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+   127→
+   128→  const activeEvent = events.find((e) => e.id === activeEventId) ?? events[0]
+   129→  const totalShots = settings?.booth_shot_count ?? 4
+   130→  const countdownSeconds = settings?.booth_countdown_seconds ?? 3
+   131→  const activeFilter = FILTERS.find(f => f.id === (mode === 'video' ? activeFilterIdVideo : activeFilterId)) || FILTERS[0]
+   132→  const activeVideoTemplate = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
+   133→  const currentAspectRatio = mode === 'video' ? aspectRatioVideo : aspectRatio
+   134→
+   135→  // Refs to avoid stale closures in async recording callbacks
+   136→      const activeFilterRef = useRef(activeFilter)
+   137→  const mirrorRef = useRef(mirror)
+   138→      activeFilterRef.current = activeFilter
+   139→  mirrorRef.current = mirror
+   140→
+   141→  // Palm trigger needs latest runCountdown (changes when currentShot/totalShots/mode change)
+   142→  // — without this ref, the trigger callback captures a stale runCountdown at the
+   143→  // moment the palm-trigger effect first runs (e.g., on entering preview for shot 1),
+   144→  // and never sees shot 2's countdown logic.
+   145→  // Declaration here; assignment lives further down (after runCountdown is defined).
+   146→  const runCountdownRef = useRef<() => void>(() => {})
+   147→  // v4.3.7: Ref for startRecording — dipakai palm trigger video mode
+   148→  const startRecordingRef = useRef<() => void>(() => {})
+   149→
+   150→  useEffect(() => {
+   151→    if (events.length === 0) loadEvents()
+   152→    // Load booth settings from Settings page
+   153→    if (settings) {
+   154→      if (settings.camera_effect) setActiveFilterId(settings.camera_effect)
+   155→      if (settings.camera_effect_video) setActiveFilterIdVideo(settings.camera_effect_video)
+   156→      if (settings.aspect_ratio) setAspectRatio(settings.aspect_ratio as any)
+   157→      if (settings.aspect_ratio_video) setAspectRatioVideo(settings.aspect_ratio_video as any)
+   158→      if (settings.video_template) setSelectedVideoTemplate(settings.video_template)
+   159→    }
+   160→  }, [events.length, loadEvents, settings])
+   161→
+   162→  const stopCamera = useCallback(() => {
+   163→    if (streamRef.current) {
+   164→      streamRef.current.getTracks().forEach((t) => t.stop())
+   165→      streamRef.current = null
+   166→    }
+   167→  }, [])
+   168→
+   169→  const startCamera = useCallback(async () => {
+   170→    try {
+   171→      setError(null)
+   172→      const stream = await navigator.mediaDevices.getUserMedia({
+   173→        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+   174→        audio: false
+   175→      })
+   176→      streamRef.current = stream
+   177→      if (videoRef.current) {
+   178→        videoRef.current.srcObject = stream
+   179→        await videoRef.current.play()
+   180→      }
+   181→      return true
+   182→    } catch (e: any) {
+   183→      console.error('[Booth] Camera error:', e)
+   184→      setError(e?.message ?? 'Camera failed to start')
+   185→      setPhase('error')
+   186→      return false
+   187→    }
+   188→  }, [])
+   189→
+   190→  const captureFrame = useCallback((): { full: string; thumb: string } | null => {
+   191→    const video = videoRef.current
+   192→    const canvas = canvasRef.current
+   193→    if (!video || !canvas) return null
+   194→    if (video.videoWidth === 0 || video.videoHeight === 0) return null
+   195→
+   196→    const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+   197→    const w = dims.w
+   198→    const h = dims.h
+   199→    canvas.width = w
+   200→    canvas.height = h
+   201→    const ctx = canvas.getContext('2d')
+   202→    if (!ctx) return null
+   203→
+   204→    // Apply cinematic filter to canvas
+   205→    if (activeFilter.canvasFilter !== 'none') {
+   206→      ctx.filter = activeFilter.canvasFilter
+   207→    }
+   208→    // Mirror
+   209→    if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1) }
+   210→
+   211→    // Cover-fit: crop video to match canvas aspect ratio (no stretching)
+   212→    const vw = video.videoWidth
+   213→    const vh = video.videoHeight
+   214→    const canvasRatio = w / h
+   215→    const videoRatio = vw / vh
+   216→    let sx = 0, sy = 0, sw = vw, sh = vh
+   217→    if (videoRatio > canvasRatio) {
+   218→      // Video wider than canvas — crop sides
+   219→      sw = vh * canvasRatio
+   220→      sx = (vw - sw) / 2
+   221→    } else {
+   222→      // Video taller than canvas — crop top/bottom
+   223→      sh = vw / canvasRatio
+   224→      sy = (vh - sh) / 2
+   225→    }
+   226→    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h)
+   227→    ctx.setTransform(1, 0, 0, 1, 0, 0)
+   228→    ctx.filter = 'none'
+   229→
+   230→    const full = canvas.toDataURL('image/jpeg', 0.92)
+   231→
+   232→    // Thumbnail — same aspect ratio, smaller
+   233→    const tc = document.createElement('canvas')
+   234→    const thumbW = 320
+   235→    const thumbH = Math.round(320 * h / w)
+   236→    tc.width = thumbW; tc.height = thumbH
+   237→    const tctx = tc.getContext('2d')
+   238→    if (!tctx) return { full, thumb: full }
+   239→    if (activeFilter.canvasFilter !== 'none') tctx.filter = activeFilter.canvasFilter
+   240→    if (mirror) { tctx.translate(thumbW, 0); tctx.scale(-1, 1) }
+   241→    tctx.drawImage(video, sx, sy, sw, sh, 0, 0, thumbW, thumbH)
+   242→    tctx.setTransform(1, 0, 0, 1, 0, 0)
+   243→    const thumb = tc.toDataURL('image/jpeg', 0.8)
+   244→    return { full, thumb }
+   245→  }, [mirror, activeFilter, currentAspectRatio])
+   246→
+   247→  const performCapture = useCallback(async (retakeShotNumber?: number) => {
+   248→    if (!activeEvent) {
+   249→      setError('No active event selected. Create one in Events first.')
+   250→      setPhase('error')
+   251→      return
+   252→    }
+   253→
+   254→    const frames = captureFrame()
+   255→    if (!frames) {
+   256→      setError('Failed to capture frame. Camera may not be ready.')
+   257→      setPhase('error')
+   258→      return
+   259→    }
+   260→
+   261→    // Flash effect
+   262→    setLastFlash(true)
+   263→    setTimeout(() => setLastFlash(false), 220)
+   264→
+   265→    try {
+   266→      let sessionId = (window as any).__aray_current_session_id as string | undefined
+   267→      if (!sessionId) {
+   268→        const sessionResult = await window.aray.sessions.create(activeEvent.id, 'photo', totalShots)
+   269→        if (!sessionResult.success) throw new Error('Failed to create session')
+   270→        sessionId = (sessionResult.data as any).id
+   271→        ;(window as any).__aray_current_session_id = sessionId
+   272→      }
+   273→
+   274→      const shotNum = retakeShotNumber ?? currentShot
+   275→      setCapturedShots((prev) => {
+   276→        // v4.6.2: Retake individual shot — replace existing shot data
+   277→        const idx = prev.findIndex(s => s.shotNumber === shotNum)
+   278→        if (idx !== -1) {
+   279→          const updated = [...prev]
+   280→          updated[idx] = { shotNumber: shotNum, mediaId: `temp_${shotNum}`, dataUrl: frames.full }
+   281→          return updated
+   282→        }
+   283→        return [...prev, { shotNumber: shotNum, mediaId: `temp_${shotNum}`, dataUrl: frames.full }]
+   284→      })
+   285→      console.log('[Booth] Shot', shotNum, retakeShotNumber ? 'RETAKE' : '', 'captured (in-memory only)')
+   286→    } catch (e: any) {
+   287→      setError(e.message)
+   288→      setPhase('error')
+   289→    }
+   290→  }, [activeEvent, captureFrame, currentShot, totalShots])
+   291→
+   292→  // ─── VIDEO RECORDING (canvas-based for filter support) ────────
+   293→  const canvasRecordRef = useRef<HTMLCanvasElement | null>(null)
+   294→  const rafRecordRef = useRef<number | null>(null)
+   295→  const recordTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+   296→
+   297→  // v4.5.0: cleanupAllRecording — bersihkan SEMUA refs/timers dari recording sebelumnya.
+   298→  // Dipanggil sebelum startRecording dan saat Retake/Done untuk prevent:
+   299→  // - Double countdown (timer lama masih running)
+   300→  // - Flicker (recordingTimer interval masih jalan)
+   301→  // - Draw loop conflict (rafRecordRef lama masih jalan)
+   302→  // - Video tidak tersimpan (MediaRecorder state conflict)
+   303→  const cleanupAllRecording = useCallback(() => {
+   304→    console.log('[Booth] cleanupAllRecording — clearing all refs/timers')
+   305→    // Stop MediaRecorder
+   306→    if (mediaRecorderRef.current) {
+   307→      try {
+   308→        if (mediaRecorderRef.current.state !== 'inactive') {
+   309→          mediaRecorderRef.current.stop()
+   310→        }
+   311→      } catch (e) {
+   312→        console.warn('[Booth] Error stopping MediaRecorder:', e)
+   313→      }
+   314→      mediaRecorderRef.current = null
+   315→    }
+   316→    // Cancel draw loop
+   317→    if (rafRecordRef.current) {
+   318→      cancelAnimationFrame(rafRecordRef.current)
+   319→      rafRecordRef.current = null
+   320→    }
+   321→    // Clear recording timer (interval yang update recordingTime)
+   322→    if (recordingTimerRef.current) {
+   323→      clearInterval(recordingTimerRef.current)
+   324→      recordingTimerRef.current = null
+   325→    }
+   326→    // Clear auto-stop timeout
+   327→    if (recordTimeoutRef.current) {
+   328→      clearTimeout(recordTimeoutRef.current)
+   329→      recordTimeoutRef.current = null
+   330→    }
+   331→    // Reset state
+   332→    setIsRecording(false)
+   333→    setRecordingTime(0)
+   334→    setVideoDuration(0)
+   335→    setCountdown(0)
+   336→    // Clear recorded chunks
+   337→    recordedChunksRef.current = []
+   338→  }, [])
+   339→
+   340→  const stopRecording = useCallback(() => {
+   341→    cleanupAllRecording()
+   342→  }, [cleanupAllRecording])
+   343→
+   344→  const startRecording = useCallback(() => {
+   345→    const video = videoRef.current
+   346→    if (!video || !streamRef.current) return
+   347→
+   348→    // v4.5.0: Cleanup any leftover recording state from previous session.
+   349→    // Ini prevent: double countdown, flicker, draw loop conflict, video tidak tersimpan.
+   350→    cleanupAllRecording()
+   351→
+   352→    // Get selected video template
+   353→    const template = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
+   354→    const duration = template.duration
+   355→    const filter = activeFilterRef.current
+   356→    const mir = mirrorRef.current
+   357→
+   358→    // Combine camera filter + template filter
+   359→    const camFilter = filter.canvasFilter !== 'none' ? filter.canvasFilter : ''
+   360→    const templateFilter = template.filterCss || ''
+   361→    const combinedFilter = (camFilter + ' ' + templateFilter).trim()
+   362→
+   363→    console.log('[Booth] startRecording — template:', template.id, 'duration:', duration, 'motion:', template.motionType, 'filter:', filter.id)
+   364→
+   365→    try {
+   366→      const canvas = document.createElement('canvas')
+   367→      const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+   368→      const w = dims.w
+   369→      const h = dims.h
+   370→      canvas.width = w
+   371→      canvas.height = h
+   372→      canvasRecordRef.current = canvas
+   373→      const ctx = canvas.getContext('2d')
+   374→      if (!ctx) throw new Error('Canvas context failed')
+   375→
+   376→      const startTime = Date.now()
+   377→
+   378→      // Draw loop with motion effect — ALL effects applied HERE, in real-time
+   379→      const drawFrame = () => {
+   380→        if (video.videoWidth > 0) {
+   381→          const elapsed = (Date.now() - startTime) / 1000
+   382→          drawMotionFrame(ctx, video, w, h, template.motionType, elapsed, duration, mir, combinedFilter)
+   383→        }
+   384→        rafRecordRef.current = requestAnimationFrame(drawFrame)
+   385→      }
+   386→      drawFrame()
+   387→
+   388→      // Capture stream from canvas — 30fps, reliable
+   389→      const canvasStream = canvas.captureStream(30)
+   390→
+   391→      let mimeType = 'video/webm;codecs=vp9'
+   392→      if (!MediaRecorder.isTypeSupported(mimeType)) {
+   393→        mimeType = 'video/webm;codecs=vp8'
+   394→        if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm'
+   395→      }
+   396→
+   397→      const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 5000000 })
+   398→      recordedChunksRef.current = []
+   399→
+   400→      recorder.ondataavailable = (e) => {
+   401→        if (e.data.size > 0) recordedChunksRef.current.push(e.data)
+   402→      }
+   403→
+   404→      recorder.onstop = async () => {
+   405→        if (rafRecordRef.current) {
+   406→          cancelAnimationFrame(rafRecordRef.current)
+   407→          rafRecordRef.current = null
+   408→        }
+   409→
+   410→        const rawBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+   411→        console.log('[Booth] Video recorded:', rawBlob.size, 'bytes, template:', template.id)
+   412→
+   413→        if (rawBlob.size === 0) {
+   414→          console.error('[Booth] Video blob is EMPTY')
+   415→          setError('Video recording failed — no data captured')
+   416→          setPhase('error')
+   417→          return
+   418→        }
+   419→
+   420→        // Convert to base64 and save — NO post-processing needed
+   421→        console.log('[Booth] Converting to base64...')
+   422→        try {
+   423→          const arrayBuffer = await rawBlob.arrayBuffer()
+   424→          const bytes = new Uint8Array(arrayBuffer)
+   425→          let binary = ''
+   426→          const chunkSize = 0x8000
+   427→          for (let i = 0; i < bytes.length; i += chunkSize) {
+   428→            binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)) as any)
+   429→          }
+   430→          const base64 = btoa(binary)
+   431→          console.log('[Booth] Base64 length:', base64.length)
+   432→
+   433→          if (activeEvent) {
+   434→            let sessionId = (window as any).__aray_current_session_id
+   435→            if (!sessionId) {
+   436→              console.log('[Booth] Creating new video session...')
+   437→              const sr = await window.aray.sessions.create(activeEvent.id, 'video', 1)
+   438→              if (sr.success) {
+   439→                sessionId = (sr.data as any).id
+   440→                ;(window as any).__aray_current_session_id = sessionId
+   441→                console.log('[Booth] Video session created:', sessionId)
+   442→              } else {
+   443→                console.error('[Booth] Failed to create video session:', sr)
+   444→                setError('Failed to create video session: ' + ((sr as any).error?.message || 'unknown'))
+   445→                setPhase('error')
+   446→                return
+   447→              }
+   448→            }
+   449→            console.log('[Booth] Saving video, session:', sessionId, 'template:', template.id)
+   450→            const saveResult = await window.aray.media.saveVideo({
+   451→              event_id: activeEvent.id,
+   452→              session_id: sessionId,
+   453→              video_base64: base64,
+   454→              mime_type: 'video/webm',
+   455→              video_style: template.id,
+   456→              filter: filter.id
+   457→            })
+   458→            console.log('[Booth] Save result:', saveResult.success)
+   459→            if (saveResult.success) {
+   460→              addMedia(saveResult.data as ArayMedia)
+   461→              console.log('[Booth] Video saved successfully!')
+   462→            } else {
+   463→              console.error('[Booth] Save failed:', (saveResult as any).error)
+   464→              setError('Failed to save video: ' + ((saveResult as any).error?.message || 'unknown'))
+   465→              setPhase('error')
+   466→            }
+   467→          }
+   468→        } catch (e: any) {
+   469→          console.error('[Booth] Video save error:', e)
+   470→          setError('Video save failed: ' + e.message)
+   471→          setPhase('error')
+   472→        }
+   473→      }
+   474→
+   475→      // Start recording with 100ms timeslice
+   476→      recorder.start(100)
+   477→      mediaRecorderRef.current = recorder
+   478→      setIsRecording(true)
+   479→      setRecordingTime(0)
+   480→      setVideoDuration(duration)
+   481→
+   482→      const recStartTime = Date.now()
+   483→      console.log('[Booth] Recording started, target:', duration, 's')
+   484→
+   485→      // Display timer
+   486→      recordingTimerRef.current = setInterval(() => {
+   487→        const elapsed = Math.floor((Date.now() - recStartTime) / 1000)
+   488→        setRecordingTime(elapsed)
+   489→      }, 500)
+   490→
+   491→      // Exact auto-stop
+   492→      recordTimeoutRef.current = setTimeout(() => {
+   493→        const actual = Math.floor((Date.now() - recStartTime) / 1000)
+   494→        console.log('[Booth] Auto-stop at', actual, 's')
+   495→
+   496→        if (rafRecordRef.current) { cancelAnimationFrame(rafRecordRef.current); rafRecordRef.current = null }
+   497→        if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null }
+   498→        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+   499→          mediaRecorderRef.current.stop()
+   500→        }
+   501→        setIsRecording(false)
+   502→        setPhase('result')
+   503→      }, duration * 1000)
+   504→
+   505→    } catch (e: any) {
+   506→      console.error('[Booth] Recording start failed:', e)
+   507→      setError(e.message)
+   508→      setPhase('error')
+   509→    }
+   510→  }, [activeEvent, addMedia, selectedVideoTemplate, currentAspectRatio, cleanupAllRecording])
+   511→
+   512→  // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
+   513→  const runComposite = useCallback(async () => {
+   514→    const templateId = settings?.selected_template_id || 'classic-strip-4'
+   515→
+   516→    // Check built-in templates first
+   517→    const builtinTemplate = TEMPLATES.find(t => t.id === templateId)
+   518→    // Check custom templates
+   519→    const customTemplates = getCustomTemplates()
+   520→    const customTemplate = customTemplates.find(t => t.id === templateId)
+   521→
+   522→    if (!builtinTemplate && !customTemplate) {
+   523→      console.warn('[Booth] No template found for id:', templateId)
+   524→      return
+   525→    }
+   526→
+   527→    const requiredShots = builtinTemplate?.shotCount || customTemplate?.shotCount || 4
+   528→    if (capturedShots.length < requiredShots) {
+   529→      console.warn('[Booth] Not enough shots:', capturedShots.length, 'needed:', requiredShots)
+   530→      return
+   531→    }
+   532→
+   533→    setCompositing(true)
+   534→    try {
+   535→      const photoUrls = capturedShots.map(s => s.dataUrl)
+   536→      let composite: string | null = null
+   537→
+   538→      if (customTemplate) {
+   539→        // Custom template: use compositeCustomTemplate
+   540→        console.log('[Booth] Compositing with custom template:', customTemplate.name)
+   541→        composite = await compositeCustomTemplate(customTemplate, photoUrls, currentAspectRatio)
+   542→      } else if (builtinTemplate) {
+   543→        // Built-in template: use compositeTemplate
+   544→        console.log('[Booth] Compositing with built-in template:', builtinTemplate.name)
+   545→        composite = await compositeTemplate(builtinTemplate, photoUrls, currentAspectRatio)
+   546→      }
+   547→
+   548→      if (composite && activeEvent) {
+   549→        const sessionId = (window as any).__aray_current_session_id
+   550→        const base64 = composite.split(',')[1]
+   551→        const saveResult = await window.aray.media.saveComposite({
+   552→          event_id: activeEvent.id,
+   553→          session_id: sessionId,
+   554→          image_base64: base64,
+   555→          mime_type: 'image/jpeg'
+   556→        })
+   557→        if (saveResult.success) {
+   558→          const compositeMedia = saveResult.data as ArayMedia
+   559→          setCompositeUrl(composite)
+   560→          setCompositeMediaId(compositeMedia.id)
+   561→          addMedia(compositeMedia)
+   562→          console.log('[Booth] Composite saved successfully — media id:', compositeMedia.id,
+   563→            '(this is the ONLY file saved for this session — raw shots were kept in-memory only)')
+   564→        }
+   565→      }
+   566→    } catch (e: any) {
+   567→      console.error('[Booth] Composite failed:', e)
+   568→    } finally {
+   569→      setCompositing(false)
+   570→    }
+   571→  }, [capturedShots, settings?.selected_template_id, activeEvent, addMedia])
+   572→
+   573→  // Auto-composite when entering result phase (photo mode only)
+   574→  useEffect(() => {
+   575→    if (phase === 'result' && mode === 'photo' && capturedShots.length > 0 && !compositeUrl) {
+   576→      runComposite()
+   577→    }
+   578→  }, [phase, mode, capturedShots, compositeUrl, runComposite])
+   579→
+   580→  // v4.6.2: Retake individual shot — user klik foto hasil di result screen,
+   581→  // hanya foto itu yang di-retake, bukan dari awal.
+   582→  const [retakeShotNumber, setRetakeShotNumber] = useState<number | null>(null)
+   583→
+   584→  const retakeShot = useCallback((shotNumber: number) => {
+   585→    console.log('[Booth] Retake shot', shotNumber)
+   586→    setRetakeShotNumber(shotNumber)
+   587→    setCurrentShot(shotNumber)
+   588→    setCompositeUrl(null)
+   589→    setCompositeMediaId(null)
+   590→    setPhase('preview')
+   591→  }, [])
+   592→
+   593→  // v4.6.2: runCountdown support retake individual shot
+   594→  const runCountdown = useCallback(async () => {
+   595→    if (mode === 'video') {
+   596→      for (let i = countdownSeconds; i > 0; i--) {
+   597→        setCountdown(i)
+   598→        setPhase('countdown')
+   599→        await sleep(1000)
+   600→      }
+   601→      setCountdown(0)
+   602→      setPhase('preview')
+   603→      await sleep(200)
+   604→      startRecording()
+   605→      return
+   606→    }
+   607→
+   608→    const shotToCapture = retakeShotNumber ?? currentShot
+   609→    for (let i = countdownSeconds; i > 0; i--) {
+   610→      setCountdown(i)
+   611→      await sleep(1000)
+   612→    }
+   613→    setCountdown(0)
+   614→    setPhase('flash')
+   615→    await performCapture(shotToCapture)
+   616→    await sleep(400)
+   617→
+   618→    // v4.6.2: If retaking, go back to result. Otherwise continue sequence.
+   619→    if (retakeShotNumber) {
+   620→      setRetakeShotNumber(null)
+   621→      setPhase('result')
+   622→    } else if (currentShot < totalShots) {
+   623→      setCurrentShot((n) => n + 1)
+   624→      setPhase('preview')
+   625→    } else {
+   626→      setPhase('result')
+   627→    }
+   628→  }, [countdownSeconds, performCapture, currentShot, totalShots, mode, startRecording, retakeShotNumber])
+   629→
+   630→  // Keep runCountdownRef in sync so the palm trigger callback always calls the
+   631→  // latest runCountdown (otherwise shot 2+ would re-run shot 1's closure).
+   632→  useEffect(() => { runCountdownRef.current = runCountdown }, [runCountdown])
+   633→  // v4.3.7: Keep startRecordingRef in sync untuk palm trigger video mode
+   634→  useEffect(() => { startRecordingRef.current = startRecording }, [startRecording])
+   635→
+   636→  // Cleanup
+   637→  useEffect(() => {
+   638→    return () => {
+   639→      stopCamera()
+   640→      ;(window as any).__aray_current_session_id = undefined
+   641→    }
+   642→  }, [stopCamera])
+   643→
+   644→  // v4.6.4: Auto-set mode from settings. If 'photo' or 'video', lock mode.
+   645→  // If 'combined', user can switch in greeting screen.
+   646→  useEffect(() => {
+   647→    if (boothModeSetting === 'photo') setMode('photo')
+   648→    else if (boothModeSetting === 'video') setMode('video')
+   649→    // combined: don't override, let user choose
+   650→  }, [boothModeSetting])
+   651→
+   652→  // v4.6.4: Determine if mode selector should be shown in greeting
+   653→  const showModeSelector = boothModeSetting === 'combined'
+   654→
+   655→  // Auto-start camera on greeting screen for live background
+   656→  useEffect(() => {
+   657→    if (phase === 'greeting' && !streamRef.current) {
+   658→      startCamera()
+   659→    }
+   660→  }, [phase, startCamera])
+   661→
+   662→  // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
+   663→  // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
+   664→  // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
+   665→  useEffect(() => {
+   666→    // v4.5.4: Don't activate palm trigger during recording — prevent re-trigger
+   667→    if (phase !== 'preview' || !settings?.palm_trigger || isRecording) return
+   668→
+   669→    let cancelled = false
+   670→    let retryTimer: ReturnType<typeof setTimeout> | null = null
+   671→
+   672→    const startPalmTrigger = async () => {
+   673→      if (cancelled) return
+   674→      const video = videoRef.current
+   675→      if (!video) {
+   676→        retryTimer = setTimeout(startPalmTrigger, 200)
+   677→        return
+   678→      }
+   679→      if (video.videoWidth === 0 || video.readyState < 2) {
+   680→        retryTimer = setTimeout(startPalmTrigger, 200)
+   681→        return
+   682→      }
+   683→
+   684→      if (!palmTriggerRef.current) {
+   685→        palmTriggerRef.current = new PalmTrigger()
+   686→      }
+   687→      const pt = palmTriggerRef.current
+   688→
+   689→      // Wire callbacks — Saatiril API: onPalmConfirmed, onPalmLeft, onStateChange, onStatusChange
+   690→      await pt.start(video, settings.palm_trigger_sensitivity || 0.6, {
+   691→        onPalmConfirmed: () => {
+   692→          // Hand sustained 500ms — show "SIAP" overlay (UI reads palmState === 'confirmed')
+   693→          console.log('[Booth] Palm confirmed — waiting for hand to leave')
+   694→        },
+   695→        onPalmLeft: () => {
+   696→          // Confirmed hand left frame → START TIMER/RECORDING!
+   697→          // v4.5.3: Video mode JUGA pakai countdown (3 detik) sebelum recording.
+   698→          // Sebelumnya langsung start — tangan yang baru dilepas masuk rekaman.
+   699→          setPalmState('triggered')
+   700→          setPalmTriggerActive(false)
+   701→          // Both modes: countdown first, then capture/record
+   702→          setPhase('countdown')
+   703→          runCountdownRef.current()
+   704→        },
+   705→        onStateChange: (newState) => {
+   706→          setPalmState(newState)
+   707→        },
+   708→        onStatusChange: (newStatus, err) => {
+   709→          setPalmStatus(newStatus)
+   710→          setPalmError(err ?? null)
+   711→        },
+   712→        onDebug: (info) => {
+   713→          setPalmDebug({
+   714→            handDetected: info.handDetected,
+   715→            landmarkCount: info.landmarkCount,
+   716→            openPalm: info.openPalm,
+   717→            fingerStatus: info.fingerStatus
+   718→          })
+   719→        }
+   720→      })
+   721→
+   722→      if (!cancelled) {
+   723→        setPalmTriggerActive(true)
+   724→        console.log('[Booth] Palm trigger v3 activated (MediaPipe Hands — Saatiril-style)')
+   725→      }
+   726→    }
+   727→
+   728→    startPalmTrigger()
+   729→
+   730→    return () => {
+   731→      cancelled = true
+   732→      if (retryTimer) clearTimeout(retryTimer)
+   733→      if (palmTriggerRef.current) {
+   734→        palmTriggerRef.current.stop()
+   735→        setPalmTriggerActive(false)
+   736→        setPalmState('none')
+   737→      }
+   738→    }
+   739→  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording])
+   740→
+   741→  // No active event
+   742→  if (!activeEvent) {
+   743→    return (
+   744→      <div className="h-full flex items-center justify-center p-8">
+   745→        <div className="text-center max-w-md">
+   746→          <ArayLogo size="md" showTagline={false} className="mb-6 opacity-60" />
+   747→          <h2 className="text-xl font-semibold mb-2">No event selected</h2>
+   748→          <p className="text-silver-400 text-sm mb-6">
+   749→            Create an event first to start the booth. Every capture belongs to an event so we can
+   750→            keep your memories organized.
+   751→          </p>
+   752→          <ArayButton variant="gold" onClick={() => navigate('/events')}>
+   753→            Go to Events
+   754→          </ArayButton>
+   755→        </div>
+   756→      </div>
+   757→    )
+   758→  }
+   759→
+   760→  return (
+   761→    <div className="h-full w-full relative bg-black overflow-hidden">
+   762→      <canvas ref={canvasRef} className="hidden" />
+   763→
+   764→      {/* Camera video — ALWAYS rendered. Filter applied via CSS. Aspect ratio via inline style. */}
+   765→      <div className="absolute inset-0 flex items-center justify-center bg-black overflow-hidden">
+   766→        <video
+   767→          ref={videoRef}
+   768→          autoPlay
+   769→          playsInline
+   770→          muted
+   771→          className={`object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
+   772→            phase === 'preview' || phase === 'countdown' || phase === 'flash' || phase === 'greeting' ? 'opacity-100' : 'opacity-0 pointer-events-none'
+   773→          }`}
+   774→          style={{
+   775→            filter: activeFilter.css,
+   776→            aspectRatio: currentAspectRatio.replace(':', ' / '),
+   777→            maxHeight: '100vh',
+   778→            maxWidth: '100%',
+   779→            width: currentAspectRatio === '16:9' ? '100%' : 'auto',
+   780→            height: currentAspectRatio === '16:9' ? '100%' : '100vh'
+   781→          }}
+   782→        />
+   783→      </div>
+   784→
+   785→      {/* Flash overlay */}
+   786→      <AnimatePresence>
+   787→        {lastFlash && (
+   788→          <motion.div
+   789→            initial={{ opacity: 0.95 }}
+   790→            animate={{ opacity: 0 }}
+   791→            exit={{ opacity: 0 }}
+   792→            transition={{ duration: 0.22 }}
+   793→            className="absolute inset-0 bg-white pointer-events-none z-30"
+   794→          />
+   795→        )}
+   796→      </AnimatePresence>
+   797→
+   798→      {/* Top bar — hidden saat fullscreenBooth ATAU kiosk mode.
+   799→          Di fullscreen/kiosk, hanya tombol X kecil yang tampil (untuk exit). */}
+   800→      {!fullscreenBooth && !settings?.kiosk_mode && (
+   801→        <div className="absolute top-0 left-0 right-0 z-20 p-5 flex items-center justify-between bg-gradient-to-b from-black/60 to-transparent">
+   802→          <button
+   803→            onClick={() => {
+   804→              stopCamera()
+   805→              navigate('/dashboard')
+   806→            }}
+   807→            className="text-silver-300 hover:text-white flex items-center gap-2 text-sm"
+   808→          >
+   809→            <ChevronLeft className="w-5 h-5" />
+   810→            Exit Booth
+   811→          </button>
+   812→          <div className="flex items-center gap-3">
+   813→            <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
+   814→            <ArayBadge variant="gold">{activeEvent.name}</ArayBadge>
+   815→          </div>
+   816→        </div>
+   817→      )}
+   818→
+   819→      {/* Fullscreen toggle button — kecil di pojok kanan atas.
+   820→          Saat fullscreen: button visible (untuk exit), klik → password modal.
+   821→          Saat normal: button visible (untuk enter fullscreen), klik → langsung fullscreen. */}
+   822→      <button
+   823→        onClick={() => {
+   824→          if (fullscreenBooth) {
+   825→            // Exit fullscreen — butuh password (jika diset)
+   826→            const pwd = settings?.booth_fullscreen_password
+   827→            if (pwd && pwd.length > 0) {
+   828→              setShowPasswordModal(true)
+   829→              setPasswordInput('')
+   830→              setPasswordError(false)
+   831→            } else {
+   832→              setFullscreenBooth(false)
+   833→            }
+   834→          } else {
+   835→            setFullscreenBooth(true)
+   836→          }
+   837→        }}
+   838→        className={`absolute top-3 right-3 z-50 w-9 h-9 rounded-full flex items-center justify-center transition-all ${
+   839→          fullscreenBooth
+   840→            ? 'bg-black/50 text-silver-300 hover:bg-black/70 hover:text-white opacity-60 hover:opacity-100'
+   841→            : 'bg-purple-haze-500/20 border border-purple-haze-500/30 text-purple-haze-200 hover:bg-purple-haze-500/30'
+   842→        }`}
+   843→        title={fullscreenBooth ? 'Exit fullscreen (butuh password)' : 'Fullscreen booth'}
+   844→      >
+   845→        {fullscreenBooth ? <X className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+   846→      </button>
+   847→
+   848→      {/* Password modal — untuk exit fullscreen */}
+   849→      <AnimatePresence>
+   850→        {showPasswordModal && (
+   851→          <motion.div
+   852→            initial={{ opacity: 0 }}
+   853→            animate={{ opacity: 1 }}
+   854→            exit={{ opacity: 0 }}
+   855→            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+   856→          >
+   857→            <motion.div
+   858→              initial={{ scale: 0.9, opacity: 0 }}
+   859→              animate={{ scale: 1, opacity: 1 }}
+   860→              exit={{ scale: 0.9, opacity: 0 }}
+   861→              className="bg-surface-raised border border-silver-300/15 rounded-2xl shadow-card p-6 w-full max-w-sm"
+   862→            >
+   863→              <h3 className="text-lg font-semibold mb-2 text-silver-100">Exit Fullscreen</h3>
+   864→              <p className="text-silver-400 text-sm mb-4">Masukkan password untuk keluar dari mode fullscreen.</p>
+   865→              <input
+   866→                type="password"
+   867→                autoFocus
+   868→                value={passwordInput}
+   869→                onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false) }}
+   870→                onKeyDown={(e) => {
+   871→                  if (e.key === 'Enter') {
+   872→                    if (passwordInput === (settings?.booth_fullscreen_password || 'aray')) {
+   873→                      setFullscreenBooth(false)
+   874→                      setShowPasswordModal(false)
+   875→                      setPasswordInput('')
+   876→                    } else {
+   877→                      setPasswordError(true)
+   878→                    }
+   879→                  }
+   880→                }}
+   881→                className={`aray-input w-full ${passwordError ? 'border-red-500' : ''}`}
+   882→                placeholder="Password"
+   883→              />
+   884→              {passwordError && (
+   885→                <p className="text-red-400 text-xs mt-2">Password salah</p>
+   886→              )}
+   887→              <div className="flex gap-2 mt-4">
+   888→                <ArayButton
+   889→                  variant="ghost"
+   890→                  className="flex-1"
+   891→                  onClick={() => { setShowPasswordModal(false); setPasswordInput(''); setPasswordError(false) }}
+   892→                >
+   893→                  Batal
+   894→                </ArayButton>
+   895→                <ArayButton
+   896→                  variant="gold"
+   897→                  className="flex-1"
+   898→                  onClick={() => {
+   899→                    if (passwordInput === (settings?.booth_fullscreen_password || 'aray')) {
+   900→                      setFullscreenBooth(false)
+   901→                      setShowPasswordModal(false)
+   902→                      setPasswordInput('')
+   903→                    } else {
+   904→                      setPasswordError(true)
+   905→                    }
+   906→                  }}
+   907→                >
+   908→                  Keluar
+   909→                </ArayButton>
+   910→              </div>
+   911→            </motion.div>
+   912→          </motion.div>
+   913→        )}
+   914→      </AnimatePresence>
+   915→
+   916→      {/* v4.2.1: QR Code modal — untuk Share button.
+   917→          User scan QR → close → Done untuk kembali ke greeting. */}
+   918→      <AnimatePresence>
+   919→        {showQrModal && qrDataUrl && (
+   920→          <motion.div
+   921→            initial={{ opacity: 0 }}
+   922→            animate={{ opacity: 1 }}
+   923→            exit={{ opacity: 0 }}
+   924→            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+   925→            onClick={() => setShowQrModal(false)}
+   926→          >
+   927→            <motion.div
+   928→              initial={{ scale: 0.9, opacity: 0 }}
+   929→              animate={{ scale: 1, opacity: 1 }}
+   930→              exit={{ scale: 0.9, opacity: 0 }}
+   931→              onClick={(e) => e.stopPropagation()}
+   932→              className="bg-surface-raised border border-silver-300/15 rounded-2xl shadow-card p-6 w-full max-w-sm text-center"
+   933→            >
+   934→              <h3 className="text-lg font-semibold mb-2 text-silver-100">Scan QR Code</h3>
+   935→              <p className="text-silver-400 text-sm mb-4">
+   936→                Arahkan kamera HP ke QR code untuk mengakses link share.
+   937→              </p>
+   938→              <div className="bg-white rounded-xl p-4 inline-block mb-4">
+   939→                <img src={qrDataUrl} alt="QR Code" className="w-64 h-64" />
+   940→              </div>
+   941→              <div className="text-xs text-silver-500 font-mono break-all mb-4 px-4">
+   942→                {settings?.share_qr_link}
+   943→              </div>
+   944→              <ArayButton
+   945→                variant="gold"
+   946→                className="w-full"
+   947→                icon={<X className="w-4 h-4" />}
+   948→                onClick={() => setShowQrModal(false)}
+   949→              >
+   950→                Close
+   951→              </ArayButton>
+   952→            </motion.div>
+   953→          </motion.div>
+   954→        )}
+   955→      </AnimatePresence>
+   956→
+   957→      {/* Phases */}
+   958→      <AnimatePresence mode="wait">
+   959→        {phase === 'greeting' && (
+   960→          <motion.div
+   961→            key="greeting"
+   962→            initial={{ opacity: 0 }}
+   963→            animate={{ opacity: 1 }}
+   964→            exit={{ opacity: 0, scale: 0.96 }}
+   965→            className="absolute inset-0 z-10 flex flex-col items-center justify-center"
+   966→          >
+   967→            {/* Dark overlay over live camera background */}
+   968→            <div className="absolute inset-0 bg-gradient-to-b from-purple-haze-950/80 via-surface-base/60 to-purple-haze-950/80" />
+   969→            <div
+   970→              className="absolute inset-0 opacity-20 pointer-events-none"
+   971→              style={{
+   972→                backgroundImage:
+   973→                  'radial-gradient(circle at 30% 30%, rgba(123,97,168,0.4) 0%, transparent 50%), radial-gradient(circle at 70% 70%, rgba(212,175,55,0.2) 0%, transparent 45%)'
+   974→              }}
+   975→            />
+   976→            <div className="relative z-10 text-center">
+   977→              <ArayLogo size="xl" animated className="mb-8" />
+   978→              <p className="text-silver-300 text-xl italic mb-8">Let's make a memory.</p>
+   979→
+   980→              {/* v4.6.4: Mode selector — hanya tampil jika booth_mode = 'combined'.
+   981→                  Photo only / Video only: mode sudah locked, selector hidden. */}
+   982→              {showModeSelector && (
+   983→              <div className="mb-8 flex items-center justify-center gap-2">
+   984→                <button
+   985→                  onClick={() => setMode('photo')}
+   986→                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
+   987→                    mode === 'photo'
+   988→                      ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+   989→                      : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+   990→                  }`}
+   991→                >
+   992→                  <ImageIcon className="w-4 h-4" /> Photo
+   993→                </button>
+   994→                <button
+   995→                  onClick={() => setMode('video')}
+   996→                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
+   997→                    mode === 'video'
+   998→                      ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+   999→                      : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+  1000→                  }`}
+  1001→                >
+  1002→                  <Video className="w-4 h-4" /> Video
+  1003→                </button>
+  1004→              </div>
+  1005→              )}
+  1006→
+  1007→              <ArayButton
+  1008→                variant="gold"
+  1009→                size="xl"
+  1010→                icon={mode === 'video' ? <Video className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
+  1011→                onClick={async () => {
+  1012→                  if (!streamRef.current) {
+  1013→                    const ok = await startCamera()
+  1014→                    if (!ok) return
+  1015→                  }
+  1016→                  setCapturedShots([])
+  1017→                  setCurrentShot(1)
+  1018→                  setCompositeUrl(null)
+  1019→                  setCompositeMediaId(null)
+  1020→                  ;(window as any).__aray_current_session_id = undefined
+  1021→                  setPhase('preview')
+  1022→                }}
+  1023→                className="text-lg px-12 py-4"
+  1024→              >
+  1025→                LET'S YAP!
+  1026→              </ArayButton>
+  1027→            </div>
+  1028→          </motion.div>
+  1029→        )}
+  1030→
+  1031→        {phase === 'preview' && (
+  1032→          <motion.div
+  1033→            key="preview"
+  1034→            initial={{ opacity: 0 }}
+  1035→            animate={{ opacity: 1 }}
+  1036→            exit={{ opacity: 0 }}
+  1037→            className="absolute inset-0 z-10 flex flex-col items-center justify-end pb-12"
+  1038→          >
+  1039→            {/* Shot progress (photo mode only) — hidden saat fullscreen booth saja.
+  1040→                Kiosk mode tetap tampilkan (user perlu tahu progress). */}
+  1041→            {mode === 'photo' && !fullscreenBooth && (
+  1042→              <div className="absolute top-20 left-1/2 -translate-x-1/2 flex items-center gap-2">
+  1043→                {Array.from({ length: totalShots }).map((_, i) => (
+  1044→                  <div
+  1045→                    key={i}
+  1046→                    className={`w-3 h-3 rounded-full transition-all ${
+  1047→                      i < currentShot - 1
+  1048→                        ? 'bg-green-400'
+  1049→                        : i === currentShot - 1
+  1050→                          ? 'bg-gold-400 animate-pulse shadow-glow-gold'
+  1051→                          : 'bg-silver-700'
+  1052→                    }`}
+  1053→                  />
+  1054→                ))}
+  1055→              </div>
+  1056→            )}
+  1057→
+  1058→            {/* Palm trigger v2 — Saatiril-style overlay */}
+  1059→            {/* ═══ PALM TRIGGER OVERLAY (minimal — hanya hand outline di tengah) ═══ */}
+  1060→
+  1061→            {/* Loading state — kecil di pojok, tidak mengganggu */}
+  1062→            {palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
+  1063→              <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-black/60 rounded-full px-3 py-1.5">
+  1064→                <RefreshCw className="w-3 h-3 animate-spin text-purple-haze-200" />
+  1065→                <span className="text-purple-haze-100 text-xs">
+  1066→                  Loading...
+  1067→                </span>
+  1068→              </div>
+  1069→            )}
+  1070→
+  1071→            {/* Error state — kecil di pojok */}
+  1072→            {palmTriggerActive && palmStatus === 'error' && (
+  1073→              <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-3 py-1.5">
+  1074→                <AlertTriangle className="w-3 h-3 text-red-300" />
+  1075→                <span className="text-red-100 text-xs">Palm error</span>
+  1076→              </div>
+  1077→            )}
+  1078→
+  1079→            {/* CONFIRMED state: big "SIAP" overlay — pull hand away to trigger */}
+  1080→            {palmTriggerActive && palmState === 'confirmed' && (
+  1081→              <motion.div
+  1082→                initial={{ opacity: 0, scale: 0.8 }}
+  1083→                animate={{ opacity: 1, scale: 1 }}
+  1084→                exit={{ opacity: 0, scale: 0.9 }}
+  1085→                className="absolute inset-0 flex items-center justify-center pointer-events-none z-15"
+  1086→              >
+  1087→                <div className="text-center">
+  1088→                  <motion.div
+  1089→                    animate={{ scale: [1, 1.08, 1] }}
+  1090→                    transition={{ duration: 1.2, repeat: Infinity, ease: 'easeInOut' }}
+  1091→                    className="text-[180px] font-extrabold aray-gradient-text leading-none"
+  1092→                    style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.7)' }}
+  1093→                  >
+  1094→                    SIAP
+  1095→                  </motion.div>
+  1096→                  <div className="text-silver-200 text-2xl font-semibold mt-4">
+  1097→                    Tarik tangan untuk capture
+  1098→                  </div>
+  1099→                </div>
+  1100→              </motion.div>
+  1101→            )}
+  1102→
+  1103→            {/* HAND GUIDE OVERLAY — tampil di none/searching/hand_detected.
+  1104→                HANYA ini yang muncul di tengah. Tidak ada teks bahasa ganda.
+  1105→                Outline ungu (cari) → hijau (hand_detected). */}
+  1106→            {palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
+  1107→             palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
+  1108→              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+  1109→                <div className="text-center">
+  1110→                  <motion.svg
+  1111→                    viewBox="0 0 200 220"
+  1112→                    className="w-64 h-72 mx-auto drop-shadow-2xl"
+  1113→                    animate={{
+  1114→                      scale: palmState === 'hand_detected' ? [1, 1.05, 1] : [1, 1.03, 1],
+  1115→                      opacity: palmState === 'hand_detected' ? 1 : [0.6, 0.9, 0.6]
+  1116→                    }}
+  1117→                    transition={{
+  1118→                      duration: palmState === 'hand_detected' ? 0.8 : 2,
+  1119→                      repeat: Infinity,
+  1120→                      ease: 'easeInOut'
+  1121→                    }}
+  1122→                  >
+  1123→                    <path
+  1124→                      d="M 100 210 L 100 160 L 70 160 L 70 90 Q 70 80 80 80 Q 90 80 90 90 L 90 140 L 90 60 Q 90 50 100 50 Q 110 50 110 60 L 110 140 L 110 50 Q 110 40 120 40 Q 130 40 130 50 L 130 140 L 130 70 Q 130 60 140 60 Q 150 60 150 70 L 150 140 L 150 100 Q 150 90 158 90 Q 166 90 166 100 L 166 155 Q 166 170 156 180 L 130 200 Z"
+  1125→                      fill="none"
+  1126→                      stroke={palmState === 'hand_detected' ? '#22c55e' : '#a78bfa'}
+  1127→                      strokeWidth="4"
+  1128→                      strokeLinejoin="round"
+  1129→                      strokeLinecap="round"
+  1130→                      style={{
+  1131→                        filter: palmState === 'hand_detected'
+  1132→                          ? 'drop-shadow(0 0 20px rgba(34, 197, 94, 0.8))'
+  1133→                          : 'drop-shadow(0 0 15px rgba(167, 139, 250, 0.5))',
+  1134→                        transition: 'stroke 0.3s, filter 0.3s'
+  1135→                      }}
+  1136→                    />
+  1137→                  </motion.svg>
+  1138→                  {/* SATU teks singkat saja — ganti sesuai state */}
+  1139→                  <div className="mt-4 text-silver-200 text-lg font-medium">
+  1140→                    {palmState === 'hand_detected' ? 'Tahan...' : 'Arahkan tangan ke layar, tahan, dan lepaskan'}
+  1141→                  </div>
+  1142→                </div>
+  1143→              </div>
+  1144→            )}
+  1145→
+  1146→            {/* Video recording: no overlay (clean preview, auto-stop handles everything) */}
+  1147→
+  1148→            {/* v4.5.3: Video recording indicator — overlay "RECORDING" yang jelas +
+  1149→                big countdown timer di atas + REC badge + red border glow */}
+  1150→            {mode === 'video' && isRecording && (
+  1151→              <>
+  1152→                {/* Big countdown timer di tengah atas */}
+  1153→                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-20 text-center pointer-events-none">
+  1154→                  <motion.div
+  1155→                    initial={{ scale: 0.8, opacity: 0 }}
+  1156→                    animate={{ scale: 1, opacity: 1 }}
+  1157→                    className={`text-[120px] font-extrabold leading-none ${
+  1158→                      videoDuration - recordingTime <= 3
+  1159→                        ? 'text-red-400'
+  1160→                        : 'text-white'
+  1161→                    }`}
+  1162→                    style={{
+  1163→                      textShadow: videoDuration - recordingTime <= 3
+  1164→                        ? '0 0 40px rgba(239, 68, 68, 0.8)'
+  1165→                        : '0 0 30px rgba(0, 0, 0, 0.8)'
+  1166→                    }}
+  1167→                  >
+  1168→                    {videoDuration - recordingTime}
+  1169→                  </motion.div>
+  1170→                  <div className="text-2xl font-bold text-silver-300 mt-1">
+  1171→                    {videoDuration - recordingTime <= 3 ? 'seconds left!' : 'seconds'}
+  1172→                  </div>
+  1173→                </div>
+  1174→
+  1175→                {/* v4.5.9: "RECORDING" overlay di tengah bawah — pulse.
+  1176→                    Hapus elapsed/total (sudah ada countdown di atas). */}
+  1177→                <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+  1178→                  <motion.div
+  1179→                    initial={{ opacity: 0, y: 10 }}
+  1180→                    animate={{ opacity: 1, y: 0 }}
+  1181→                    className="flex items-center gap-3 bg-red-600/80 backdrop-blur-sm rounded-full px-8 py-3 shadow-2xl"
+  1182→                    style={{ animation: 'pulse 1.5s ease-in-out infinite' }}
+  1183→                  >
+  1184→                    <div className="w-4 h-4 rounded-full bg-white" />
+  1185→                    <span className="text-white text-xl font-extrabold tracking-wider">
+  1186→                      RECORDING
+  1187→                    </span>
+  1188→                  </motion.div>
+  1189→                </div>
+  1190→              </>
+  1191→            )}
+  1192→
+  1193→            {/* "Shot X of Y" info — sekarang digabung dengan shutter button
+  1194→                (lihat bottom capture button). Tidak ada teks terpisah lagi. */}
+  1195→
+  1196→            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
+  1197→              <div className="text-center mb-32">
+  1198→                {mode === 'photo' ? (
+  1199→                  <p className="text-silver-200 text-2xl font-semibold mb-1">
+  1200→                    Ready
+  1201→                  </p>
+  1202→                ) : (
+  1203→                  <>
+  1204→                    <p className="text-silver-200 text-2xl font-semibold mb-1">
+  1205→                      Ready to record
+  1206→                    </p>
+  1207→                    <p className="text-silver-400 text-sm italic">Click record to start</p>
+  1208→                  </>
+  1209→                )}
+  1210→              </div>
+  1211→            )}
+  1212→
+  1213→            {mode === 'video' ? (
+  1214→              isRecording ? (
+  1215→                // v4.5.10: During recording — no red circle (RECORDING overlay di bawah sudah cukup)
+  1216→                null
+  1217→              ) : (
+  1218→                // Before recording: record button
+  1219→                <button
+  1220→                  onClick={() => {
+  1221→                    setPhase('countdown')
+  1222→                    runCountdown()
+  1223→                  }}
+  1224→                  className="w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold"
+  1225→                >
+  1226→                  <Video className="w-10 h-10 text-purple-haze-950" />
+  1227→                </button>
+  1228→              )
+  1229→            ) : null}
+  1230→          </motion.div>
+  1231→        )}
+  1232→
+  1233→        {phase === 'countdown' && (
+  1234→          <motion.div
+  1235→            key="countdown"
+  1236→            initial={{ opacity: 0 }}
+  1237→            animate={{ opacity: 1 }}
+  1238→            exit={{ opacity: 0 }}
+  1239→            className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
+  1240→          >
+  1241→            <AnimatePresence mode="wait">
+  1242→              <motion.div
+  1243→                key={countdown}
+  1244→                initial={{ scale: 0.3, opacity: 0 }}
+  1245→                animate={{ scale: 1, opacity: 1 }}
+  1246→                exit={{ scale: 1.6, opacity: 0 }}
+  1247→                transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+  1248→                className="text-[200px] font-extrabold aray-gradient-text"
+  1249→                style={{ textShadow: '0 0 60px rgba(123, 97, 168, 0.6)' }}
+  1250→              >
+  1251→                {countdown}
+  1252→              </motion.div>
+  1253→            </AnimatePresence>
+  1254→          </motion.div>
+  1255→        )}
+  1256→
+  1257→        {phase === 'flash' && (
+  1258→          <motion.div
+  1259→            key="flash"
+  1260→            initial={{ opacity: 0 }}
+  1261→            animate={{ opacity: 1 }}
+  1262→            exit={{ opacity: 0 }}
+  1263→            className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
+  1264→          >
+  1265→            <motion.div
+  1266→              initial={{ scale: 0.5, opacity: 0 }}
+  1267→              animate={{ scale: 1.2, opacity: 1 }}
+  1268→              transition={{ duration: 0.3 }}
+  1269→              className="text-7xl font-extrabold aray-gradient-text"
+  1270→              style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.8)' }}
+  1271→            >
+  1272→              YAP!
+  1273→            </motion.div>
+  1274→          </motion.div>
+  1275→        )}
+  1276→
+  1277→        {phase === 'result' && (
+  1278→          <motion.div
+  1279→            key="result"
+  1280→            initial={{ opacity: 0 }}
+  1281→            animate={{ opacity: 1 }}
+  1282→            exit={{ opacity: 0 }}
+  1283→            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-8 overflow-auto"
+  1284→          >
+  1285→            <div className="text-center mb-6">
+  1286→              <motion.h1
+  1287→                initial={{ scale: 0.8, opacity: 0 }}
+  1288→                animate={{ scale: 1, opacity: 1 }}
+  1289→                transition={{ type: 'spring', stiffness: 200, damping: 12 }}
+  1290→                className="text-5xl font-extrabold mb-2 aray-gradient-text"
+  1291→              >
+  1292→                LOOK AT YOU!
+  1293→              </motion.h1>
+  1294→              <p className="text-silver-300 text-lg italic">Your memories are ready.</p>
+  1295→            </div>
+  1296→
+  1297→            {/* Composite preview (template result) */}
+  1298→            {mode === 'photo' && compositing && (
+  1299→              <div className="mb-6 flex items-center gap-3 text-silver-300">
+  1300→                <RefreshCw className="w-5 h-5 animate-spin text-purple-haze-300" />
+  1301→                <span className="text-sm">Compositing template...</span>
+  1302→              </div>
+  1303→            )}
+  1304→            {mode === 'photo' && compositeUrl && (
+  1305→              <div className="mb-6 max-w-sm mx-auto">
+  1306→                <img
+  1307→                  src={compositeUrl}
+  1308→                  alt="Template composite"
+  1309→                  className="max-h-64 rounded-xl border-2 border-gold-400/40 shadow-glow-gold mx-auto"
+  1310→                />
+  1311→              </div>
+  1312→            )}
+  1313→
+  1314→            {/* v4.6.2: Individual photos — KLIK untuk retake foto tersebut saja */}
+  1315→            {mode === 'photo' && (
+  1316→              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl mb-8">
+  1317→                {capturedShots.map((shot) => (
+  1318→                  <motion.button
+  1319→                    key={shot.shotNumber}
+  1320→                    initial={{ scale: 0.8, opacity: 0, y: 20 }}
+  1321→                    animate={{ scale: 1, opacity: 1, y: 0 }}
+  1322→                    transition={{ delay: shot.shotNumber * 0.1 }}
+  1323→                    onClick={() => retakeShot(shot.shotNumber)}
+  1324→                    className="relative aspect-[3/2] rounded-xl overflow-hidden border-2 border-purple-haze-500/30 hover:border-gold-400/60 shadow-card group cursor-pointer transition-all"
+  1325→                    title={`Retake shot ${shot.shotNumber}`}
+  1326→                  >
+  1327→                    <img src={shot.dataUrl} alt={`Shot ${shot.shotNumber}`} className="w-full h-full object-cover" />
+  1328→                    {/* Retake overlay on hover */}
+  1329→                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+  1330→                      <div className="text-center">
+  1331→                        <RotateCcw className="w-8 h-8 text-gold-400 mx-auto mb-1" />
+  1332→                        <span className="text-gold-300 text-xs font-medium">Retake</span>
+  1333→                      </div>
+  1334→                    </div>
+  1335→                    {/* Shot number badge */}
+  1336→                    <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] font-bold rounded px-1.5 py-0.5">
+  1337→                      {shot.shotNumber}
+  1338→                    </div>
+  1339→                  </motion.button>
+  1340→                ))}
+  1341→              </div>
+  1342→            )}
+  1343→
+  1344→            {/* v4.5.11: Hapus "Video saved successfully" — tidak professional */}
+  1345→
+  1346→            {/* v4.5.11: Hapus badge "Saved locally" dan "Syncing to Google Drive"
+  1347→                — tidak professional untuk event display */}
+  1348→
+  1349→            <div className="flex items-center gap-3 flex-wrap justify-center">
+  1350→              {settings?.show_print_button !== false && (
+  1351→              <ArayButton
+  1352→                variant="silver"
+  1353→                icon={<Printer className="w-4 h-4" />}
+  1354→                onClick={async () => {
+  1355→                  const mediaId = compositeMediaId ?? capturedShots[0]?.mediaId ?? ''
+  1356→                  if (!mediaId) return
+  1357→                  // v4.3.3: Pass print settings ke IPC
+  1358→                  const printSettings = {
+  1359→                    paper_size: settings?.print_paper_size || '4x6',
+  1360→                    custom_width: settings?.print_custom_width || 100,
+  1361→                    custom_height: settings?.print_custom_height || 150,
+  1362→                    copies: settings?.print_copies || 1,
+  1363→                    color: settings?.print_color !== false,
+  1364→                    orientation: settings?.print_orientation || 'portrait',
+  1365→                    quality: settings?.print_quality || 'normal',
+  1366→                    fit: settings?.print_fit || 'contain'
+  1367→                  }
+  1368→                  await window.aray.print.queue(
+  1369→                    mediaId,
+  1370→                    settings?.printer_name || undefined,
+  1371→                    settings?.print_copies || 1,
+  1372→                    printSettings
+  1373→                  )
+  1374→                }}
+  1375→              >
+  1376→                Print
+  1377→              </ArayButton>
+  1378→              )}
+  1379→              {settings?.show_share_button !== false && settings?.share_qr_enabled && settings?.share_qr_link && (
+  1380→                <ArayButton
+  1381→                  variant="silver"
+  1382→                  icon={<Share2 className="w-4 h-4" />}
+  1383→                  onClick={async () => {
+  1384→                    try {
+  1385→                      const link = settings.share_qr_link!
+  1386→                      const dataUrl = await QRCode.toDataURL(link, {
+  1387→                        width: 400,
+  1388→                        margin: 2,
+  1389→                        color: { dark: '#0F0B1A', light: '#FFFFFF' }
+  1390→                      })
+  1391→                      setQrDataUrl(dataUrl)
+  1392→                      setShowQrModal(true)
+  1393→                    } catch (e) {
+  1394→                      console.error('[Booth] QR generation failed:', e)
+  1395→                    }
+  1396→                  }}
+  1397→                >
+  1398→                  Share
+  1399→                </ArayButton>
+  1400→              )}
+  1401→              <ArayButton
+  1402→                variant="ghost"
+  1403→                icon={<RotateCcw className="w-4 h-4" />}
+  1404→                onClick={() => {
+  1405→                  cleanupAllRecording()  // v4.5.0: clear all recording state
+  1406→                  setCapturedShots([])
+  1407→                  setCurrentShot(1)
+  1408→                  setCompositeUrl(null)
+  1409→                  setCompositeMediaId(null)
+  1410→                  ;(window as any).__aray_current_session_id = undefined
+  1411→                  setPhase('preview')
+  1412→                }}
+  1413→              >
+  1414→                Retake
+  1415→              </ArayButton>
+  1416→              <ArayButton
+  1417→                variant="gold"
+  1418→                icon={<Sparkles className="w-4 h-4" />}
+  1419→                onClick={() => {
+  1420→                  cleanupAllRecording()  // v4.5.0: clear all recording state
+  1421→                  setCapturedShots([])
+  1422→                  setCurrentShot(1)
+  1423→                  setCompositeUrl(null)
+  1424→                  setCompositeMediaId(null)
+  1425→                  ;(window as any).__aray_current_session_id = undefined
+  1426→                  setPhase('greeting')
+  1427→                }}
+  1428→              >
+  1429→                Done
+  1430→              </ArayButton>
+  1431→            </div>
+  1432→          </motion.div>
+  1433→        )}
+  1434→
+  1435→        {phase === 'error' && (
+  1436→          <motion.div
+  1437→            key="error"
+  1438→            initial={{ opacity: 0 }}
+  1439→            animate={{ opacity: 1 }}
+  1440→            exit={{ opacity: 0 }}
+  1441→            className="absolute inset-0 z-10 flex items-center justify-center bg-surface-base p-8"
+  1442→          >
+  1443→            <div className="text-center max-w-md">
+  1444→              <AlertTriangle className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+  1445→              <h2 className="text-2xl font-bold mb-2">Oops.</h2>
+  1446→              <p className="text-silver-300 mb-6">{error ?? 'Something went wrong.'}</p>
+  1447→              <p className="text-silver-500 text-sm mb-6 italic">
+  1448→                "Your camera took a little break. Please reconnect it."
+  1449→              </p>
+  1450→              <div className="flex items-center justify-center gap-3">
+  1451→                <ArayButton variant="ghost" onClick={() => navigate('/dashboard')}>
+  1452→                  Back to Dashboard
+  1453→                </ArayButton>
+  1454→                <ArayButton
+  1455→                  variant="gold"
+  1456→                  icon={<RefreshCw className="w-4 h-4" />}
+  1457→                  onClick={async () => {
+  1458→                    stopCamera()
+  1459→                    const ok = await startCamera()
+  1460→                    if (ok) setPhase('preview')
+  1461→                  }}
+  1462→                >
+  1463→                  Retry Camera
+  1464→                </ArayButton>
+  1465→              </div>
+  1466→            </div>
+  1467→          </motion.div>
+  1468→        )}
+  1469→      </AnimatePresence>
+  1470→
+  1471→      {/* Capture button (visible during preview, PHOTO mode only)
+  1472→          v4.1.8: SELALU tampil termasuk saat fullscreen booth.
+  1473→          Shot count "1/2" digabung di dalam lingkaran shutter (compact format). */}
+  1474→      {phase === 'preview' && mode === 'photo' && (
+  1475→        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
+  1476→          <button
+  1477→            onClick={() => {
+  1478→              setPhase('countdown')
+  1479→              runCountdown()
+  1480→            }}
+  1481→            className="relative w-24 h-24 rounded-full bg-gradient-to-br from-gold-300 to-gold-500 border-4 border-white/80 shadow-glow-gold hover:scale-105 transition-transform flex flex-col items-center justify-center"
+  1482→          >
+  1483→            <Camera className="w-7 h-7 text-purple-haze-950" />
+  1484→            <span className="text-purple-haze-950 text-sm font-extrabold leading-none mt-1">
+  1485→              {currentShot}/{totalShots}
+  1486→            </span>
+  1487→          </button>
+  1488→        </div>
+  1489→      )}
+  1490→
+  1491→      {/* v4.3.9: Footer — tampil di booth fullscreen mode juga.
+  1492→          Multi-phrase dengan style berbeda, fit 9:16 vertical. */}
+  1493→      {fullscreenBooth && (
+  1494→        <footer className="absolute bottom-0 left-0 right-0 h-10 px-2 flex items-center justify-center gap-1.5 bg-black/40 flex-wrap z-20">
+  1495→          <span className="text-[10px] text-silver-600">© 2026 ·</span>
+  1496→          <span className="text-[10px] text-silver-500">Made by</span>
+  1497→          <span className="text-[10px] text-gold-400 font-semibold">Fajrianor</span>
+  1498→          <span className="text-[10px] text-silver-600">-</span>
+  1499→          <span className="text-[10px] text-purple-haze-300 font-medium">ARAY: Are You Ready? and....Yapping!</span>
+  1500→          <span className="text-[10px] text-silver-600">-</span>
+  1501→          <span className="text-[10px] text-silver-400">Pusat Humas dan Keterbukaan Informasi</span>
+  1502→          <span className="text-[10px] text-silver-600">·</span>
+  1503→          <span className="text-[10px] text-silver-300">UIN Antasari Banjarmasin</span>
+  1504→        </footer>
+  1505→      )}
+  1506→    </div>
+  1507→  )
+  1508→}
+  1509→
+  1510→function sleep(ms: number) {
+  1511→  return new Promise((r) => setTimeout(r, ms))
+  1512→}
+  1513→

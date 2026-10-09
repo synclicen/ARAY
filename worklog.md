@@ -68,3 +68,63 @@ Stage Summary:
 - Saat install, Android akan prompt "Allow ARAY to take pictures and record video?"
 - User tap Allow → getUserMedia berhasil → Booth page jalan
 - Kalau user tap Deny, masih gagal — perlu tambah UI "Open Settings" supaya user bisa grant permission manual
+
+---
+Task ID: android-responsive-ui
+Agent: main
+Task: Make UI responsive for Android (mobile-first)
+
+Work Log:
+- User: "buat agar tampilan responsive"
+- Delegasi audit ke Explore agent → dapat 10 masalah kritis + 5 pola berulang
+- Implementasi fix dalam 10 phase:
+
+Phase 1 - Foundation:
+- viewport-fit=cover di android-app/index.html
+- globals.css: scrollbar desktop-only, body safe-area padding, touch-target min-h-[44px]
+  di semua .aray-btn-* dan .aray-input, 100vh → 100dvh, mobile font 14px,
+  utility classes .page-padding dan .hero-row
+- tailwind.config (root + android): tambah xs:400px breakpoint
+
+Phase 2 - AppShell responsive:
+- Sidebar: hidden md:flex (desktop only)
+- Bottom nav baru (mobile only, fixed bottom-0): 5 items — Home, Events, Booth
+  (center elevated with gradient circle), Gallery, Settings
+- MobileMoreMenu: bottom-sheet drawer untuk Templates, Sync, Printer — buka via
+  tombol "⋯" di top-right
+- Header: compact di mobile (hide tagline + Drive badge)
+- Footer: hidden md:flex (mobile pakai bottom nav)
+- safe-area-inset-bottom padding untuk gesture bar
+
+Phase 3 - All pages: p-8 → page-padding (p-4 sm:p-6 md:p-8) di Dashboard, Events,
+  Gallery, Printer, Settings, SyncCenter, Templates
+- Hero rows: flex items-center justify-between → flex flex-col gap-4 sm:flex-row
+
+Phase 4 - Booth.tsx:
+- 100vh → 100dvh (Android WebView safe)
+- Top bar: p-3 sm:p-5, flex-col sm:flex-row, safe-area top padding
+- Hide event name badge di xs
+- Font raksasa responsive: text-[180px] → text-[64px] xs:text-[90px] sm:text-[120px] md:text-[180px]
+  (SIAP overlay, countdown, LOOK AT YOU!)
+
+Phase 5 - Settings.tsx:
+- SettingRow: flex-col sm:flex-row, label stacks above control di mobile
+- Inputs: max-w-[Xpx] → w-full sm:w-auto sm:max-w-[Xpx]
+
+Phase 6 - Dashboard storage stats: text-xl → text-base sm:text-xl, gap-4 → gap-2 sm:gap-4
+
+Phase 7 - Gallery modal: action bar stack vertical di mobile, hide path + Open Folder
+
+Phase 8 - Events: Client/Operator grid-cols-2 → grid-cols-1 sm:grid-cols-2
+
+Phase 9 - ArayButton: danger variant min-h-[44px], sm size min-h-[36px] sm:min-h-[auto]
+
+Phase 10 - Commit bde8e2e, push, tag android-v1.0.17
+- Build #17 sukses dalam 262 detik, semua 19 step lulus
+- APK size sama (28.75 MB debug, 26.35 MB release)
+
+Stage Summary:
+- Release: https://github.com/synclicen/ARAY/releases/tag/android-v1.0.17
+- Mobile-first: bottom nav + safe-area + touch targets + responsive grids/fonts
+- Desktop layout tetap utuh (semua breakpoint pakai sm:/md: prefix)
+- User test di HP: download release.apk, uninstall v1.0.16 dulu, install v1.0.17
