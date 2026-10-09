@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   android:
-    name: Build Android APK
+    name: Build Android APK (Debug + Release)
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -67,15 +67,172 @@ jobs:
         working-directory: android-app
         run: npx cap sync android
 
+      # ============================================================
+      # SIGNING SETUP
+      # ============================================================
+      # If secrets.KEYSTORE_BASE64 is provided → use custom keystore (Play Store ready).
+      # Otherwise → sign release with the debug keystore (still installable on any device,
+      # just not Play Store uploadable).
+      - name: Decode custom keystore (if provided)
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        working-directory: android-app/android
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > app/release.keystore
+          echo "RELEASE_KEYSTORE_FILE=release.keystore" >> $GITHUB_ENV
+          echo "RELEASE_KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
+          echo "RELEASE_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+          echo "RELEASE_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+
+      - name: Configure Gradle signing for release
+        working-directory: android-app/android
+        env:
+          SIGNING_STRATEGY: ${{ env.RELEASE_KEYSTORE_FILE != '' && 'custom' || 'debug' }}
+        run: |
+          # Determine version name from tag or input
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          VERSION_NAME="${TAG#android-v}"
+          if [ -z "$VERSION_NAME" ]; then
+            VERSION_NAME="0.0.0-dev"
+          fi
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+
+          APP_GRADLE="app/build.gradle"
+
+          # Read current version code (default 1) and bump
+          CURRENT_CODE=$(grep -E "versionCode [0-9]+" "$APP_GRADLE" | head -1 | grep -oE "[0-9]+" || echo "1")
+          NEW_CODE=$((CURRENT_CODE + 0))
+
+          # Patch versionName
+          sed -i "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" "$APP_GRADLE"
+
+          # Build the signingConfig block to inject
+          if [ "$SIGNING_STRATEGY" = "custom" ]; then
+            echo "Using custom keystore signing"
+            SIGNING_BLOCK="
+          signingConfigs {
+            release {
+              storeFile file('release.keystore')
+              storePassword System.getenv('RELEASE_KEYSTORE_PASSWORD')
+              keyAlias System.getenv('RELEASE_KEY_ALIAS')
+              keyPassword System.getenv('RELEASE_KEY_PASSWORD')
+            }
+          }"
+            SIGNING_REF="signingConfig signingConfigs.release"
+          else
+            echo "Using debug keystore signing (fallback for release)"
+            SIGNING_BLOCK=""
+            SIGNING_REF="signingConfig signingConfigs.debug"
+          fi
+
+          # Inject signingConfigs block before android { buildTypes { } — insert it as first thing inside android {}
+          if [ "$SIGNING_STRATEGY" = "custom" ]; then
+            # Insert after the opening "android {" line
+            awk -v block="$SIGNING_BLOCK" '
+              /^android[[:space:]]*\{/ { print; print block; next }
+              { print }
+            ' "$APP_GRADLE" > "$APP_GRADLE.tmp" && mv "$APP_GRADLE.tmp" "$APP_GRADLE"
+          fi
+
+          # Replace the release { } block to include signingConfig
+          python3 << 'PYEOF'
+          import re
+          path = "app/build.gradle"
+          with open(path) as f:
+              content = f.read()
+
+          # Match buildTypes { ... release { ... } ... }
+          # Find release block and inject signingConfig if not present
+          if 'release {' in content:
+              # Find the release block (could span multiple lines)
+              pattern = r'(buildTypes\s*\{[^}]*?release\s*\{)([^}]*?)(\})'
+              def inject(m):
+                  head = m.group(1)
+                  body = m.group(2)
+                  tail = m.group(3)
+                  if 'signingConfig' not in body:
+                      # Determine which signing config to use
+                      body = body.rstrip() + "\n            signingConfig signingConfigs.release\n        "
+                  return head + body + tail
+              # Use DOTALL
+              content_new = re.sub(pattern, inject, content, count=1, flags=re.DOTALL)
+              # If custom strategy not chosen, replace signingConfigs.release with signingConfigs.debug
+              import os
+              if os.environ.get('SIGNING_STRATEGY') != 'custom':
+                  content_new = content_new.replace('signingConfig signingConfigs.release',
+                                                    'signingConfig signingConfigs.debug')
+              with open(path, 'w') as f:
+                  f.write(content_new)
+          PYEOF
+
+          # Also enable minify false for release (to ensure build works), and set debuggable false
+          sed -i 's/minifyEnabled true/minifyEnabled false/g' "$APP_GRADLE" || true
+          sed -i 's/shrinkResources true/shrinkResources false/g' "$APP_GRADLE" || true
+
+          echo "=== Final app/build.gradle (signing-relevant parts) ==="
+          grep -A2 -B1 "signingConfig\|signingConfigs\|buildTypes\|release\s*{" "$APP_GRADLE" || true
+
       - name: Build Debug APK
         working-directory: android-app/android
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK artifact
+      - name: Build Release APK (signed)
+        working-directory: android-app/android
+        env:
+          RELEASE_KEYSTORE_PASSWORD: ${{ env.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ env.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ env.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Verify APKs are signed
+        working-directory: android-app/android
+        run: |
+          set -e
+          echo "=== APK files ==="
+          find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+          echo ""
+          echo "=== Debug APK signature ==="
+          APKSIGNER="/usr/local/lib/android/sdk/build-tools/34.0.0/apksigner"
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          $APKSIGNER verify --print-certs "$DEBUG_APK" 2>&1 | head -10 || echo "(debug verify failed)"
+          echo ""
+          echo "=== Release APK signature ==="
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+          $APKSIGNER verify --print-certs "$RELEASE_APK" 2>&1 | head -10 || echo "(release verify failed)"
+
+      - name: Rename APKs with version
+        working-directory: android-app/android
+        run: |
+          VERSION="${{ env.VERSION_NAME }}"
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -1)
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -1)
+
+          # Also copy them to a clean staging dir with descriptive names
+          STAGE="$GITHUB_WORKSPACE/release-assets"
+          mkdir -p "$STAGE"
+
+          cp "$DEBUG_APK"   "$STAGE/ARAY-Android-${VERSION}-debug.apk"
+          cp "$RELEASE_APK" "$STAGE/ARAY-Android-${VERSION}-release.apk"
+
+          ls -lh "$STAGE"
+          echo "STAGE_DIR=$STAGE" >> $GITHUB_ENV
+
+      - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ARAY-Android-APK
+          name: ARAY-Android-Debug-APK
           path: android-app/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 90
+
+      - name: Upload Release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARAY-Android-Release-APK
+          path: android-app/android/app/build/outputs/apk/release/*.apk
           retention-days: 90
 
       - name: Create GitHub Release
@@ -89,22 +246,28 @@ jobs:
             **Are you Ready? and....Yapping!** — Android Edition
 
             ## Download
-            - `ARAY-Android-debug.apk` — Debug build, sideload ke Android device
+            - `ARAY-Android-*-release.apk` — **Release build (recommended)**, sudah di-signed, installable di semua device
+            - `ARAY-Android-*-debug.apk` — Debug build, untuk testing & development
 
             ## Cara Install
-            1. Download APK file
+            1. Download file `*-release.apk`
             2. Enable "Install from unknown sources" di Android Settings
             3. Buka APK file → Install
             4. Buka ARAY app
 
-            ## Catatan
+            ## Catatan Teknis
             - Versi Android ini menggunakan Capacitor + WebView
             - Camera access via browser getUserMedia API
             - Storage via Capacitor Preferences (key-value)
             - Print tidak tersedia di Android
             - Google Drive sync tidak tersedia di Android
             - License system simplified (always valid for now)
+
+            ## Build Info
+            - Built from commit: ${{ github.sha }}
+            - Build time: ${{ github.run_id }}
           files: |
-            android-app/android/app/build/outputs/apk/debug/*.apk
+            ${{ env.STAGE_DIR }}/ARAY-Android-*-debug.apk
+            ${{ env.STAGE_DIR }}/ARAY-Android-*-release.apk
           draft: false
           prerelease: false
