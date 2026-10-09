@@ -2,9 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
-// Vite config for Android build — outputs to dist/ for Capacitor
+// Vite config for Android build — root is android-app/ so node_modules resolves correctly
 export default defineConfig({
-  root: resolve(__dirname, '../src/renderer'),
+  root: resolve(__dirname),
   base: './',
   plugins: [react()],
   resolve: {
@@ -13,7 +13,6 @@ export default defineConfig({
       '@shared': resolve(__dirname, '../src/shared')
     }
   },
-  // Use postcss.config.js from android-app/ dir, not repo root
   css: {
     postcss: {
       plugins: [
