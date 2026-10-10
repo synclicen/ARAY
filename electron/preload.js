@@ -8,6 +8,13 @@ import_electron.contextBridge.exposeInMainWorld("aray", {
     getVersion: () => import_electron.ipcRenderer.invoke("app.getVersion"),
     openExternal: (url) => import_electron.ipcRenderer.invoke("app.openExternal", url)
   },
+  // v4.4.0: Monthly license system
+  license: {
+    status: () => import_electron.ipcRenderer.invoke("license.status"),
+    activate: (activationCode) => import_electron.ipcRenderer.invoke("license.activate", activationCode),
+    generate: (machineId, adminKey) => import_electron.ipcRenderer.invoke("license.generate", machineId, adminKey),
+    getMachineId: () => import_electron.ipcRenderer.invoke("license.getMachineId")
+  },
   events: {
     create: (input) => import_electron.ipcRenderer.invoke("events.create", input),
     list: (includeArchived) => import_electron.ipcRenderer.invoke("events.list", includeArchived),
@@ -30,6 +37,8 @@ import_electron.contextBridge.exposeInMainWorld("aray", {
     saveVideo: (payload) => import_electron.ipcRenderer.invoke("media.saveVideo", payload),
     saveComposite: (payload) => import_electron.ipcRenderer.invoke("media.saveComposite", payload),
     readFile: (path) => import_electron.ipcRenderer.invoke("media.readFile", path),
+    getFileInfo: (path) => import_electron.ipcRenderer.invoke("media.getFileInfo", path),
+    openInFolder: (path) => import_electron.ipcRenderer.invoke("media.openInFolder", path),
     updateSyncStatus: (id, status, remoteId, error) => import_electron.ipcRenderer.invoke("media.updateSyncStatus", id, status, remoteId, error)
   },
   storage: {
@@ -51,7 +60,7 @@ import_electron.contextBridge.exposeInMainWorld("aray", {
     getDefaultStoragePath: () => import_electron.ipcRenderer.invoke("settings.getDefaultStoragePath")
   },
   print: {
-    queue: (mediaId, printerName, copies) => import_electron.ipcRenderer.invoke("print.queue", mediaId, printerName, copies),
+    queue: (mediaId, printerName, copies, printSettings) => import_electron.ipcRenderer.invoke("print.queue", mediaId, printerName, copies, printSettings),
     listPrinters: () => import_electron.ipcRenderer.invoke("print.listPrinters")
   },
   googleDrive: {

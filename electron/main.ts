@@ -251,7 +251,20 @@ const DEFAULT_SETTINGS = {
   booth_countdown_seconds: 3, booth_shot_count: 4,
   backup_folder: null, auto_backup: false,
   selected_template_id: 'classic-strip-4',
-  booth_mode: 'photo' // 'photo' | 'video'
+  booth_mode: 'photo', // 'photo' | 'video'
+  // v4.6.5: camera facing + mirror settings (sync with src/main/database/repositories/settings.ts)
+  camera_facing: 'user',       // 'user' (front) or 'environment' (back)
+  camera_mirror: true,         // mirror preview (natural for front cam)
+  // Booth display settings (v4.5+)
+  camera_effect: 'original', camera_effect_video: 'original',
+  aspect_ratio: '9:16', aspect_ratio_video: '9:16',
+  video_template: 'viral-bounce-10',
+  palm_trigger: false, palm_trigger_sensitivity: 0.6,
+  booth_fullscreen_password: 'aray',
+  share_qr_enabled: false, share_qr_link: '',
+  show_print_button: true, show_share_button: true,
+  print_paper_size: '4x6', print_copies: 1, print_color: true,
+  print_orientation: 'portrait', print_quality: 'normal', print_fit: 'contain'
 }
 
 function getSettings() {
