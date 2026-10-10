@@ -6,6 +6,9 @@
  */
 
 import { Preferences } from '@capacitor/preferences'
+import {
+  checkLicenseStatus, activateLicense, generateLicenseCode, getMachineId, getDisplayMachineId
+} from './license'
 
 const DB_KEY = 'aray_database'
 
@@ -61,15 +64,13 @@ const arayAPI = {
     openExternal: async (url: string) => { window.open(url, '_blank'); return { success: true } }
   },
   license: {
-    status: async () => ({ success: true, data: {
-      isValid: true, isGracePeriod: false, isExpired: false, daysRemaining: 30,
-      graceDaysRemaining: 0, licenseType: 'monthly',
-      expiresAt: new Date(Date.now() + 30*86400000).toISOString(),
-      machineId: 'android', displayMachineId: 'ANDROID', firstRunDate: null
-    }}),
-    activate: async () => ({ success: true, licenseType: 'monthly' }),
-    generate: async () => ({ success: false, error: 'Not available' }),
-    getMachineId: async () => ({ success: true, data: { machineId: 'android', displayMachineId: 'ANDROID' }})
+    status: async () => ({ success: true, data: await checkLicenseStatus() }),
+    activate: async (code: string) => activateLicense(code),
+    generate: async (machineId: string, adminKey: string) => generateLicenseCode(machineId, adminKey),
+    getMachineId: async () => {
+      const machineId = await getMachineId()
+      return { success: true, data: { machineId, displayMachineId: getDisplayMachineId(machineId) }}
+    }
   },
   events: {
     create: async (input: any) => {
