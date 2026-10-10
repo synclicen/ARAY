@@ -105,22 +105,9 @@ export function BoothPage() {
     })
   }, [updateSettings])
 
-  // v4.6.5: switch antara front ('user') dan back ('environment') camera.
-  // Restart camera stream supaya constraint facingMode baru diterapkan.
-  const switchCamera = useCallback(async () => {
-    const current = settings?.camera_facing ?? 'user'
-    const next = current === 'user' ? 'environment' : 'user'
-    // Update mirror default kalau user belum pernah set manual:
-    // front cam → mirror on, back cam → mirror off
-    await updateSettings({
-      camera_facing: next,
-      camera_mirror: next === 'user'
-    })
-    setMirror(next === 'user')
-    // Restart stream
-    stopCamera()
-    setTimeout(() => { startCamera() }, 150)
-  }, [settings?.camera_facing, updateSettings, stopCamera, startCamera])
+  // v4.6.5: switchCamera dideklarasikan setelah startCamera/stopCamera (lihat bawah)
+  // karena butuh keduanya di scope. Forward declaration via ref:
+  const switchCameraRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   const [mode, setMode] = useState<BoothMode>('photo')
   const boothModeSetting = settings?.booth_mode || 'combined'
@@ -233,6 +220,26 @@ export function BoothPage() {
       return false
     }
   }, [settings?.camera_facing, selectedDeviceId])
+
+  // v4.6.5: switch antara front ('user') dan back ('environment') camera.
+  // Restart camera stream supaya constraint facingMode baru diterapkan.
+  const switchCamera = useCallback(async () => {
+    const current = settings?.camera_facing ?? 'user'
+    const next = current === 'user' ? 'environment' : 'user'
+    // Update mirror default kalau user belum pernah set manual:
+    // front cam → mirror on, back cam → mirror off
+    await updateSettings({
+      camera_facing: next,
+      camera_mirror: next === 'user'
+    })
+    setMirror(next === 'user')
+    // Restart stream
+    stopCamera()
+    setTimeout(() => { startCamera() }, 150)
+  }, [settings?.camera_facing, updateSettings, stopCamera, startCamera])
+
+  // Assign ke ref supaya tombol di top bar bisa panggil sebelum deklarasi literal
+  switchCameraRef.current = switchCamera
 
   const captureFrame = useCallback((): { full: string; thumb: string } | null => {
     const video = videoRef.current
@@ -861,7 +868,7 @@ export function BoothPage() {
             <ArayBadge variant="gold" className="hidden xs:inline-flex sm:inline-flex">{activeEvent.name}</ArayBadge>
             {/* v4.6.5: Quick camera controls — switch front/back + mirror toggle */}
             <button
-              onClick={switchCamera}
+              onClick={() => switchCameraRef.current()}
               title={`Switch to ${settings?.camera_facing === 'user' ? 'back' : 'front'} camera`}
               className="ml-1 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px]"
             >
