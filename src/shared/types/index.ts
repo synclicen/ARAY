@@ -142,6 +142,20 @@ export interface AraySettings {
   print_orientation?: 'portrait' | 'landscape'
   print_quality?: 'draft' | 'normal' | 'high'
   print_fit?: 'contain' | 'cover'  // how image fits paper
+  /**
+   * Camera facing preference.
+   * 'user' = front camera (default, selfie-style)
+   * 'environment' = back camera
+   * Used by Booth's getUserMedia() facingMode constraint.
+   */
+  camera_facing?: 'user' | 'environment'
+  /**
+   * Mirror camera preview horizontally.
+   * Default: true (front camera looks natural like a mirror).
+   * For back camera, user typically wants false (no mirror).
+   * Note: this only mirrors the LIVE preview + captured frames if true.
+   */
+  camera_mirror?: boolean
 }
 
 export interface StorageInfo {

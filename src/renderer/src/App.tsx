@@ -63,15 +63,30 @@ function App() {
 
   return (
     <AppShell>
-      {/* v4.4.2: Reduce AnimatePresence duration from 0.25s to 0.12s for snappier navigation */}
-      <AnimatePresence mode="wait">
+      {/* v4.6.5: Fix navigation blink on Android WebView.
+          AnimatePresence mode="wait" causes fade-out → blank frame → fade-in,
+          which manifests as a visible flicker on Android (especially when
+          navigating between heavy pages like Settings ↔ Events).
+
+          Strategy:
+          - On Android (window.aray.isAndroid): use mode="popLayout" (no exit
+            wait) + skip exit animation + start at opacity 1 (no enter fade).
+            New page mounts instantly on top of old one, old one unmounts after.
+          - On desktop: keep the original smooth animation
+          - Add will-change + translateZ(0) to force GPU layer (prevents repaint) */}
+      <AnimatePresence mode={typeof window !== 'undefined' && (window as any).aray?.isAndroid ? 'popLayout' : 'wait'}>
         <motion.div
           key={location.pathname}
-          initial={{ opacity: 0 }}
+          initial={typeof window !== 'undefined' && (window as any).aray?.isAndroid ? { opacity: 1 } : { opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={typeof window !== 'undefined' && (window as any).aray?.isAndroid ? undefined : { opacity: 0 }}
           transition={{ duration: 0.12, ease: 'easeOut' }}
           className="h-full"
+          style={{
+            willChange: 'opacity',
+            transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden'
+          }}
         >
           <Routes location={location}>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />

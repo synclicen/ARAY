@@ -34,7 +34,10 @@ const DEFAULT_SETTINGS = {
   share_qr_enabled: false, share_qr_link: '',
   show_print_button: true, show_share_button: true,
   print_paper_size: '4x6', print_copies: 1, print_color: true,
-  print_orientation: 'portrait', print_quality: 'normal', print_fit: 'contain'
+  print_orientation: 'portrait', print_quality: 'normal', print_fit: 'contain',
+  // v4.6.5: camera facing + mirror settings (mobile)
+  camera_facing: 'user',       // 'user' (front) or 'environment' (back)
+  camera_mirror: true          // mirror preview (natural for front cam)
 }
 
 async function getSettings() {

@@ -42,7 +42,10 @@ const DEFAULT_SETTINGS: AraySettings = {
   camera_device_id: null,
   printer_name: null,
   booth_countdown_seconds: 3,
-  booth_shot_count: 4
+  booth_shot_count: 4,
+  // v4.6.5: camera facing + mirror settings
+  camera_facing: 'user',       // 'user' (front) or 'environment' (back)
+  camera_mirror: true          // mirror preview (natural for front cam)
 }
 
 export function getSettings(): AraySettings {

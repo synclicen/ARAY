@@ -12,7 +12,9 @@ import {
   Share2,
   Link,
   Video,
-  Printer
+  Printer,
+  SwitchCamera,
+  FlipHorizontal
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayProgress } from '../components/ui'
 import { useSettingsStore } from '../stores/settings'
@@ -88,6 +90,40 @@ export function SettingsPage() {
           <h3 className="font-semibold">Photo Booth Settings</h3>
         </div>
         <div className="space-y-4">
+          {/* v4.6.5: Camera facing + mirror settings */}
+          <SettingRow
+            icon={<SwitchCamera className="w-4 h-4" />}
+            label="Camera"
+            hint="Front (selfie) atau back camera"
+          >
+            <select
+              className="aray-input w-full sm:w-auto sm:max-w-[200px]"
+              value={settings.camera_facing ?? 'user'}
+              onChange={(e) => {
+                const next = e.target.value as 'user' | 'environment'
+                // Auto-set mirror based on camera: front → mirror on, back → mirror off
+                updateSettings({
+                  camera_facing: next,
+                  camera_mirror: next === 'user'
+                })
+              }}
+            >
+              <option value="user">Front Camera (selfie)</option>
+              <option value="environment">Back Camera</option>
+            </select>
+          </SettingRow>
+
+          <SettingRow
+            icon={<FlipHorizontal className="w-4 h-4" />}
+            label="Mirror preview"
+            hint="Flip camera horizontally (natural for front cam)"
+          >
+            <Toggle
+              value={settings.camera_mirror ?? true}
+              onChange={(v) => updateSettings({ camera_mirror: v })}
+            />
+          </SettingRow>
+
           <SettingRow
             icon={<Hash className="w-4 h-4" />}
             label="Number of shots"

@@ -15,7 +15,9 @@ import {
   Video,
   Image as ImageIcon,
   LayoutTemplate,
-  Maximize2
+  Maximize2,
+  SwitchCamera,
+  FlipHorizontal
 } from 'lucide-react'
 import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
 import { useEventStore } from '../stores/events'
@@ -86,7 +88,40 @@ export function BoothPage() {
   const [lastFlash, setLastFlash] = useState(false)
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
-  const [mirror, setMirror] = useState(true)
+  // v4.6.5: mirror initialized from settings (not hardcoded true).
+  // Front camera (user) typically wants mirror=true, back camera wants false.
+  // User can override at runtime via the mirror toggle in Booth UI; the override
+  // is also persisted to settings so it survives app restarts.
+  const [mirror, setMirror] = useState<boolean>(
+    settings?.camera_mirror ?? (settings?.camera_facing !== 'environment')
+  )
+  // v4.6.5: helper to toggle mirror + persist ke settings
+  const { updateSettings } = useSettingsStore()
+  const toggleMirror = useCallback(() => {
+    setMirror((prev) => {
+      const next = !prev
+      updateSettings({ camera_mirror: next })
+      return next
+    })
+  }, [updateSettings])
+
+  // v4.6.5: switch antara front ('user') dan back ('environment') camera.
+  // Restart camera stream supaya constraint facingMode baru diterapkan.
+  const switchCamera = useCallback(async () => {
+    const current = settings?.camera_facing ?? 'user'
+    const next = current === 'user' ? 'environment' : 'user'
+    // Update mirror default kalau user belum pernah set manual:
+    // front cam → mirror on, back cam → mirror off
+    await updateSettings({
+      camera_facing: next,
+      camera_mirror: next === 'user'
+    })
+    setMirror(next === 'user')
+    // Restart stream
+    stopCamera()
+    setTimeout(() => { startCamera() }, 150)
+  }, [settings?.camera_facing, updateSettings, stopCamera, startCamera])
+
   const [mode, setMode] = useState<BoothMode>('photo')
   const boothModeSetting = settings?.booth_mode || 'combined'
   const [activeFilterId, setActiveFilterId] = useState('original')
@@ -169,10 +204,22 @@ export function BoothPage() {
   const startCamera = useCallback(async () => {
     try {
       setError(null)
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      // v4.6.5: pakai setting camera_facing ('user' atau 'environment').
+      // Default 'user' (front) untuk kompatibilitas dengan versi sebelumnya.
+      const facingMode = settings?.camera_facing ?? 'user'
+      const constraints: MediaStreamConstraints = {
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: facingMode
+        },
         audio: false
-      })
+      }
+      // Jika user pilih device spesifik (desktop), override facingMode dengan deviceId
+      if (selectedDeviceId) {
+        constraints.video = { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      }
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       streamRef.current = stream
       if (videoRef.current) {
         videoRef.current.srcObject = stream
@@ -185,7 +232,7 @@ export function BoothPage() {
       setPhase('error')
       return false
     }
-  }, [])
+  }, [settings?.camera_facing, selectedDeviceId])
 
   const captureFrame = useCallback((): { full: string; thumb: string } | null => {
     const video = videoRef.current
@@ -812,6 +859,25 @@ export function BoothPage() {
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
             <ArayBadge variant="gold" className="hidden xs:inline-flex sm:inline-flex">{activeEvent.name}</ArayBadge>
+            {/* v4.6.5: Quick camera controls — switch front/back + mirror toggle */}
+            <button
+              onClick={switchCamera}
+              title={`Switch to ${settings?.camera_facing === 'user' ? 'back' : 'front'} camera`}
+              className="ml-1 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px]"
+            >
+              <SwitchCamera className="w-4 h-4 text-silver-200" />
+            </button>
+            <button
+              onClick={toggleMirror}
+              title={mirror ? 'Mirror: ON (tap to disable)' : 'Mirror: OFF (tap to enable)'}
+              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center transition-all min-h-[44px] ${
+                mirror
+                  ? 'bg-purple-haze-500/40 border-purple-haze-400/50 text-purple-haze-100'
+                  : 'bg-black/40 hover:bg-silver-200/10 border-silver-300/20 text-silver-400'
+              }`}
+            >
+              <FlipHorizontal className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
