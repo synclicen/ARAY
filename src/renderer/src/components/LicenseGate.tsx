@@ -46,6 +46,13 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
 
   useEffect(() => {
     checkStatus()
+    // v4.6.7: Enable body scroll untuk LicenseGate (default body overflow:hidden).
+    // LicenseGate content panjang (terutama saat Developer Mode dibuka) — perlu scroll.
+    // Class di-remove saat unmount (saat license valid → masuk AppShell).
+    document.body.classList.add('aray-scrollable')
+    return () => {
+      document.body.classList.remove('aray-scrollable')
+    }
   }, [])
 
   const handleActivate = async () => {
@@ -110,7 +117,7 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-surface-base">
+      <div className="min-h-screen flex items-center justify-center bg-surface-base" style={{ minHeight: '100dvh' }}>
         <div className="text-center">
           <ArayLogo size="xl" animated className="mb-6" />
           <p className="text-silver-400 text-sm">Memeriksa lisensi...</p>
@@ -120,11 +127,14 @@ export function LicenseGate({ onActivated }: { onActivated: () => void }) {
   }
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-4">
+    <div
+      className="min-h-screen w-full overflow-y-auto bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-4 py-8"
+      style={{ minHeight: '100dvh' }}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-md"
+        className="w-full max-w-md mx-auto"
       >
         <div className="text-center mb-8">
           <ArayLogo size="xl" animated className="mb-4" />

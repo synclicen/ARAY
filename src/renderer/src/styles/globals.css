@@ -27,6 +27,12 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   }
 
+  /* LicenseGate & FirstRun pages need body scroll (long content on mobile) */
+  body.aray-scrollable {
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
   /* Custom scrollbar — desktop only (mobile uses touch) */
   @media (pointer: fine) {
     ::-webkit-scrollbar {
