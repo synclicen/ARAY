@@ -13,7 +13,9 @@ import_electron.contextBridge.exposeInMainWorld("aray", {
     status: () => import_electron.ipcRenderer.invoke("license.status"),
     activate: (activationCode) => import_electron.ipcRenderer.invoke("license.activate", activationCode),
     generate: (machineId, adminKey) => import_electron.ipcRenderer.invoke("license.generate", machineId, adminKey),
-    getMachineId: () => import_electron.ipcRenderer.invoke("license.getMachineId")
+    getMachineId: () => import_electron.ipcRenderer.invoke("license.getMachineId"),
+    // v4.6.8: Event session lock — 72h grace period
+    startEventSession: () => import_electron.ipcRenderer.invoke("license.startEventSession")
   },
   events: {
     create: (input) => import_electron.ipcRenderer.invoke("events.create", input),

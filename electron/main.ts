@@ -66,8 +66,9 @@ function loadDB(): any {
 
 function saveDB(db: any): void {
   dbCache = db  // Update cache immediately
-  // v4.5.1: Debounce disk writes — batch multiple saves within 500ms.
-  // Sebelumnya: setiap saveDB = write 10MB file. Dengan 5000 entries, ini blocking.
+  // v4.5.1: Debounce disk writes — batch multiple saves within 100ms.
+  // v4.6.8: Turun dari 500ms ke 100ms untuk minimize data loss saat crash.
+  // Untuk acara 5000 peserta, max 100ms window acceptable.
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     try {
@@ -75,8 +76,27 @@ function saveDB(db: any): void {
       const tmpPath = dbPath + '.tmp'
       fs.writeFileSync(tmpPath, JSON.stringify(db, null, 2), 'utf8')
       fs.renameSync(tmpPath, dbPath)
+      // v4.6.8: Auto-backup setiap 50 saves — keep last 3 backup files
+      // Critical untuk acara: kalau data.json corrupt, ada rollback
+      _incrementalBackup(dbPath)
     } catch (err: any) { log(`DB save error: ${err.message}`) }
-  }, 500)
+  }, 100)
+}
+
+// v4.6.8: Incremental backup — rotate 3 backup files
+let _saveCount = 0
+function _incrementalBackup(dbPath: string): void {
+  _saveCount++
+  if (_saveCount % 50 !== 0) return  // backup setiap 50 saves
+  try {
+    const bak3 = dbPath + '.bak3'
+    const bak2 = dbPath + '.bak2'
+    const bak1 = dbPath + '.bak1'
+    if (fs.existsSync(bak2)) { try { fs.unlinkSync(bak3); fs.renameSync(bak2, bak3) } catch {} }
+    if (fs.existsSync(bak1)) { try { fs.renameSync(bak1, bak2) } catch {} }
+    fs.copyFileSync(dbPath, bak1)
+    log(`[backup] Rotated backups: data.json.bak1 (latest), .bak2, .bak3 (oldest)`)
+  } catch (err: any) { log(`[backup] Failed: ${err.message}`) }
 }
 
 // ─── STORAGE ────────────────────────────────────────────────────
@@ -343,6 +363,24 @@ function backupFile(localPath: string, filename?: string) {
   }
 }
 
+// v4.6.8: backupFileAsync — non-blocking version via setImmediate.
+// Untuk auto-backup saat capture (saveVideo/saveComposite), pakai versi ini
+// supaya IPC handler tidak block → Booth UI tidak stutter.
+// Untuk manual sync (backupAllPendingMedia), tetap pakai backupFile (sync)
+// karena user menunggu progress real-time.
+function backupFileAsync(localPath: string, filename?: string): void {
+  setImmediate(() => {
+    try {
+      const result = backupFile(localPath, filename)
+      if (!result.success && result.message !== 'No backup folder' && result.message !== 'Already backed up') {
+        log(`[async backup] Failed: ${result.message}`)
+      }
+    } catch (e: any) {
+      log(`[async backup] Exception: ${e.message}`)
+    }
+  })
+}
+
 function backupAllPendingMedia() {
   const db = loadDB()
   // v4.5.5: Manual sync (Sync Now button) harus work meskipun auto_backup false.
@@ -521,7 +559,7 @@ function registerIPC() {
   ipcMain.handle('app.openExternal', (_e, url: string) => wrap(() => { shell.openExternal(url); return { success: true } }))
 
   // LICENSE — v4.4.0: Monthly license system (adaptasi dari Saatiril)
-  const { checkLicenseStatus, activateLicense, getMachineId, getDisplayMachineId, generateLicenseCode } = require('./license')
+  const { checkLicenseStatus, activateLicense, getMachineId, getDisplayMachineId, generateLicenseCode, startEventSession } = require('./license')
 
   ipcMain.handle('license.status', () => {
     try {
@@ -571,6 +609,16 @@ function registerIPC() {
       const mid = getMachineId()
       const display = getDisplayMachineId(mid)
       return { success: true, data: { machineId: mid, displayMachineId: display } }
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
+  })
+
+  // v4.6.8: Event session lock — trigger 72h grace period untuk acara
+  ipcMain.handle('license.startEventSession', () => {
+    try {
+      startEventSession()
+      return { success: true }
     } catch (e: any) {
       return { success: false, error: e.message }
     }
@@ -637,14 +685,13 @@ function registerIPC() {
       event_id: payload.event_id, session_id: payload.session_id, type: 'photo',
       original_path: paths.original, thumbnail_path: thumbnailPath, checksum
     })
-    // Auto-backup
+    // Auto-backup (v4.6.8: async — tidak block IPC)
     const settings = getSettings()
     if (settings.auto_backup && settings.backup_folder) {
-      const r = backupFile(paths.original, path.basename(paths.original))
-      if (r.success) {
-        const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
-        if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
-      }
+      backupFileAsync(paths.original, path.basename(paths.original))
+      // Update sync_status optimistic — tidak tunggu backup selesai
+      const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
+      if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
     }
     return media
   }))
@@ -681,11 +728,10 @@ function registerIPC() {
     log(`[media.saveVideo] Video saved: ${path.basename(videoPath)} (media id: ${media.id})`)
     const settings = getSettings()
     if (settings.auto_backup && settings.backup_folder) {
-      const r = backupFile(videoPath, path.basename(videoPath))
-      if (r.success) {
-        const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
-        if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
-      }
+      // v4.6.8: async backup — tidak block IPC
+      backupFileAsync(videoPath, path.basename(videoPath))
+      const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
+      if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
     }
     return media
   }))
@@ -704,18 +750,13 @@ function registerIPC() {
       processed_path: compositePath
     })
     log(`Composite saved: ${path.basename(compositePath)}`)
-    // v4.5.8: Auto-backup composite ke Google Drive (sebelumnya tidak ada!)
+    // v4.5.8: Auto-backup composite (v4.6.8: async — tidak block IPC)
     const settings = getSettings()
     if (settings.auto_backup && settings.backup_folder) {
-      log(`[saveComposite] Auto-backup to: ${settings.backup_folder}`)
-      const r = backupFile(compositePath, path.basename(compositePath))
-      if (r.success) {
-        log(`[saveComposite] Auto-backup success: ${r.message}`)
-        const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
-        if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
-      } else {
-        log(`[saveComposite] Auto-backup failed: ${r.message}`)
-      }
+      log(`[saveComposite] Auto-backup (async) to: ${settings.backup_folder}`)
+      backupFileAsync(compositePath, path.basename(compositePath))
+      const db = loadDB(); const idx = db.media.findIndex((m: any) => m.id === media.id)
+      if (idx !== -1) { db.media[idx].sync_status = 'SYNCED'; db.media[idx].uploaded_at = new Date().toISOString(); saveDB(db) }
     }
     return media
   }))

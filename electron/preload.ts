@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('aray', {
     status: () => ipcRenderer.invoke('license.status'),
     activate: (activationCode: string) => ipcRenderer.invoke('license.activate', activationCode),
     generate: (machineId: string, adminKey: string) => ipcRenderer.invoke('license.generate', machineId, adminKey),
-    getMachineId: () => ipcRenderer.invoke('license.getMachineId')
+    getMachineId: () => ipcRenderer.invoke('license.getMachineId'),
+    // v4.6.8: Event session lock — 72h grace period
+    startEventSession: () => ipcRenderer.invoke('license.startEventSession')
   },
 
   events: {

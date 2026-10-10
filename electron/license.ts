@@ -246,6 +246,27 @@ function recordFirstRun(): string {
 }
 
 // ─── License Status Check ──────────────────────────────────────────────────
+// v4.6.8: Event Session Lock — grace period untuk acara
+// Setelah license valid activated, simpan eventSessionStartedAt di main process
+// memory. Selama 72 jam sejak session start, license check tetap return isValid:true
+// bahkan jika license expired. Ini mencegah lockout di tengah acara 5000 peserta.
+let _eventSessionStartedAt: string | null = null
+const EVENT_GRACE_PERIOD_HOURS = 72
+
+export function startEventSession(): void {
+  if (!_eventSessionStartedAt) {
+    _eventSessionStartedAt = new Date().toISOString()
+    console.log(`[ARAY LICENSE] Event session started at ${_eventSessionStartedAt}`)
+    console.log(`[ARAY LICENSE] Grace period active for ${EVENT_GRACE_PERIOD_HOURS}h — license expiry will NOT lock app`)
+  }
+}
+
+export function isEventSessionActive(): boolean {
+  if (!_eventSessionStartedAt) return false
+  const elapsed = Date.now() - new Date(_eventSessionStartedAt).getTime()
+  return elapsed < EVENT_GRACE_PERIOD_HOURS * 3600 * 1000
+}
+
 export function checkLicenseStatus(): LicenseStatus {
   const machineId = getMachineId()
   const displayMachineId = getDisplayMachineId(machineId)
@@ -278,12 +299,20 @@ export function checkLicenseStatus(): LicenseStatus {
       ? Math.max(0, Math.ceil((new Date(licenseData.expiresAt).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
       : 0
 
+    // v4.6.8: Event Session Lock — kalau license expired TAPI event session
+    // masih aktif (< 72 jam sejak start), tetap return isValid:true (grace period).
+    // Ini mencegah lockout di tengah acara 5000 peserta kalau license expire mid-event.
+    const eventGraceActive = isExpired && isEventSessionActive()
+    const graceHoursRemaining = eventGraceActive
+      ? Math.ceil((EVENT_GRACE_PERIOD_HOURS * 3600 * 1000 - (Date.now() - new Date(_eventSessionStartedAt!).getTime())) / 3600000)
+      : 0
+
     return {
-      isValid: !isExpired,
-      isGracePeriod: false,
-      isExpired,
+      isValid: !isExpired || eventGraceActive,
+      isGracePeriod: eventGraceActive,
+      isExpired: isExpired && !eventGraceActive,
       daysRemaining,
-      graceDaysRemaining: 0,
+      graceDaysRemaining: graceHoursRemaining,
       licenseType: licenseData.licenseType,
       expiresAt: licenseData.expiresAt,
       machineId,

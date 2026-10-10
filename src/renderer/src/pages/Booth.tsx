@@ -615,10 +615,21 @@ export function BoothPage() {
           addMedia(compositeMedia)
           console.log('[Booth] Composite saved successfully — media id:', compositeMedia.id,
             '(this is the ONLY file saved for this session — raw shots were kept in-memory only)')
+        } else {
+          // v4.6.8 P0#3: Surface save failure ke user — sebelumnya silent fail
+          // yang bisa bikin operator pikir sukses padahal file tidak tersimpan
+          // (disk penuh, path invalid, I/O error). Untuk acara 5000 peserta, ini
+          // show-stopper karena data loss silent.
+          console.error('[Booth] saveComposite FAILED:', saveResult.error)
+          setError(`Gagal menyimpan foto: ${saveResult.error?.message || saveResult.error || 'Unknown error'}. Cek storage tersedia.`)
+          setPhase('error')
         }
       }
     } catch (e: any) {
       console.error('[Booth] Composite failed:', e)
+      // v4.6.8 P0#3: Surface composite exception ke user juga
+      setError(`Composite gagal: ${e?.message || e}. Silakan retry.`)
+      setPhase('error')
     } finally {
       setCompositing(false)
     }
@@ -710,8 +721,37 @@ export function BoothPage() {
   useEffect(() => {
     if (phase === 'greeting' && !streamRef.current) {
       startCamera()
+      // v4.6.8: Trigger event session lock — grace period 72 jam aktif
+      // untuk prevent lockout kalau license expire mid-acara
+      ;(window as any).aray?.license?.startEventSession?.()
     }
   }, [phase, startCamera])
+
+  // v4.6.8 P2#9: Auto-recover camera saat app resume dari background.
+  // Android WebView pause camera saat app background. Saat resume, stream mati
+  // tapi streamRef masih reference stream lama → video.play() fail.
+  // Fix: dengar visibilitychange, kalau visible lagi dan stream mati → restart.
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        // Cek apakah stream masih aktif
+        if (streamRef.current) {
+          const tracks = streamRef.current.getTracks()
+          const live = tracks.length > 0 && tracks.every(t => t.readyState === 'live')
+          if (!live) {
+            console.log('[Booth] Camera stream dead after resume — restarting')
+            stopCamera()
+            setTimeout(() => { startCamera() }, 200)
+          }
+        } else if (phase === 'greeting' || phase === 'preview') {
+          console.log('[Booth] No stream after resume — starting camera')
+          startCamera()
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [phase, startCamera, stopCamera])
 
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
@@ -785,7 +825,11 @@ export function BoothPage() {
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
       if (palmTriggerRef.current) {
-        palmTriggerRef.current.stop()
+        // v4.6.8 P0#2: dispose() untuk release MediaPipe WASM model + WebGL context.
+        // Sebelumnya hanya stop() yang cancel rAF tapi model tetap loaded → memory leak
+        // kumulatif → OOM di Android setelah 30-100 sesi. Untuk 5000 peserta, WAJIB dispose.
+        palmTriggerRef.current.dispose?.()
+        palmTriggerRef.current = null
         setPalmTriggerActive(false)
         setPalmState('none')
       }

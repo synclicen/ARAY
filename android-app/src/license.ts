@@ -198,6 +198,24 @@ async function recordFirstRun(): Promise<string> {
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
+// v4.6.8: Event Session Lock — grace period untuk acara
+let _eventSessionStartedAt: string | null = null
+const EVENT_GRACE_PERIOD_HOURS = 72
+
+export function startEventSession(): void {
+  if (!_eventSessionStartedAt) {
+    _eventSessionStartedAt = new Date().toISOString()
+    console.log(`[ARAY LICENSE] Event session started at ${_eventSessionStartedAt}`)
+    console.log(`[ARAY LICENSE] Grace period active for ${EVENT_GRACE_PERIOD_HOURS}h`)
+  }
+}
+
+export function isEventSessionActive(): boolean {
+  if (!_eventSessionStartedAt) return false
+  const elapsed = Date.now() - new Date(_eventSessionStartedAt).getTime()
+  return elapsed < EVENT_GRACE_PERIOD_HOURS * 3600 * 1000
+}
+
 export async function checkLicenseStatus(): Promise<LicenseStatus> {
   const machineId = await getMachineId()
   const displayMachineId = getDisplayMachineId(machineId)
@@ -218,13 +236,22 @@ export async function checkLicenseStatus(): Promise<LicenseStatus> {
     const isExpired = licenseData.expiresAt
       ? new Date(licenseData.expiresAt) < now
       : true
+
     const daysRemaining = licenseData.expiresAt
       ? Math.max(0, Math.ceil((new Date(licenseData.expiresAt).getTime() - now.getTime()) / 86400000))
       : 0
 
+    // v4.6.8: Event Session Lock grace period
+    const eventGraceActive = isExpired && isEventSessionActive()
+    const graceHoursRemaining = eventGraceActive
+      ? Math.ceil((EVENT_GRACE_PERIOD_HOURS * 3600 * 1000 - (Date.now() - new Date(_eventSessionStartedAt!).getTime())) / 3600000)
+      : 0
+
     return {
-      isValid: !isExpired, isGracePeriod: false, isExpired,
-      daysRemaining, graceDaysRemaining: 0,
+      isValid: !isExpired || eventGraceActive,
+      isGracePeriod: eventGraceActive,
+      isExpired: isExpired && !eventGraceActive,
+      daysRemaining, graceDaysRemaining: graceHoursRemaining,
       licenseType: licenseData.licenseType,
       expiresAt: licenseData.expiresAt, machineId, displayMachineId,
       firstRunDate: await getFirstRunDate(),

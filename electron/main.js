@@ -40,7 +40,9 @@ __export(license_exports, {
   getAdminKeyHash: () => getAdminKeyHash,
   getDisplayMachineId: () => getDisplayMachineId,
   getMachineId: () => getMachineId,
+  isEventSessionActive: () => isEventSessionActive,
   readLicenseFile: () => readLicenseFile,
+  startEventSession: () => startEventSession,
   verifyActivationCode: () => verifyActivationCode
 });
 function getHardwareFingerprint() {
@@ -194,6 +196,18 @@ function recordFirstRun() {
     return (/* @__PURE__ */ new Date()).toISOString();
   }
 }
+function startEventSession() {
+  if (!_eventSessionStartedAt) {
+    _eventSessionStartedAt = (/* @__PURE__ */ new Date()).toISOString();
+    console.log(`[ARAY LICENSE] Event session started at ${_eventSessionStartedAt}`);
+    console.log(`[ARAY LICENSE] Grace period active for ${EVENT_GRACE_PERIOD_HOURS}h \u2014 license expiry will NOT lock app`);
+  }
+}
+function isEventSessionActive() {
+  if (!_eventSessionStartedAt) return false;
+  const elapsed = Date.now() - new Date(_eventSessionStartedAt).getTime();
+  return elapsed < EVENT_GRACE_PERIOD_HOURS * 3600 * 1e3;
+}
 function checkLicenseStatus() {
   const machineId = getMachineId();
   const displayMachineId = getDisplayMachineId(machineId);
@@ -217,12 +231,14 @@ function checkLicenseStatus() {
     const now = /* @__PURE__ */ new Date();
     const isExpired = licenseData.expiresAt ? new Date(licenseData.expiresAt) < now : true;
     const daysRemaining = licenseData.expiresAt ? Math.max(0, Math.ceil((new Date(licenseData.expiresAt).getTime() - now.getTime()) / (1e3 * 60 * 60 * 24))) : 0;
+    const eventGraceActive = isExpired && isEventSessionActive();
+    const graceHoursRemaining = eventGraceActive ? Math.ceil((EVENT_GRACE_PERIOD_HOURS * 3600 * 1e3 - (Date.now() - new Date(_eventSessionStartedAt).getTime())) / 36e5) : 0;
     return {
-      isValid: !isExpired,
-      isGracePeriod: false,
-      isExpired,
+      isValid: !isExpired || eventGraceActive,
+      isGracePeriod: eventGraceActive,
+      isExpired: isExpired && !eventGraceActive,
       daysRemaining,
-      graceDaysRemaining: 0,
+      graceDaysRemaining: graceHoursRemaining,
       licenseType: licenseData.licenseType,
       expiresAt: licenseData.expiresAt,
       machineId,
@@ -310,7 +326,7 @@ function generateLicenseCode(machineId, adminKey) {
 function getAdminKeyHash() {
   return crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex").substring(0, 16);
 }
-var crypto, fs, os, path, import_electron, LICENSE_SECRET;
+var crypto, fs, os, path, import_electron, LICENSE_SECRET, _eventSessionStartedAt, EVENT_GRACE_PERIOD_HOURS;
 var init_license = __esm({
   "electron/license.ts"() {
     "use strict";
@@ -320,6 +336,8 @@ var init_license = __esm({
     path = __toESM(require("path"));
     import_electron = require("electron");
     LICENSE_SECRET = "ARAY-2026-HUMAS-UIN-ANTASARI-BANJARMASIN";
+    _eventSessionStartedAt = null;
+    EVENT_GRACE_PERIOD_HOURS = 72;
   }
 });
 
@@ -394,10 +412,38 @@ function saveDB(db) {
       const tmpPath = dbPath + ".tmp";
       fs2.writeFileSync(tmpPath, JSON.stringify(db, null, 2), "utf8");
       fs2.renameSync(tmpPath, dbPath);
+      _incrementalBackup(dbPath);
     } catch (err2) {
       log(`DB save error: ${err2.message}`);
     }
-  }, 500);
+  }, 100);
+}
+var _saveCount = 0;
+function _incrementalBackup(dbPath) {
+  _saveCount++;
+  if (_saveCount % 50 !== 0) return;
+  try {
+    const bak3 = dbPath + ".bak3";
+    const bak2 = dbPath + ".bak2";
+    const bak1 = dbPath + ".bak1";
+    if (fs2.existsSync(bak2)) {
+      try {
+        fs2.unlinkSync(bak3);
+        fs2.renameSync(bak2, bak3);
+      } catch {
+      }
+    }
+    if (fs2.existsSync(bak1)) {
+      try {
+        fs2.renameSync(bak1, bak2);
+      } catch {
+      }
+    }
+    fs2.copyFileSync(dbPath, bak1);
+    log(`[backup] Rotated backups: data.json.bak1 (latest), .bak2, .bak3 (oldest)`);
+  } catch (err2) {
+    log(`[backup] Failed: ${err2.message}`);
+  }
 }
 function getDefaultStoragePath() {
   try {
@@ -655,6 +701,18 @@ function backupFile(localPath, filename) {
     return { success: false, copied: false, message: e.message };
   }
 }
+function backupFileAsync(localPath, filename) {
+  setImmediate(() => {
+    try {
+      const result = backupFile(localPath, filename);
+      if (!result.success && result.message !== "No backup folder" && result.message !== "Already backed up") {
+        log(`[async backup] Failed: ${result.message}`);
+      }
+    } catch (e) {
+      log(`[async backup] Exception: ${e.message}`);
+    }
+  });
+}
 function backupAllPendingMedia() {
   const db = loadDB();
   if (!db.settings.backup_folder) {
@@ -848,7 +906,7 @@ function registerIPC() {
     import_electron2.shell.openExternal(url);
     return { success: true };
   }));
-  const { checkLicenseStatus: checkLicenseStatus2, activateLicense: activateLicense2, getMachineId: getMachineId2, getDisplayMachineId: getDisplayMachineId2, generateLicenseCode: generateLicenseCode2 } = (init_license(), __toCommonJS(license_exports));
+  const { checkLicenseStatus: checkLicenseStatus2, activateLicense: activateLicense2, getMachineId: getMachineId2, getDisplayMachineId: getDisplayMachineId2, generateLicenseCode: generateLicenseCode2, startEventSession: startEventSession2 } = (init_license(), __toCommonJS(license_exports));
   import_electron2.ipcMain.handle("license.status", () => {
     try {
       const status = checkLicenseStatus2();
@@ -894,6 +952,14 @@ function registerIPC() {
       const mid = getMachineId2();
       const display = getDisplayMachineId2(mid);
       return { success: true, data: { machineId: mid, displayMachineId: display } };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+  import_electron2.ipcMain.handle("license.startEventSession", () => {
+    try {
+      startEventSession2();
+      return { success: true };
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -963,15 +1029,13 @@ function registerIPC() {
     });
     const settings = getSettings();
     if (settings.auto_backup && settings.backup_folder) {
-      const r = backupFile(paths.original, path2.basename(paths.original));
-      if (r.success) {
-        const db = loadDB();
-        const idx = db.media.findIndex((m) => m.id === media.id);
-        if (idx !== -1) {
-          db.media[idx].sync_status = "SYNCED";
-          db.media[idx].uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
-          saveDB(db);
-        }
+      backupFileAsync(paths.original, path2.basename(paths.original));
+      const db = loadDB();
+      const idx = db.media.findIndex((m) => m.id === media.id);
+      if (idx !== -1) {
+        db.media[idx].sync_status = "SYNCED";
+        db.media[idx].uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
+        saveDB(db);
       }
     }
     return media;
@@ -1011,15 +1075,13 @@ function registerIPC() {
     log(`[media.saveVideo] Video saved: ${path2.basename(videoPath)} (media id: ${media.id})`);
     const settings = getSettings();
     if (settings.auto_backup && settings.backup_folder) {
-      const r = backupFile(videoPath, path2.basename(videoPath));
-      if (r.success) {
-        const db = loadDB();
-        const idx = db.media.findIndex((m) => m.id === media.id);
-        if (idx !== -1) {
-          db.media[idx].sync_status = "SYNCED";
-          db.media[idx].uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
-          saveDB(db);
-        }
+      backupFileAsync(videoPath, path2.basename(videoPath));
+      const db = loadDB();
+      const idx = db.media.findIndex((m) => m.id === media.id);
+      if (idx !== -1) {
+        db.media[idx].sync_status = "SYNCED";
+        db.media[idx].uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
+        saveDB(db);
       }
     }
     return media;
@@ -1044,19 +1106,14 @@ function registerIPC() {
     log(`Composite saved: ${path2.basename(compositePath)}`);
     const settings = getSettings();
     if (settings.auto_backup && settings.backup_folder) {
-      log(`[saveComposite] Auto-backup to: ${settings.backup_folder}`);
-      const r = backupFile(compositePath, path2.basename(compositePath));
-      if (r.success) {
-        log(`[saveComposite] Auto-backup success: ${r.message}`);
-        const db = loadDB();
-        const idx = db.media.findIndex((m) => m.id === media.id);
-        if (idx !== -1) {
-          db.media[idx].sync_status = "SYNCED";
-          db.media[idx].uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
-          saveDB(db);
-        }
-      } else {
-        log(`[saveComposite] Auto-backup failed: ${r.message}`);
+      log(`[saveComposite] Auto-backup (async) to: ${settings.backup_folder}`);
+      backupFileAsync(compositePath, path2.basename(compositePath));
+      const db = loadDB();
+      const idx = db.media.findIndex((m) => m.id === media.id);
+      if (idx !== -1) {
+        db.media[idx].sync_status = "SYNCED";
+        db.media[idx].uploaded_at = (/* @__PURE__ */ new Date()).toISOString();
+        saveDB(db);
       }
     }
     return media;

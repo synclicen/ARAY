@@ -120,6 +120,21 @@ export function FirstRunPage() {
             </ArayButton>
           )}
         </div>
+
+        {/* v4.6.8 P2#10: Quick skip wizard — untuk setup cepat sebelum acara */}
+        {step === 0 && (
+          <div className="text-center mt-6">
+            <button
+              onClick={finish}
+              className="text-xs text-silver-600 hover:text-silver-400 underline transition-colors"
+            >
+              Skip wizard — use defaults (recommended for quick setup)
+            </button>
+            <p className="text-[10px] text-silver-700 mt-1">
+              Storage: Documents/ARAY · Camera: auto · Printer: skip · Backup: off
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )
