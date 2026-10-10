@@ -316,3 +316,54 @@ Stage Summary:
 - Sekarang user Android akan lihat LicenseGate saat pertama buka app
 - Mereka dapat Machine ID → kirim ke admin → admin generate code → user input → aktivasi 30 hari
 - Sama persis seperti flow Electron
+
+---
+Task ID: license-gate-scroll-zoom-fix
+Agent: main
+Task: Fix LicenseGate tidak bisa scroll + tidak bisa zoom — dev mode inaccessible
+
+Work Log:
+- User: "saat membuka halaman developer mode di halaman aktivasi lisensi, halaman
+  tidak bisa di scroll ke bawah tidak bisa juga di zoom in, sehingga halaman
+  developer tidak lengkap, dan tidak bisa melakukan aktivasi"
+
+Akar masalah (3 layer):
+1. Container LicenseGate pakai `h-screen flex items-center justify-center`
+   - Paksa center vertikal, tidak ada scroll
+   - Saat dev mode dibuka, content melebihi viewport → overflow ke luar layar
+2. body { overflow: hidden } di globals.css (diperlukan untuk Booth camera)
+   - Block semua scroll global termasuk LicenseGate
+3. user-scalable=no, maximum-scale=1.0 di viewport (android-app/index.html)
+   - Block pinch-zoom di Android
+   - User tidak bisa zoom untuk baca Machine ID 64-char yang kecil
+
+Fix yang diterapkan:
+1. Viewport (android-app/index.html):
+   - user-scalable=no → user-scalable=yes
+   - maximum-scale=1.0 → maximum-scale=5.0
+2. LicenseGate container (src/renderer/src/components/LicenseGate.tsx):
+   - h-screen → min-h-screen (min-height, bisa grow)
+   - flex items-center justify-center → py-8 (top padding, no forced center)
+   - Tambah overflow-y-auto + minHeight: 100dvh (dynamic viewport)
+   - motion.div: tambah mx-auto untuk center horizontal
+   - Tambah useEffect untuk toggle class 'aray-scrollable' di body
+3. globals.css: tambah body.aray-scrollable { overflow: auto; overscroll-behavior: contain }
+   - Class ditoggle ON saat LicenseGate mount
+   - Class di-toggle OFF saat LicenseGate unmount (saat license valid → AppShell)
+   - Booth & page lain tidak terpengaruh (tetap overflow:hidden)
+
+Build:
+- Bump version 4.6.6 → 4.6.7
+- Commit 7f07204, push main
+- Tag android-v1.0.20 + v4.6.7 (build paralel)
+- Android Run #20: SUKSES, semua 19 step lulus
+- Windows Run #148: SUKSES, semua 11 step lulus
+
+Stage Summary:
+- Android APK v1.0.20: https://github.com/synclicen/ARAY/releases/tag/android-v1.0.20
+- Windows Installer v4.6.7: https://github.com/synclicen/ARAY/releases/tag/v4.6.7
+- User Android sekarang bisa:
+  - Scroll halaman LicenseGate sampai bawah (termasuk Developer Mode)
+  - Pinch-zoom untuk baca Machine ID 64-char dengan jelas
+  - Akses tombol Generate Code di dev mode
+  - Input activation code dengan nyaman
