@@ -188,3 +188,75 @@ Stage Summary:
 - Camera: bisa switch front/back dari Settings ATAU langsung dari top bar Booth
 - Mirror: bisa toggle on/off dari Settings ATAU top bar Booth, persist ke settings
 - Glitch navigasi: Android pakai popLayout mode (instant), desktop tetap smooth
+
+---
+Task ID: electron-rebuild-v465
+Agent: main
+Task: Rebuild Electron app dari commit 14f4bb3 — jangan ada yang tertinggal
+
+Work Log:
+- User: "rebuild npm run build dari commit 14f4bb3 ! jangan ada yang tertinggal"
+- Checkout ke commit 14f4bb3 (detached HEAD), working tree clean
+- npm run build pertama: berhasil, 2031 modules, 3.5s
+- Verify semua fitur di output:
+  - Renderer: camera_facing, camera_mirror, SwitchCamera, FlipHorizontal, isAndroid, popLayout — semua ada
+  - Main.js: booth_fullscreen_password ada, TAPI camera_facing & camera_mirror TIDAK ADA
+
+BUG DITEMUKAN:
+- electron/main.ts punya DEFAULT_SETTINGS sendiri (line 246) yang terpisah
+  dari src/main/database/repositories/settings.ts
+- Saat commit 14f4bb3 tambah camera_facing + camera_mirror, hanya update
+  src/main/database/repositories/settings.ts, TIDAK update electron/main.ts
+- Akibatnya: fitur camera switch + mirror toggle TIDAK berfungsi di Electron
+  build (hanya di Android yang pakai android-shim.ts)
+
+FIX:
+- Update DEFAULT_SETTINGS di electron/main.ts: tambah camera_facing,
+  camera_mirror, plus field-field lain yang missing (camera_effect,
+  aspect_ratio, palm_trigger, print_*, share_qr_*, dll)
+- Rebuild: semua fitur terverifikasi di output
+- Commit 9d5191f: "fix(electron): sync DEFAULT_SETTINGS di main.ts"
+
+TRIGGER WINDOWS INSTALLER BUILD:
+- Bump version di package.json: 4.6.4 → 4.6.5
+- Commit e773952, tag v4.6.5, push
+- Run #145 (Release workflow) — Typecheck gagal!
+  Error: src/renderer/src/pages/Booth.tsx(123,48): error TS2448 Block-scoped
+  variable 'stopCamera' used before its declaration
+  (switchCamera di line 108 mereferensikan stopCamera/startCamera yang
+  dideklarasikan di line 197/204 — TypeScript TDZ violation)
+
+FIX TYPECHECK:
+- Hapus deklarasi switchCamera dari line 108
+- Tambah switchCameraRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  sebagai forward declaration
+- Deklarasi switchCamera literal setelah startCamera (line 224)
+- Assign switchCameraRef.current = switchCamera
+- Tombol di top bar: onClick={() => switchCameraRef.current()}
+- npm run typecheck LULUS
+- Commit 78f1885
+
+RE-TAG v4.6.5:
+- Hapus tag v4.6.5 lama (yang point ke e773952)
+- Push commit 78f1885
+- Re-create tag v4.6.5 di 78f1885
+- Push tag — trigger run #146
+
+BUILD #146 BERHASIL:
+- 11 step lulus: Setup → Checkout → Node.js → Install → Typecheck →
+  Build → Smoke test → NSIS installer → List artifacts → Upload → Release
+- Total ~154 detik (~2.5 menit)
+- 5 assets di release:
+  - ARAY-Setup-4.6.5.exe (97.50 MB) — NSIS installer (recommended)
+  - ARAY-Portable-4.6.5.exe (97.26 MB) — portable, no install
+  - ARAY-Setup-4.6.5.exe.blockmap (0.10 MB) — delta update metadata
+  - ARAY-Setup-4.6.5.zip (127.28 MB) — zip distribusi
+  - latest.yml — auto-update manifest
+
+Stage Summary:
+- Release: https://github.com/synclicen/ARAY/releases/tag/v4.6.5
+- Electron: DEFAULT_SETTINGS di main.ts sekarang sync lengkap dengan
+  android-shim.ts — fitur kamera berfungsi di Electron + Android
+- Code di main branch: commit 78f1885 (HEAD)
+- Versi: 4.6.5 (bump dari 4.6.4)
+- Android APK v1.0.18 (dari commit 14f4bb3, build sebelumnya) tetap compatible
