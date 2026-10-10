@@ -128,3 +128,63 @@ Stage Summary:
 - Mobile-first: bottom nav + safe-area + touch targets + responsive grids/fonts
 - Desktop layout tetap utuh (semua breakpoint pakai sm:/md: prefix)
 - User test di HP: download release.apk, uninstall v1.0.16 dulu, install v1.0.17
+
+---
+Task ID: android-camera-settings-nav-fix
+Agent: main
+Task: Tambah setting kamera depan/belakang + mirror; fix glitch navigasi Android
+
+Work Log:
+- User: "tambah pengaturan untuk memilih kamera depan atau belakang, dan opsi untuk
+  mirror kamera. aplikasikan pada versi elektron dan juga android. pada versi android,
+  ketika berpindah dari satu bagian ke bagian lainnya ... ada glitch pada layar seperti
+  berkelip sepersekian detik."
+
+TASK 1: Camera settings (front/back + mirror)
+- Audit: Booth.tsx getUserMedia pakai facingMode 'user' hardcoded, mirror state default true
+- Tambah 2 field baru di AraySettings (src/shared/types/index.ts):
+  - camera_facing?: 'user' | 'environment'
+  - camera_mirror?: boolean
+- Update DEFAULT_SETTINGS di:
+  - src/main/database/repositories/settings.ts (Electron)
+  - android-app/src/android-shim.ts (Android)
+  - keduanya: camera_facing='user', camera_mirror=true (default front cam + mirror)
+- Booth.tsx:
+  - startCamera() pakai settings.camera_facing untuk getUserMedia facingMode
+  - mirror state init dari settings.camera_mirror
+  - toggleMirror() helper: persist ke settings
+  - switchCamera() helper: switch front/back + auto-update mirror + restart stream
+  - Top bar Booth: 2 tombol baru (SwitchCamera + FlipHorizontal icon, 44px touch target)
+- Settings.tsx: 2 SettingRow baru di Photo Booth Settings:
+  - "Camera" dropdown: Front Camera (selfie) / Back Camera
+  - "Mirror preview" toggle
+  - Saat ganti camera_facing, mirror auto-update (front=on, back=off)
+- Desktop tetap pakai selectedDeviceId (override facingMode kalau user pilih device spesifik)
+
+TASK 2: Fix glitch navigasi Android
+- Analisis: App.tsx AnimatePresence mode='wait' melakukan:
+  1. exit animation: fade-out (opacity 1 → 0) — halaman lama menghilang
+  2. blank frame (gap antara exit selesai dan enter mulai)
+  3. enter animation: fade-in (opacity 0 → 1) — halaman baru muncul
+  Di Android WebView, gap ini terlihat sebagai "berkelip sepersekian detik"
+- Fix: deteksi window.aray.isAndroid ( Capacitor shim sudah set ini sebelum React render)
+  - Android: mode='popLayout' (no exit wait, halaman baru mount di atas yang lama) +
+    initial opacity 1 (no enter fade) + exit undefined (no exit animation)
+    → halaman baru langsung muncul, tidak ada blank frame
+  - Desktop: tetap mode='wait' + fade animation (smooth UX)
+- Tambah GPU layer forcing via style attribute:
+  - willChange: 'opacity'
+  - transform: 'translateZ(0)'
+  - backfaceVisibility: 'hidden'
+  → mencegah repaint flicker selama opacity transition
+
+Build v1.0.18:
+- Commit 14f4bb3, push main + tag android-v1.0.18
+- Run #18 sukses dalam 257 detik (~4.3 menit), semua 19 step lulus
+- APK size sama (28.75 MB debug, 26.35 MB release)
+
+Stage Summary:
+- Release: https://github.com/synclicen/ARAY/releases/tag/android-v1.0.18
+- Camera: bisa switch front/back dari Settings ATAU langsung dari top bar Booth
+- Mirror: bisa toggle on/off dari Settings ATAU top bar Booth, persist ke settings
+- Glitch navigasi: Android pakai popLayout mode (instant), desktop tetap smooth
