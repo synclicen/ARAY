@@ -260,3 +260,59 @@ Stage Summary:
 - Code di main branch: commit 78f1885 (HEAD)
 - Versi: 4.6.5 (bump dari 4.6.4)
 - Android APK v1.0.18 (dari commit 14f4bb3, build sebelumnya) tetap compatible
+
+---
+Task ID: android-license-port
+Agent: main
+Task: Samakan sistem lisensi Android dengan Electron
+
+Work Log:
+- User: "kenapa pada versi android tidak ada sistem lisensi? samakan seperti versi elektron"
+- Audit: android-shim.ts hardcoded license.status → isValid: true selamanya
+  - Tidak ada aktivasi, expiry, machineId real
+  - User Android tidak pernah lihat LicenseGate
+
+Implementasi:
+- Buat android-app/src/license.ts — port dari electron/license.ts
+- Pakai Web Crypto API:
+  - crypto.subtle.digest('SHA-256', ...) untuk hash
+  - crypto.subtle.importKey + crypto.subtle.sign('HMAC', ...) untuk HMAC
+- Algorithm SAMA PERSIS dengan Electron:
+  - machineId = SHA256(navigator.userAgent | platform | cpuCores | mem |
+    screenW x screenH | language | timezone)
+  - activationCode = SHA256(machineId : licenseType : expiry : SECRET) first 16 chars
+  - License data HMAC-signed, stored di Capacitor Preferences
+- Same LICENSE_SECRET: 'ARAY-2026-HUMAS-UIN-ANTASARI-BANJARMASIN'
+  → activation code yang di-generate oleh tools/generate-license.ts
+    berlaku untuk Electron dan Android (asalkan machineId cocok)
+
+API paritas (semua async):
+- checkLicenseStatus(): real status (isValid/isExpired/daysRemaining/machineId)
+- activateLicense(code): verify code untuk machineId ini, simpan + sign
+- generateLicenseCode(machineId, adminKey): admin/dev mode generator
+- getMachineId(): return SHA256 fingerprint device
+
+Storage:
+- Preferences key 'aray_license_data' = signed JSON
+- Preferences key 'aray_first_run_date' = ISO date string
+
+Update android-shim.ts:
+- license.status: call checkLicenseStatus() (sebelumnya hardcoded isValid:true)
+- license.activate: call activateLicense(code) (sebelumnya always success)
+- license.generate: call generateLicenseCode(machineId, adminKey)
+- license.getMachineId: call getMachineId() real
+
+Build:
+- Bump version 4.6.5 → 4.6.6
+- Typecheck lulus
+- Commit aa06fa8, push main
+- Tag android-v1.0.19 + v4.6.6 (build paralel)
+- Android Run #19: 283 detik, SUKSES, semua 19 step lulus
+- Windows Run #147: SUKSES, semua 11 step lulus
+
+Stage Summary:
+- Android APK v1.0.19: https://github.com/synclicen/ARAY/releases/tag/android-v1.0.19
+- Windows Installer v4.6.6: https://github.com/synclicen/ARAY/releases/tag/v4.6.6
+- Sekarang user Android akan lihat LicenseGate saat pertama buka app
+- Mereka dapat Machine ID → kirim ke admin → admin generate code → user input → aktivasi 30 hari
+- Sama persis seperti flow Electron
