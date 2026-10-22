@@ -619,6 +619,9 @@ var DEFAULT_SETTINGS = {
   // 'user' (front) or 'environment' (back)
   camera_mirror: true,
   // mirror preview (natural for front cam)
+  // v4.7.7: Photo quality preset — small/medium/high/original
+  photo_quality: "high",
+  // default: high (1920×1080, ~500KB/foto)
   // Booth display settings (v4.5+)
   camera_effect: "original",
   camera_effect_video: "original",
