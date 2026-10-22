@@ -81,22 +81,31 @@ export function SettingsPage() {
           </div>
         )}
         <div className="flex items-center gap-3 flex-wrap">
-          <ArayButton variant="silver" icon={<Folder className="w-4 h-4" />} onClick={chooseFolder} loading={busy}>
-            Change folder
-          </ArayButton>
-          <ArayButton variant="ghost" onClick={loadStorageInfo}>
-            Refresh
-          </ArayButton>
-          {/* v4.7.0: Android — Open folder in Files app */}
-          {(window as any).aray?.isAndroid && (
-            <ArayButton variant="gold" icon={<Folder className="w-4 h-4" />} onClick={async () => {
-              const result = await window.aray.storage.openFolder()
-              if (!result.success) {
-                alert('Tidak bisa membuka folder otomatis. Manual: buka app Files → Documents → ARAY')
-              }
-            }}>
-              Open in Files app
-            </ArayButton>
+          {/* v4.7.2: Android — hide "Change folder" (tidak bisa diubah di scoped storage).
+              Tampilkan tombol "Open in Files app" sebagai gantinya. */}
+          {(window as any).aray?.isAndroid ? (
+            <>
+              <ArayButton variant="gold" icon={<Folder className="w-4 h-4" />} onClick={async () => {
+                const result = await window.aray.storage.openFolder()
+                if (!result.success) {
+                  alert('Tidak bisa membuka folder otomatis. Manual: buka app Files → Documents → ARAY')
+                }
+              }}>
+                Open in Files app
+              </ArayButton>
+              <ArayButton variant="ghost" onClick={loadStorageInfo}>
+                Refresh
+              </ArayButton>
+            </>
+          ) : (
+            <>
+              <ArayButton variant="silver" icon={<Folder className="w-4 h-4" />} onClick={chooseFolder} loading={busy}>
+                Change folder
+              </ArayButton>
+              <ArayButton variant="ghost" onClick={loadStorageInfo}>
+                Refresh
+              </ArayButton>
+            </>
           )}
         </div>
 

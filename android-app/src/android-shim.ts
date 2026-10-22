@@ -631,23 +631,23 @@ const arayAPI = {
   camera: { list: async () => ({ success: true, data: [] }), connect: async () => ({ success: true }), disconnect: async () => ({ success: true })},
   settings: { get: async () => ({ success: true, data: await getSettings() }), update: async (p: any) => ({ success: true, data: await updateSettings(p) }), getDefaultStoragePath: async () => ({ success: true, data: '/storage/emulated/0/Documents/ARAY' })},
   print: { queue: async () => ({ success: false, error: 'Print not available on Android' }), listPrinters: async () => ({ success: true, data: [] })},
-  // v4.7.0: Google Drive backup via Share intent.
-  // User tap "Connect" → share sheet muncul → pilih Google Drive app → upload file.
-  // Ini cara native Android untuk share file ke app lain tanpa OAuth.
+  // v4.7.2: Google Drive TIDAK bisa auto-connect di Android (butuh OAuth native plugin).
+  // API googleDrive.connect() tetap ada untuk backward compat, tapi UI label jelas
+  // "Share Photos" bukan "Connect Google Drive". Ini adalah SHARE INTENT, bukan connect beneran.
   googleDrive: {
     connect: async () => {
-      // Open Google Drive upload via Share intent (share folder URI)
+      // v4.7.2: Share intent — user pilih app (Google Drive, WhatsApp, dll) di share sheet
       try {
         const uri = await Filesystem.getUri({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
         await Share.share({
-          title: 'Backup ARAY Photos to Google Drive',
-          text: 'Upload folder ARAY ke Google Drive untuk backup',
+          title: 'Backup ARAY Photos',
+          text: 'Upload folder ARAY ke Google Drive atau app lain untuk backup',
           url: uri.uri,
-          dialogTitle: 'Pilih Google Drive (atau app lain) untuk backup'
+          dialogTitle: 'Pilih app untuk backup (Google Drive, WhatsApp, dll)'
         })
-        return { connected: false, message: 'Untuk backup ke Google Drive: pilih "Google Drive" di share sheet yang muncul, lalu upload folder ARAY. Anda juga bisa pilih WhatsApp, Email, atau app lain untuk transfer file.' }
+        return { connected: false, message: 'Pilih app di share sheet untuk backup. Untuk Google Drive: pilih "Google Drive" → upload.' }
       } catch (e: any) {
-        return { connected: false, message: 'Tidak bisa membuka share sheet: ' + (e?.message || e) + '. Manual: buka app Files → Documents → ARAY → select all → share ke Google Drive.' }
+        return { connected: false, message: 'Tidak bisa membuka share sheet: ' + (e?.message || e) + '. Manual: buka app Files → Documents → ARAY → select all → share.' }
       }
     },
     disconnect: async () => ({ success: true }),
@@ -655,7 +655,7 @@ const arayAPI = {
       connected: false,
       folder: null,
       totalFiles: 0,
-      message: 'Backup manual via share sheet. Tap "Connect" untuk buka share sheet → pilih Google Drive.'
+      message: 'Manual backup via Share. Tap "Share Photos" untuk buka share sheet.'
     })
   },
   // v4.7.0: Tambah API share untuk share individual media ke app lain
