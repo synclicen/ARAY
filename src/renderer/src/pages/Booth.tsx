@@ -35,6 +35,23 @@ const aspectDims: Record<string, { w: number; h: number }> = {
   '4:3': { w: 1024, h: 768 }
 }
 
+// v4.7.7: Photo quality presets — apply scale + JPEG quality
+// Estimasi ukuran file per foto (4-shot composite):
+//   small:    640×480 max,  q=0.70, ~80KB/foto, ~320KB/composite
+//   medium:   1280×720 max, q=0.82, ~250KB/foto, ~1MB/composite
+//   high:     1920×1080 max,q=0.92, ~500KB/foto, ~2MB/composite
+//   original: native res,   q=0.95, ~1MB/foto, ~4MB/composite
+const QUALITY_PRESETS: Record<string, { scale: number; jpegQuality: number; label: string; estPerPhoto: string }> = {
+  small:    { scale: 0.5,  jpegQuality: 0.70, label: 'Small (640×480, ~80KB/foto)',  estPerPhoto: '~80KB' },
+  medium:   { scale: 0.75, jpegQuality: 0.82, label: 'Medium (1280×720, ~250KB/foto)', estPerPhoto: '~250KB' },
+  high:     { scale: 1.0,  jpegQuality: 0.92, label: 'High (1920×1080, ~500KB/foto)', estPerPhoto: '~500KB' },
+  original: { scale: 1.0,  jpegQuality: 0.95, label: 'Original (native res, ~1MB/foto)', estPerPhoto: '~1MB' }
+}
+
+function getQualityPreset(quality: string | undefined) {
+  return QUALITY_PRESETS[quality || 'high'] || QUALITY_PRESETS.high
+}
+
 
 import type { ArayMedia } from '@shared/types'
 import QRCode from 'qrcode'
@@ -248,8 +265,10 @@ export function BoothPage() {
     if (video.videoWidth === 0 || video.videoHeight === 0) return null
 
     const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
-    const w = dims.w
-    const h = dims.h
+    // v4.7.7: Apply photo_quality scale
+    const qualityPreset = getQualityPreset(settings?.photo_quality)
+    const w = Math.round(dims.w * qualityPreset.scale)
+    const h = Math.round(dims.h * qualityPreset.scale)
     canvas.width = w
     canvas.height = h
     const ctx = canvas.getContext('2d')
@@ -269,11 +288,11 @@ export function BoothPage() {
     const videoRatio = vw / vh
     let sx = 0, sy = 0, sw = vw, sh = vh
     if (videoRatio > canvasRatio) {
-      // Video wider than canvas — crop sides
+      // Video wider than canvas - crop sides
       sw = vh * canvasRatio
       sx = (vw - sw) / 2
     } else {
-      // Video taller than canvas — crop top/bottom
+      // Video taller than canvas - crop top/bottom
       sh = vw / canvasRatio
       sy = (vh - sh) / 2
     }
@@ -281,12 +300,13 @@ export function BoothPage() {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.filter = 'none'
 
-    const full = canvas.toDataURL('image/jpeg', 0.92)
+    // v4.7.7: Use quality preset JPEG quality
+    const full = canvas.toDataURL('image/jpeg', qualityPreset.jpegQuality)
 
-    // Thumbnail — same aspect ratio, smaller
+    // Thumbnail - always small (320px) regardless of quality preset
     const tc = document.createElement('canvas')
     const thumbW = 320
-    const thumbH = Math.round(320 * h / w)
+    const thumbH = Math.round(320 * dims.h / dims.w)
     tc.width = thumbW; tc.height = thumbH
     const tctx = tc.getContext('2d')
     if (!tctx) return { full, thumb: full }
@@ -296,7 +316,7 @@ export function BoothPage() {
     tctx.setTransform(1, 0, 0, 1, 0, 0)
     const thumb = tc.toDataURL('image/jpeg', 0.8)
     return { full, thumb }
-  }, [mirror, activeFilter, currentAspectRatio])
+  }, [mirror, activeFilter, currentAspectRatio, settings?.photo_quality])
 
   const performCapture = useCallback(async (retakeShotNumber?: number) => {
     if (!activeEvent) {

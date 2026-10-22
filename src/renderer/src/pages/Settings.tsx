@@ -166,6 +166,46 @@ export function SettingsPage() {
             />
           </SettingRow>
 
+          {/* v4.7.7: Photo quality preset — control file size */}
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Photo quality"
+            hint="Resolution + compression. Lower = smaller file, more storage hemat"
+          >
+            <select
+              className="aray-input w-full sm:w-auto sm:max-w-[280px]"
+              value={settings.photo_quality ?? 'high'}
+              onChange={(e) => updateSettings({ photo_quality: e.target.value as 'small' | 'medium' | 'high' | 'original' })}
+            >
+              <option value="small">Small (640×480, ~80KB/foto, ~320KB/composite)</option>
+              <option value="medium">Medium (1280×720, ~250KB/foto, ~1MB/composite)</option>
+              <option value="high">High (1920×1080, ~500KB/foto, ~2MB/composite)</option>
+              <option value="original">Original (native res, ~1MB/foto, ~4MB/composite)</option>
+            </select>
+          </SettingRow>
+
+          {/* v4.7.7: Storage estimate untuk 5000 peserta */}
+          <div className="p-3 rounded-xl bg-purple-haze-500/10 border border-purple-haze-500/20 text-xs">
+            <p className="text-purple-haze-100 font-medium mb-1">Estimasi storage untuk 5000 peserta (4 foto/sesi):</p>
+            <p className="text-silver-400">
+              Small: ~1.6GB · Medium: ~5GB · High: ~10GB · Original: ~20GB
+            </p>
+            <p className="text-silver-500 mt-1">
+              Kualitas saat ini: <strong className="text-gold-300">
+                {(() => {
+                  const q = settings.photo_quality ?? 'high'
+                  const labels: Record<string,string> = {
+                    small: 'Small (~80KB/foto)',
+                    medium: 'Medium (~250KB/foto)',
+                    high: 'High (~500KB/foto)',
+                    original: 'Original (~1MB/foto)'
+                  }
+                  return labels[q] || labels.high
+                })()}
+              </strong>
+            </p>
+          </div>
+
           <SettingRow
             icon={<Hash className="w-4 h-4" />}
             label="Number of shots"

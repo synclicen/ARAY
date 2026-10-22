@@ -277,7 +277,9 @@ const DEFAULT_SETTINGS = {
   print_paper_size: '4x6', print_copies: 1, print_color: true,
   print_orientation: 'portrait', print_quality: 'normal', print_fit: 'contain',
   camera_facing: 'user',
-  camera_mirror: true
+  camera_mirror: true,
+  // v4.7.7: Photo quality preset
+  photo_quality: 'high'
 }
 
 async function getSettings() {

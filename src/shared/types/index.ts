@@ -156,6 +156,15 @@ export interface AraySettings {
    * Note: this only mirrors the LIVE preview + captured frames if true.
    */
   camera_mirror?: boolean
+  /**
+   * Photo quality / resolution preset.
+   * - 'small':  640×480 max,  JPEG quality 0.7, ~80KB/foto, ~320KB/composite 4-shot
+   * - 'medium': 1280×720 max, JPEG quality 0.82, ~250KB/foto, ~1MB/composite
+   * - 'high':   1920×1080 max, JPEG quality 0.92, ~500KB/foto, ~2MB/composite
+   * - 'original': native canvas res, JPEG quality 0.95, ~1MB/foto, ~4MB/composite
+   * Default: 'high' (good balance untuk print 4R/5R + storage hemat)
+   */
+  photo_quality?: 'small' | 'medium' | 'high' | 'original'
 }
 
 export interface StorageInfo {

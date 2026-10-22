@@ -275,6 +275,8 @@ const DEFAULT_SETTINGS = {
   // v4.6.5: camera facing + mirror settings (sync with src/main/database/repositories/settings.ts)
   camera_facing: 'user',       // 'user' (front) or 'environment' (back)
   camera_mirror: true,         // mirror preview (natural for front cam)
+  // v4.7.7: Photo quality preset — small/medium/high/original
+  photo_quality: 'high',       // default: high (1920×1080, ~500KB/foto)
   // Booth display settings (v4.5+)
   camera_effect: 'original', camera_effect_video: 'original',
   aspect_ratio: '9:16', aspect_ratio_video: '9:16',
