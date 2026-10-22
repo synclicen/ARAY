@@ -211,14 +211,15 @@ async function getLocalFolderPath(): Promise<string | null> {
 }
 
 // v4.7.3: Auto-upload ke Google Drive via SAF plugin.
+// v4.7.6: Pakai enqueueUpload (persistent queue with retry) bukan fire-and-forget.
 // Dipanggil setelah saveComposite/saveCapturedFrame/saveVideo sukses.
 // Jika Google Drive belum connected atau auto_backup off, skip silently.
-// Upload di-fire-and-forget (tidak block save) — kalau gagal, log saja.
 async function autoUploadToDrive(
   localFilePath: string,
   filename: string,
   eventName: string,
-  mimeType: string = 'image/jpeg'
+  mimeType: string = 'image/jpeg',
+  mediaId: string = ''
 ): Promise<void> {
   try {
     const db = await loadDB()
@@ -226,24 +227,26 @@ async function autoUploadToDrive(
     const backupFolder = db.settings?.backup_folder
     if (!autoBackup || !backupFolder) return  // not configured — skip
 
-    // v4.7.5: localFilePath is now a document URI (from saveLocalFile).
+    // Can't upload data URL — skip
     if (localFilePath.startsWith('data:')) return
 
-    // Fire-and-forget upload — jangan block save
-    DriveBackup.uploadFile({
+    // v4.7.6: Enqueue upload ke persistent queue (survive app restart)
+    await DriveBackup.enqueueUpload({
       localPath: localFilePath,
       filename: filename,
       projectName: eventName || 'default',
-      mimeType: mimeType
-    }).then((result: any) => {
-      if (result?.success) {
-        console.log('[ARAY] Auto-upload to Drive SUCCESS:', filename)
-      } else {
-        console.warn('[ARAY] Auto-upload to Drive failed:', filename, result)
-      }
-    }).catch((e: any) => {
-      console.error('[ARAY] Auto-upload to Drive ERROR:', filename, e?.message || e)
+      mimeType: mimeType,
+      mediaId: mediaId
     })
+    console.log('[ARAY] Enqueued upload to Drive:', filename, '(mediaId:', mediaId + ')')
+
+    // v4.7.6: Trigger processNextUpload — process queue immediately
+    // Process up to 3 items per call supaya tidak block UI terlalu lama
+    for (let i = 0; i < 3; i++) {
+      const result = await DriveBackup.processNextUpload()
+      if (!result.processed) break  // queue empty
+      console.log('[ARAY] Upload processed:', result.filename, 'success:', result.success)
+    }
   } catch (e) {
     console.error('[ARAY] autoUploadToDrive error:', e)
   }
@@ -469,7 +472,7 @@ const arayAPI = {
         console.log('[ARAY] saveCapturedFrame OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
         // v4.7.3: Auto-upload ke Google Drive (jika connected + auto_backup on)
         const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
-        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg')
+        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveCapturedFrame failed:', e)
@@ -500,7 +503,7 @@ const arayAPI = {
         console.log('[ARAY] saveVideo OK — media id:', mediaId)
         // v4.7.3: Auto-upload ke Google Drive
         const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
-        autoUploadToDrive(filePath, filename, eventName, 'video/webm')
+        autoUploadToDrive(filePath, filename, eventName, 'video/webm', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveVideo failed:', e)
@@ -532,7 +535,7 @@ const arayAPI = {
         console.log('[ARAY] saveComposite OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
         // v4.7.3: Auto-upload ke Google Drive
         const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
-        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg')
+        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveComposite failed:', e)
@@ -706,7 +709,61 @@ const arayAPI = {
       return arayAPI.share.shareFile(paths[0], title || `${paths.length} photos from ARAY`)
     }
   },
-  sync: { start: async () => ({ success: true, data: { started: true, backed: 0, skipped: 0, failed: 0 }}), pause: async () => ({ paused: true }), resume: async () => ({ resumed: true, backed: 0, skipped: 0, failed: 0 }), retry: async () => ({ retrying: true, backed: 0, skipped: 0, failed: 0 }), summary: async (eventId?: string) => arayAPI.media.stats(eventId) },
+  sync: {
+    start: async () => {
+      // v4.7.6: Process upload queue
+      let backed = 0, failed = 0
+      for (let i = 0; i < 50; i++) {  // process max 50 per call
+        const result = await DriveBackup.processNextUpload()
+        if (!result.processed) break
+        if (result.success) backed++
+        else failed++
+      }
+      return { success: true, data: { started: true, backed, skipped: 0, failed } }
+    },
+    pause: async () => ({ paused: true }),
+    resume: async () => {
+      let backed = 0, failed = 0
+      for (let i = 0; i < 50; i++) {
+        const result = await DriveBackup.processNextUpload()
+        if (!result.processed) break
+        if (result.success) backed++
+        else failed++
+      }
+      return { resumed: true, backed, skipped: 0, failed }
+    },
+    retry: async () => {
+      // v4.7.6: Retry all failed uploads
+      await DriveBackup.retryAllFailed()
+      let backed = 0, failed = 0
+      for (let i = 0; i < 50; i++) {
+        const result = await DriveBackup.processNextUpload()
+        if (!result.processed) break
+        if (result.success) backed++
+        else failed++
+      }
+      return { retrying: true, backed, skipped: 0, failed }
+    },
+    summary: async (eventId?: string) => {
+      const stats = await arayAPI.media.stats(eventId)
+      // v4.7.6: Merge with upload queue stats
+      try {
+        const queueStats = await DriveBackup.getUploadStats()
+        return {
+          success: true,
+          data: {
+            total: stats.data.total,
+            synced: Math.max(0, stats.data.total - queueStats.queueSize),
+            pending: queueStats.pending,
+            failed: queueStats.failed,
+            uploading: queueStats.uploading
+          }
+        }
+      } catch {
+        return stats
+      }
+    }
+  },
   fs: {
     readAsDataURL: async (p: string) => {
       if (p.startsWith('data:')) return { success: true, data: p }
@@ -745,6 +802,48 @@ if (typeof document !== 'undefined') {
   window.addEventListener('pagehide', () => {
     flushDB()
   })
+}
+
+// v4.7.6: Background upload queue processor — process queue every 5 seconds.
+// Ini memastikan semua foto pada akhirnya ter-upload ke Google Drive, bahkan
+// kalau autoUploadToDrive saat capture hanya process 3 items. Untuk 5000 peserta,
+// queue bisa backlog ratusan items — processor ini akan drain pelan-pelan.
+let _uploadProcessorRunning = false
+async function startUploadProcessor() {
+  if (_uploadProcessorRunning) return
+  _uploadProcessorRunning = true
+
+  async function tick() {
+    try {
+      // Cek apakah Drive connected + auto_backup on
+      const db = await loadDB()
+      const autoBackup = db.settings?.auto_backup ?? false
+      const backupFolder = db.settings?.backup_folder
+      if (autoBackup && backupFolder) {
+        // Process up to 10 items per tick
+        for (let i = 0; i < 10; i++) {
+          const result = await DriveBackup.processNextUpload()
+          if (!result.processed) break  // queue empty
+          if (result.success) {
+            console.log('[ARAY] Background upload SUCCESS:', result.filename)
+          } else {
+            console.warn('[ARAY] Background upload FAILED:', result.filename, result.error)
+            break  // stop jika gagal — akan di-retry tick berikutnya
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[ARAY] Upload processor error:', e)
+    }
+    // Schedule next tick — 5 detik
+    setTimeout(tick, 5000)
+  }
+  tick()
+}
+
+// Start upload processor after 2 seconds (let app initialize first)
+if (typeof window !== 'undefined') {
+  setTimeout(startUploadProcessor, 2000)
 }
 
 export {}

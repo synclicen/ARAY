@@ -38,6 +38,30 @@ export interface DriveBackupPlugin {
     projectName?: string
     mimeType?: string
   }): Promise<{ success: boolean; driveUri: string }>
+
+  // v4.7.6: Upload queue with retry
+  enqueueUpload(options: {
+    localPath: string
+    filename: string
+    projectName?: string
+    mimeType?: string
+    mediaId?: string
+  }): Promise<{ success: boolean; queueSize: number }>
+  processNextUpload(): Promise<{
+    processed: boolean
+    success?: boolean
+    filename?: string
+    error?: string
+    queueSize: number
+  }>
+  getUploadStats(): Promise<{
+    queueSize: number
+    pending: number
+    uploading: number
+    failed: number
+  }>
+  retryAllFailed(): Promise<{ success: boolean; reset: number }>
+  removeFromQueue(options: { mediaId: string }): Promise<void>
 }
 
 // Register the native plugin — must match @CapacitorPlugin(name = "DriveBackup")
