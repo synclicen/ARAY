@@ -29,16 +29,17 @@ export function SettingsPage() {
   const chooseFolder = async () => {
     setBusy(true)
     try {
-      // v4.7.4: Android — local storage path FIXED (scoped storage).
-      // chooseFolder() return info message, tampilkan ke user.
-      // Google Drive connect ada di Sync Center (terpisah).
+      // v4.7.5: Android — SAF folder picker untuk pilih folder penyimpanan LOKAL
       if ((window as any).aray?.isAndroid) {
         const result = await window.aray.storage.chooseFolder()
         const data: any = (result as any).data || result
-        if (data?.message) {
-          alert(data.message)
+        if (data && !data.canceled && data.path) {
+          alert('Folder penyimpanan lokal berhasil dipilih!\n\nFoto akan disimpan di folder ini.\n\nUntuk auto-upload ke Google Drive, buka Sync Center → Connect.')
+          await loadStorageInfo()
+          await loadSettings()
+        } else if (data?.canceled) {
+          // User cancel — silent
         }
-        await loadStorageInfo()
         return
       }
       // Electron — pakai native dialog

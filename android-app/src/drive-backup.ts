@@ -2,19 +2,32 @@
  * ARAY Android — Drive Backup TypeScript interface
  *
  * Bridge ke native DriveBackupPlugin (Java) via Capacitor.
- * Plugin menggunakan Android Storage Access Framework (SAF) untuk
- * auto-upload ke Google Drive — same approach as Saatiril-Andro.
+ * Plugin menggunakan Android Storage Access Framework (SAF) untuk:
+ *  1. Local storage — user pilih folder di HP untuk simpan foto lokal
+ *  2. Google Drive backup — user pilih folder Google Drive untuk auto-upload
  *
- * Flow:
- *  1. User tap "Connect Google Drive" → pickFolder() → SAF folder picker
- *  2. User pilih folder Google Drive → URI persisted (survives reboot)
- *  3. Setiap foto disimpan lokal → uploadFile() auto-upload ke Drive
- *  4. Google Drive app handle cloud sync (async, built-in retry)
+ * Port dari Saatiril-Andro DriveBackupManager.kt
  */
 
 import { registerPlugin } from '@capacitor/core'
 
 export interface DriveBackupPlugin {
+  // ─── LOCAL STORAGE ────────────────────────────────────────────────────
+  pickLocalFolder(): Promise<{ success: boolean; uri: string }>
+  hasLocalFolder(): Promise<{ hasFolder: boolean; uri: string }>
+  clearLocalFolder(): Promise<void>
+  getLocalFolderUri(): Promise<{ uri: string; connected: boolean }>
+  saveLocalFile(options: {
+    base64Data: string
+    filename: string
+    subfolder?: string
+    mimeType?: string
+  }): Promise<{ success: boolean; path: string }>
+  readLocalFile(options: { path: string }): Promise<{ success: boolean; data: string }>
+  deleteLocalFile(options: { path: string }): Promise<void>
+  listLocalFiles(): Promise<{ files: Array<{ name: string; uri: string; size: number }> }>
+
+  // ─── GOOGLE DRIVE BACKUP ──────────────────────────────────────────────
   pickFolder(): Promise<{ success: boolean; uri: string }>
   hasFolder(): Promise<{ hasFolder: boolean; uri: string }>
   clearFolder(): Promise<void>
