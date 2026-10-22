@@ -29,16 +29,16 @@ export function SettingsPage() {
   const chooseFolder = async () => {
     setBusy(true)
     try {
-      // v4.7.3: Android — pakai SAF folder picker via googleDrive.connect()
-      // User pilih folder Google Drive → URI persisted → auto-upload aktif
+      // v4.7.4: Android — local storage path FIXED (scoped storage).
+      // chooseFolder() return info message, tampilkan ke user.
+      // Google Drive connect ada di Sync Center (terpisah).
       if ((window as any).aray?.isAndroid) {
-        const result = await window.aray.googleDrive.connect()
-        if ((result as any)?.connected) {
-          alert('Google Drive folder berhasil dihubungkan!\n\nFoto akan otomatis di-upload ke folder tersebut setiap kali capture.\n\nPastikan "Auto backup" di Settings ON untuk mengaktifkan auto-upload.')
-          await loadSettings()
-        } else if ((result as any)?.message) {
-          alert((result as any).message)
+        const result = await window.aray.storage.chooseFolder()
+        const data: any = (result as any).data || result
+        if (data?.message) {
+          alert(data.message)
         }
+        await loadStorageInfo()
         return
       }
       // Electron — pakai native dialog
