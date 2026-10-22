@@ -455,3 +455,68 @@ Stage Summary:
   5. Set kiosk_mode=true + booth_fullscreen_password ≠ 'aray'
   6. Disable screen saver/sleep Windows
   7. Test full rehearsal 100 peserta dulu sebelum hari-H
+
+---
+Task ID: android-electron-parity-v470
+Agent: main
+Task: Android parity dengan Electron — public storage + Share intent backup
+
+Work Log:
+- User: "kalau begitu cari cara atau pendekatan berbeda agar konsep yang ada pada
+  elektron juga bisa berjalan di android. Kerjakan dengan sistematis dan kawal
+  build sampai berhasil. Pastikan apk lancar dan stabil"
+
+Pendekatan baru untuk Android (mimic Electron concepts):
+
+1. PUBLIC STORAGE (seperti Electron file system):
+   - Switch dari Directory.Data (sandbox tersembunyi) ke Directory.Documents
+   - Foto disimpan di: /storage/emulated/0/Documents/ARAY/<event_id>/<media_id>.jpg
+   - Folder PUBLIK — user bisa akses via app "Files" atau "File Manager"
+   - User bisa copy folder ARAY ke PC, flashdisk, atau upload ke cloud manual
+   - Tidak perlu root, tidak perlu special permission (Android 11+ scoped storage)
+
+2. SHARE INTENT (seperti Google Drive sync):
+   - Tambah @capacitor/share integration (sudah di deps, sebelumnya tidak dipakai)
+   - googleDrive.connect() sekarang BUKAN stub — buka Android share sheet
+   - User tap "Backup to Drive" → share sheet muncul → pilih Google Drive app
+   - Google Drive app handle upload (native Android OAuth, no plugin needed)
+   - Juga bisa share ke WhatsApp, Email, Bluetooth, dll
+
+3. STORAGE INFO REAL:
+   - getStorageInfo() hitung real usage via readdir + stat di Documents/ARAY
+   - Path display: /storage/emulated/0/Documents/ARAY (real path)
+   - Reference total 8GB (realistic for Android device)
+
+4. UI UPDATES:
+   - SyncCenter.tsx:
+     - Android: tombol "Backup to Drive / Share" (gold) + "Open in Files app" (silver)
+     - Info banner: jelaskan penyimpanan Android + cara backup
+     - Electron: tetap Connect/Disconnect Google Drive (tidak berubah)
+   - Settings.tsx:
+     - Android: tombol "Open in Files app" (gold)
+     - Info card: jelaskan path Documents/ARAY + cara backup
+
+5. FILE ACCESS:
+   - storage.openFolder(): Share intent untuk buka folder ARAY di file manager
+   - media.openInFolder(path): Share individual file ke app lain
+   - getFileUri(): helper untuk dapat content:// URI dari Filesystem path
+
+BACKWARD COMPAT:
+- Data lama (base64 inline di Preferences) tetap dibaca
+- Fallback ke data URL kalau Filesystem tidak available
+- Electron codebase TIDAK berubah (masih pakai fs.writeFileSync ke storage_path)
+
+Build v4.7.0:
+- Bump version 4.6.9 → 4.7.0
+- Commit 9fb2d5b, push main
+- Tag android-v1.0.23 + v4.7.0 (build paralel)
+- Android Run #23: 461 detik, SUKSES, semua 19 step lulus
+- Windows Run #151: SUKSES, semua 11 step lulus
+
+Stage Summary:
+- Android APK v1.0.23: https://github.com/synclicen/ARAY/releases/tag/android-v1.0.23
+- Windows Installer v4.7.0: https://github.com/synclicen/ARAY/releases/tag/v4.7.0
+- Foto Android sekarang tersimpan di Documents/ARAY (public, accessible)
+- Backup via Share intent (Google Drive, WhatsApp, Email, dll)
+- UI jelas tentang storage location + cara backup
+- Electron behavior tetap utuh (tidak breaking change)
