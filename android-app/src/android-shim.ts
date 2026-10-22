@@ -86,7 +86,35 @@ async function flushDB() {
   }
 }
 
-// ─── Filesystem helpers ─────────────────────────────────────────────────────
+// ─── Filesystem helpers (v4.6.9 — robust fallback) ──────────────────────────
+// Strategy: coba Filesystem dulu. Kalau gagal (plugin not registered, permission
+// denied, disk error), fall back ke base64 inline di Preferences (old behavior).
+// Untuk acara 5000 peserta, Filesystem WAJIB berfungsi. Fallback hanya safety net.
+
+let _fsAvailable: boolean | null = null  // null = belum di-test
+
+async function isFilesystemAvailable(): Promise<boolean> {
+  if (_fsAvailable !== null) return _fsAvailable
+  try {
+    // Test: write a small file, read it back, delete it
+    const testPath = `test-${Date.now()}.txt`
+    await Filesystem.writeFile({
+      path: testPath,
+      data: btoa('ARAY-FS-TEST'),
+      directory: Directory.Data
+    })
+    const result = await Filesystem.readFile({ path: testPath, directory: Directory.Data })
+    await Filesystem.deleteFile({ path: testPath, directory: Directory.Data })
+    _fsAvailable = (typeof result.data === 'string' && atob(result.data) === 'ARAY-FS-TEST')
+    console.log(`[ARAY] Filesystem available: ${_fsAvailable}`)
+    return _fsAvailable
+  } catch (e) {
+    console.error('[ARAY] Filesystem NOT available — falling back to Preferences base64:', e)
+    _fsAvailable = false
+    return false
+  }
+}
+
 async function ensureMediaDir(eventId: string): Promise<void> {
   try {
     await Filesystem.mkdir({
@@ -95,28 +123,46 @@ async function ensureMediaDir(eventId: string): Promise<void> {
       recursive: true
     })
   } catch (e: any) {
-    // Ignore if already exists
-    if (!String(e?.message || '').includes('exist')) {
-      console.warn('[ARAY] mkdir failed:', e)
+    const msg = String(e?.message || '')
+    // "already exists" is OK — not an error
+    if (!msg.includes('exist') && !msg.includes('EOEXIST')) {
+      console.warn('[ARAY] mkdir failed (non-critical):', msg)
     }
   }
 }
 
-async function writeFileToFS(filename: string, base64Data: string, eventId: string): Promise<string> {
-  await ensureMediaDir(eventId)
-  const result = await Filesystem.writeFile({
-    path: `media/${eventId}/${filename}`,
-    data: base64Data,
-    directory: Directory.Data
-  })
-  // Return URI yang bisa di-resolve oleh Filesystem.readFile
-  return result.uri || `media/${eventId}/${filename}`
+// Returns: { path, isFilesystem } — path is either FS relative path or data URL
+async function writeFileToFS(filename: string, base64Data: string, eventId: string): Promise<{ path: string; isFilesystem: boolean }> {
+  // Try Filesystem first
+  if (await isFilesystemAvailable()) {
+    try {
+      await ensureMediaDir(eventId)
+      await Filesystem.writeFile({
+        path: `media/${eventId}/${filename}`,
+        data: base64Data,
+        directory: Directory.Data
+      })
+      // Store RELATIVE path (not full URI) for consistent reads later
+      return { path: `media/${eventId}/${filename}`, isFilesystem: true }
+    } catch (e) {
+      console.error('[ARAY] writeFileToFS failed, falling back to data URL:', e)
+    }
+  }
+  // Fallback: store as data URL inline in Preferences (old behavior — works but bloats JSON)
+  const ext = filename.split('.').pop()?.toLowerCase() || 'jpg'
+  const mime = ext === 'webm' ? 'video/webm' : 'image/jpeg'
+  return { path: `data:${mime};base64,${base64Data}`, isFilesystem: false }
 }
 
-async function readFileFromFS(uri: string): Promise<string | null> {
+async function readFileFromFS(path: string): Promise<string | null> {
+  // If it's a data URL, extract base64 directly
+  if (path.startsWith('data:')) {
+    return path.split(',')[1]
+  }
+  // If Filesystem not available, can't read file
+  if (!(await isFilesystemAvailable())) return null
   try {
-    const result = await Filesystem.readFile({ path: uri, directory: Directory.Data })
-    // result.data adalah base64 string (untuk non-text) atau Blob
+    const result = await Filesystem.readFile({ path, directory: Directory.Data })
     if (typeof result.data === 'string') return result.data
     // Blob → convert to base64
     return await new Promise((resolve, reject) => {
@@ -129,16 +175,18 @@ async function readFileFromFS(uri: string): Promise<string | null> {
       reader.readAsDataURL(result.data as Blob)
     })
   } catch (e) {
-    console.warn('[ARAY] readFileFromFS failed:', uri, e)
+    console.warn('[ARAY] readFileFromFS failed:', path, e)
     return null
   }
 }
 
-async function deleteFileFromFS(uri: string): Promise<void> {
+async function deleteFileFromFS(path: string): Promise<void> {
+  if (path.startsWith('data:')) return  // data URL — nothing to delete from FS
+  if (!(await isFilesystemAvailable())) return
   try {
-    await Filesystem.deleteFile({ path: uri, directory: Directory.Data })
+    await Filesystem.deleteFile({ path, directory: Directory.Data })
   } catch (e) {
-    console.warn('[ARAY] deleteFileFromFS failed:', uri, e)
+    console.warn('[ARAY] deleteFileFromFS failed:', path, e)
   }
 }
 
@@ -180,14 +228,26 @@ async function updateSettings(partial: any) {
 // ─── Storage info via Filesystem stat ────────────────────────────────────────
 async function getStorageInfo() {
   try {
-    const stat = await Filesystem.stat({ path: '', directory: Directory.Data })
-    // Capacitor Filesystem.stat returns { type, size, mtime, uri }
-    // Note: size is bytes used by app sandbox
-    const usedBytes = stat.size || 0
-    // Android typically has 32-128GB free; we report a synthetic total
-    // since native Android StorageManager isn't accessible from WebView
-    // without extra plugin. Use a conservative 1GB cap for warning purposes.
-    const TOTAL_BYTES = 1024 * 1024 * 1024 // 1GB synthetic cap for UI
+    // v4.6.9: Hitung total ukuran semua file di media/ directory
+    // Daripada synthetic 1GB cap, kalkulasi real usage dari file listing
+    let usedBytes = 0
+    try {
+      const dirResult = await Filesystem.readdir({ path: 'media', directory: Directory.Data })
+      for (const entry of dirResult.files) {
+        try {
+          const subDir = await Filesystem.readdir({ path: `media/${entry.name}`, directory: Directory.Data })
+          for (const sub of subDir.files) {
+            try {
+              const stat = await Filesystem.stat({ path: `media/${entry.name}/${sub.name}`, directory: Directory.Data })
+              usedBytes += stat.size || 0
+            } catch {}
+          }
+        } catch {}
+      }
+    } catch {}
+    // Android: report realistic free space (Android app sandbox biasanya 4-128GB free)
+    // Gunakan 8GB as reference total (cukup untuk ~25.000 foto @ 300KB)
+    const TOTAL_BYTES = 8 * 1024 * 1024 * 1024 // 8GB reference
     const freeBytes = Math.max(0, TOTAL_BYTES - usedBytes)
     const usedPct = TOTAL_BYTES > 0 ? (usedBytes / TOTAL_BYTES) * 100 : 0
     return {
@@ -195,7 +255,7 @@ async function getStorageInfo() {
       total_bytes: TOTAL_BYTES,
       used_bytes: usedBytes,
       free_bytes: freeBytes,
-      used_percent: Math.round(usedPct * 10) / 10,
+      used_percent: Math.round(usedPct * 100) / 100,
       warning: usedPct > 80,
       critical: usedPct > 95
     }
@@ -317,20 +377,20 @@ const arayAPI = {
       const f = eventId ? db.media.filter((m:any)=>m.event_id===eventId) : db.media
       return { success: true, data: { total: f.length, synced: f.filter((m:any)=>m.sync_status==='SYNCED').length, pending: f.filter((m:any)=>m.sync_status==='PENDING').length, failed: 0, uploading: 0 }}
     },
-    // v4.6.8: saveCapturedFrame — simpan ke Filesystem, path disimpan di metadata
+    // v4.6.9: saveCapturedFrame — simpan ke Filesystem, fallback ke data URL
     saveCapturedFrame: async (p: any) => {
       try {
         const db = await loadDB()
         const mediaId = crypto.randomUUID()
         const filename = `${mediaId}.jpg`
-        const fileUri = await writeFileToFS(filename, p.frame_base64, p.event_id)
+        const { path: filePath } = await writeFileToFS(filename, p.frame_base64, p.event_id)
         const m = {
           id: mediaId,
           event_id: p.event_id,
           session_id: p.session_id,
           type: 'photo',
-          original_path: fileUri,
-          thumbnail_path: fileUri, // same file (small enough)
+          original_path: filePath,
+          thumbnail_path: filePath,
           checksum: null,
           sync_status: 'LOCAL_ONLY',
           remote_file_id: null,
@@ -339,6 +399,7 @@ const arayAPI = {
           uploaded_at: null
         }
         db.media.unshift(m); await saveDB(db)
+        console.log('[ARAY] saveCapturedFrame OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveCapturedFrame failed:', e)
@@ -350,13 +411,13 @@ const arayAPI = {
         const db = await loadDB()
         const mediaId = crypto.randomUUID()
         const filename = `${mediaId}.webm`
-        const fileUri = await writeFileToFS(filename, p.video_base64, p.event_id)
+        const { path: filePath } = await writeFileToFS(filename, p.video_base64, p.event_id)
         const m = {
           id: mediaId,
           event_id: p.event_id,
           session_id: p.session_id,
           type: 'video',
-          original_path: fileUri,
+          original_path: filePath,
           thumbnail_path: null,
           checksum: null,
           sync_status: 'LOCAL_ONLY',
@@ -366,6 +427,7 @@ const arayAPI = {
           uploaded_at: null
         }
         db.media.unshift(m); await saveDB(db)
+        console.log('[ARAY] saveVideo OK — media id:', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveVideo failed:', e)
@@ -377,23 +439,24 @@ const arayAPI = {
         const db = await loadDB()
         const mediaId = crypto.randomUUID()
         const filename = `${mediaId}.jpg`
-        const fileUri = await writeFileToFS(filename, p.image_base64, p.event_id)
+        const { path: filePath } = await writeFileToFS(filename, p.image_base64, p.event_id)
         const m = {
           id: mediaId,
           event_id: p.event_id,
           session_id: p.session_id,
           type: 'photo',
-          original_path: fileUri,
-          thumbnail_path: fileUri,
+          original_path: filePath,
+          thumbnail_path: filePath,
           checksum: null,
           sync_status: 'LOCAL_ONLY',
           remote_file_id: null,
           last_error: null,
           created_at: new Date().toISOString(),
           uploaded_at: null,
-          processed_path: fileUri
+          processed_path: filePath
         }
         db.media.unshift(m); await saveDB(db)
+        console.log('[ARAY] saveComposite OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveComposite failed:', e)
@@ -435,16 +498,25 @@ const arayAPI = {
   },
   storage: {
     getInfo: async () => ({ success: true, data: await getStorageInfo() }),
-    getPath: async () => ({ success: true, data: '/android/data/com.aray.booth/files' }),
+    getPath: async () => ({ success: true, data: '/android/data/com.aray.booth/files/media' }),
     setPath: async () => ({ success: true, data: await getSettings() }),
-    chooseFolder: async () => ({ canceled: true, path: null }),
+    // v4.6.9: Android uses app sandbox — tidak bisa choose folder arbitrary.
+    // Return canceled=true supaya UI Settings tidak hang, tapi tetap tampilkan
+    // path sandbox di mana foto disimpan.
+    chooseFolder: async () => ({ canceled: true, path: null, message: 'Android menggunakan penyimpanan sandbox aplikasi. Foto disimpan otomatis di: /android/data/com.aray.booth/files/media/' }),
     openFolder: async () => ({ success: true }),
     ensure: async () => ({ success: true })
   },
   camera: { list: async () => ({ success: true, data: [] }), connect: async () => ({ success: true }), disconnect: async () => ({ success: true })},
-  settings: { get: async () => ({ success: true, data: await getSettings() }), update: async (p: any) => ({ success: true, data: await updateSettings(p) }), getDefaultStoragePath: async () => ({ success: true, data: '/android/data/com.aray.booth/files' })},
+  settings: { get: async () => ({ success: true, data: await getSettings() }), update: async (p: any) => ({ success: true, data: await updateSettings(p) }), getDefaultStoragePath: async () => ({ success: true, data: '/android/data/com.aray.booth/files/media' })},
   print: { queue: async () => ({ success: false, error: 'Print not available on Android' }), listPrinters: async () => ({ success: true, data: [] })},
-  googleDrive: { connect: async () => ({ connected: false, message: 'Not available' }), disconnect: async () => ({ success: true }), status: async () => ({ connected: false, folder: null, totalFiles: 0, message: 'Not available' })},
+  // v4.6.9: Google Drive tidak tersedia di Android (butuh OAuth flow native).
+  // Return pesan jelas supaya UI bisa tampilkan ke user.
+  googleDrive: {
+    connect: async () => ({ connected: false, message: 'Google Drive sync tidak tersedia di Android. Foto tersimpan lokal di perangkat. Untuk backup, transfer manual via file manager dari: /android/data/com.aray.booth/files/media/' }),
+    disconnect: async () => ({ success: true }),
+    status: async () => ({ connected: false, folder: null, totalFiles: 0, message: 'Not available on Android — gunakan file manager untuk backup manual' })
+  },
   sync: { start: async () => ({ success: true, data: { started: true, backed: 0, skipped: 0, failed: 0 }}), pause: async () => ({ paused: true }), resume: async () => ({ resumed: true, backed: 0, skipped: 0, failed: 0 }), retry: async () => ({ retrying: true, backed: 0, skipped: 0, failed: 0 }), summary: async (eventId?: string) => arayAPI.media.stats(eventId) },
   fs: {
     readAsDataURL: async (p: string) => {

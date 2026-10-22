@@ -346,7 +346,30 @@ function MediaTile({
   useEffect(() => {
     let cancelled = false
     async function load() {
-      // v4.3.6: For video, pakai aray-file:// protocol (efficient, no base64)
+      // v4.6.9: Android (Capacitor) — baca via window.aray.media.readFile untuk
+      // baik foto maupun video. Electron pakai aray-file:// protocol (efficient).
+      const isAndroid = (window as any).aray?.isAndroid === true
+      if (isAndroid) {
+        const path = media.thumbnail_path || media.original_path
+        if (path) {
+          try {
+            const result = await window.aray.media.readFile(path)
+            if (!cancelled && result.success) {
+              const ext = path.toLowerCase().split('.').pop() || ''
+              const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : ext === 'webm' ? 'video/webm' : 'image/jpeg'
+              setImgSrc(`data:${mime};base64,${result.data}`)
+            } else {
+              setImgError(true)
+            }
+          } catch {
+            setImgError(true)
+          }
+        } else {
+          setImgError(true)
+        }
+        return
+      }
+      // v4.3.6: For video (Electron), pakai aray-file:// protocol (efficient, no base64)
       if (isVideo) {
         const normalizedPath = (media.original_path || '').replace(/\\/g, '/')
         const encodedPath = encodeURIComponent(normalizedPath)
@@ -354,7 +377,7 @@ function MediaTile({
         if (!cancelled) setImgSrc(url)
         return
       }
-      // For photo, use thumbnail_path via base64 (file kecil, OK)
+      // For photo (Electron), use thumbnail_path via base64 (file kecil, OK)
       const path = media.thumbnail_path
       if (path) {
         try {

@@ -30,9 +30,16 @@ export function SettingsPage() {
     setBusy(true)
     try {
       const result = await window.aray.storage.chooseFolder()
-      if (result.success && !result.data.canceled && result.data.path) {
-        await setStoragePath(result.data.path)
+      // v4.6.9: Android returns { canceled: true, message: '...' } — show message to user
+      const data: any = (result as any).data || result
+      if (data && !data.canceled && data.path) {
+        await setStoragePath(data.path)
+      } else if (data && data.message) {
+        // Android: show info message about sandbox storage
+        alert(data.message)
       }
+    } catch (e: any) {
+      alert('Gagal memilih folder: ' + (e?.message || e))
     } finally {
       setBusy(false)
     }
