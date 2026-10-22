@@ -9,7 +9,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Zap
+  Zap,
+  Info
 } from 'lucide-react'
 import { ArayCard, ArayButton, ArayBadge, ArayProgress, ArayLogo } from '../components/ui'
 import { useMediaStore } from '../stores/media'
@@ -123,34 +124,77 @@ export function SyncCenterPage() {
             <p className="text-silver-400 text-sm">
               {settings?.google_drive_connected
                 ? `Signed in as ${settings.google_drive_email ?? '(unknown)'}`
-                : 'Local-only mode. All captures are saved safely on your drive. Connect Google Drive in Phase 3 for cloud sync.'}
+                : (window as any).aray?.isAndroid
+                  ? 'Android: foto disimpan di Documents/ARAY. Tap "Backup to Drive" untuk kirim ke Google Drive via share sheet.'
+                  : 'Local-only mode. All captures are saved safely on your drive. Connect Google Drive in Phase 3 for cloud sync.'}
             </p>
           </div>
           <div className="flex flex-col gap-2">
-            <ArayButton variant="silver" onClick={async () => {
-              const result = await window.aray.googleDrive.connect()
-              // v4.4.9 FIX: Always refresh settings after connect attempt.
-              console.log('[SyncCenter] Connect result:', result)
-              // v4.6.9: Android returns { connected: false, message: '...' } — show message
-              const res: any = result as any
-              if (res && !res.connected && res.message) {
-                alert(res.message)
-              }
-              await loadSettings()
-            }}>
-              {settings?.google_drive_connected ? 'Manage' : 'Connect'}
-            </ArayButton>
-            {settings?.google_drive_connected && (
-              <ArayButton variant="ghost" onClick={async () => {
-                await window.aray.googleDrive.disconnect()
-                await loadSettings()
-              }}>
-                Disconnect
-              </ArayButton>
+            {(window as any).aray?.isAndroid ? (
+              <>
+                {/* v4.7.0: Android — backup via Share intent */}
+                <ArayButton variant="gold" onClick={async () => {
+                  const result = await window.aray.googleDrive.connect()
+                  console.log('[SyncCenter] Backup result:', result)
+                  const res: any = result as any
+                  if (res && res.message) {
+                    // Tidak pakai alert — share sheet sudah muncul
+                    console.log('[SyncCenter] Backup message:', res.message)
+                  }
+                  await loadSettings()
+                }}>
+                  Backup to Drive / Share
+                </ArayButton>
+                <ArayButton variant="silver" onClick={async () => {
+                  const result = await window.aray.storage.openFolder()
+                  if (!result.success) {
+                    alert('Tidak bisa membuka folder. Manual: buka app Files → Documents → ARAY')
+                  }
+                }}>
+                  Open in Files app
+                </ArayButton>
+              </>
+            ) : (
+              <>
+                <ArayButton variant="silver" onClick={async () => {
+                  const result = await window.aray.googleDrive.connect()
+                  console.log('[SyncCenter] Connect result:', result)
+                  await loadSettings()
+                }}>
+                  {settings?.google_drive_connected ? 'Manage' : 'Connect'}
+                </ArayButton>
+                {settings?.google_drive_connected && (
+                  <ArayButton variant="ghost" onClick={async () => {
+                    await window.aray.googleDrive.disconnect()
+                    await loadSettings()
+                  }}>
+                    Disconnect
+                  </ArayButton>
+                )}
+              </>
             )}
           </div>
         </div>
       </ArayCard>
+
+      {/* v4.7.0: Android info banner */}
+      {(window as any).aray?.isAndroid && (
+        <ArayCard className="p-4 border-purple-haze-500/30">
+          <div className="flex items-start gap-3">
+            <Info className="w-5 h-5 text-purple-haze-300 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-medium text-purple-haze-100 mb-1">Penyimpanan Android</p>
+              <p className="text-silver-400">
+                Foto disimpan di: <code className="text-gold-300 text-xs">Internal Storage → Documents → ARAY</code>
+              </p>
+              <p className="text-silver-500 text-xs mt-1">
+                Buka app "Files" atau "File Manager" untuk melihat folder ini.
+                Untuk backup: tap "Backup to Drive" → pilih Google Drive di share sheet.
+              </p>
+            </div>
+          </div>
+        </ArayCard>
+      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">

@@ -18,11 +18,18 @@
 
 import { Preferences } from '@capacitor/preferences'
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
 import {
   checkLicenseStatus, activateLicense, generateLicenseCode, getMachineId, getDisplayMachineId, startEventSession
 } from './license'
 
 const DB_KEY = 'aray_database'
+
+// v4.7.0: Pakai Directory.Documents supaya foto bisa diakses user via file manager.
+// Path: /storage/emulated/0/Documents/ARAY/<event_id>/<media_id>.jpg
+// User bisa browse dengan app "Files" bawaan Android.
+const PUBLIC_STORAGE_DIR = Directory.Documents
+const PUBLIC_ROOT_FOLDER = 'ARAY'
 
 // In-memory cache untuk avoid parse JSON berkali-kali per call (perf critical untuk 5000 peserta)
 let _dbCache: any = null
@@ -97,16 +104,16 @@ async function isFilesystemAvailable(): Promise<boolean> {
   if (_fsAvailable !== null) return _fsAvailable
   try {
     // Test: write a small file, read it back, delete it
-    const testPath = `test-${Date.now()}.txt`
+    const testPath = `${PUBLIC_ROOT_FOLDER}/test-${Date.now()}.txt`
     await Filesystem.writeFile({
       path: testPath,
       data: btoa('ARAY-FS-TEST'),
-      directory: Directory.Data
+      directory: PUBLIC_STORAGE_DIR
     })
-    const result = await Filesystem.readFile({ path: testPath, directory: Directory.Data })
-    await Filesystem.deleteFile({ path: testPath, directory: Directory.Data })
+    const result = await Filesystem.readFile({ path: testPath, directory: PUBLIC_STORAGE_DIR })
+    await Filesystem.deleteFile({ path: testPath, directory: PUBLIC_STORAGE_DIR })
     _fsAvailable = (typeof result.data === 'string' && atob(result.data) === 'ARAY-FS-TEST')
-    console.log(`[ARAY] Filesystem available: ${_fsAvailable}`)
+    console.log(`[ARAY] Filesystem available: ${_fsAvailable} (Documents/ARAY)`)
     return _fsAvailable
   } catch (e) {
     console.error('[ARAY] Filesystem NOT available — falling back to Preferences base64:', e)
@@ -118,8 +125,8 @@ async function isFilesystemAvailable(): Promise<boolean> {
 async function ensureMediaDir(eventId: string): Promise<void> {
   try {
     await Filesystem.mkdir({
-      path: `media/${eventId}`,
-      directory: Directory.Data,
+      path: `${PUBLIC_ROOT_FOLDER}/${eventId}`,
+      directory: PUBLIC_STORAGE_DIR,
       recursive: true
     })
   } catch (e: any) {
@@ -133,17 +140,18 @@ async function ensureMediaDir(eventId: string): Promise<void> {
 
 // Returns: { path, isFilesystem } — path is either FS relative path or data URL
 async function writeFileToFS(filename: string, base64Data: string, eventId: string): Promise<{ path: string; isFilesystem: boolean }> {
-  // Try Filesystem first
+  // Try Filesystem first (Directory.Documents — public folder)
   if (await isFilesystemAvailable()) {
     try {
       await ensureMediaDir(eventId)
+      const relPath = `${PUBLIC_ROOT_FOLDER}/${eventId}/${filename}`
       await Filesystem.writeFile({
-        path: `media/${eventId}/${filename}`,
+        path: relPath,
         data: base64Data,
-        directory: Directory.Data
+        directory: PUBLIC_STORAGE_DIR
       })
-      // Store RELATIVE path (not full URI) for consistent reads later
-      return { path: `media/${eventId}/${filename}`, isFilesystem: true }
+      // Store RELATIVE path (relative to Documents/) for consistent reads later
+      return { path: relPath, isFilesystem: true }
     } catch (e) {
       console.error('[ARAY] writeFileToFS failed, falling back to data URL:', e)
     }
@@ -162,7 +170,7 @@ async function readFileFromFS(path: string): Promise<string | null> {
   // If Filesystem not available, can't read file
   if (!(await isFilesystemAvailable())) return null
   try {
-    const result = await Filesystem.readFile({ path, directory: Directory.Data })
+    const result = await Filesystem.readFile({ path, directory: PUBLIC_STORAGE_DIR })
     if (typeof result.data === 'string') return result.data
     // Blob → convert to base64
     return await new Promise((resolve, reject) => {
@@ -184,9 +192,23 @@ async function deleteFileFromFS(path: string): Promise<void> {
   if (path.startsWith('data:')) return  // data URL — nothing to delete from FS
   if (!(await isFilesystemAvailable())) return
   try {
-    await Filesystem.deleteFile({ path, directory: Directory.Data })
+    await Filesystem.deleteFile({ path, directory: PUBLIC_STORAGE_DIR })
   } catch (e) {
     console.warn('[ARAY] deleteFileFromFS failed:', path, e)
+  }
+}
+
+// v4.7.0: Get full file URI (for Share intent). Capacitor returns content:// URI
+// which can be shared to other apps (Google Drive, WhatsApp, etc).
+async function getFileUri(path: string): Promise<string | null> {
+  if (path.startsWith('data:')) return null  // can't share data URL
+  if (!(await isFilesystemAvailable())) return null
+  try {
+    const result = await Filesystem.getUri({ path, directory: PUBLIC_STORAGE_DIR })
+    return result.uri  // file:///storage/emulated/0/Documents/ARAY/...
+  } catch (e) {
+    console.warn('[ARAY] getFileUri failed:', path, e)
+    return null
   }
 }
 
@@ -228,30 +250,28 @@ async function updateSettings(partial: any) {
 // ─── Storage info via Filesystem stat ────────────────────────────────────────
 async function getStorageInfo() {
   try {
-    // v4.6.9: Hitung total ukuran semua file di media/ directory
-    // Daripada synthetic 1GB cap, kalkulasi real usage dari file listing
+    // v4.7.0: Hitung total ukuran semua file di Documents/ARAY/
     let usedBytes = 0
     try {
-      const dirResult = await Filesystem.readdir({ path: 'media', directory: Directory.Data })
+      const dirResult = await Filesystem.readdir({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
       for (const entry of dirResult.files) {
         try {
-          const subDir = await Filesystem.readdir({ path: `media/${entry.name}`, directory: Directory.Data })
+          const subDir = await Filesystem.readdir({ path: `${PUBLIC_ROOT_FOLDER}/${entry.name}`, directory: PUBLIC_STORAGE_DIR })
           for (const sub of subDir.files) {
             try {
-              const stat = await Filesystem.stat({ path: `media/${entry.name}/${sub.name}`, directory: Directory.Data })
+              const stat = await Filesystem.stat({ path: `${PUBLIC_ROOT_FOLDER}/${entry.name}/${sub.name}`, directory: PUBLIC_STORAGE_DIR })
               usedBytes += stat.size || 0
             } catch {}
           }
         } catch {}
       }
     } catch {}
-    // Android: report realistic free space (Android app sandbox biasanya 4-128GB free)
-    // Gunakan 8GB as reference total (cukup untuk ~25.000 foto @ 300KB)
+    // Report realistic free space — Android device storage usually 8-128GB free
     const TOTAL_BYTES = 8 * 1024 * 1024 * 1024 // 8GB reference
     const freeBytes = Math.max(0, TOTAL_BYTES - usedBytes)
     const usedPct = TOTAL_BYTES > 0 ? (usedBytes / TOTAL_BYTES) * 100 : 0
     return {
-      path: '/android/data/com.aray.booth/files',
+      path: '/storage/emulated/0/Documents/ARAY',
       total_bytes: TOTAL_BYTES,
       used_bytes: usedBytes,
       free_bytes: freeBytes,
@@ -261,7 +281,8 @@ async function getStorageInfo() {
     }
   } catch (e) {
     return {
-      path: '/android', total_bytes: 0, used_bytes: 0, free_bytes: 0,
+      path: '/storage/emulated/0/Documents/ARAY',
+      total_bytes: 0, used_bytes: 0, free_bytes: 0,
       used_percent: 0, warning: false, critical: false
     }
   }
@@ -477,14 +498,29 @@ const arayAPI = {
         return { success: true, data: { size: s, sizeMB: Math.round(s/1048576*100)/100, exists: true }}
       }
       try {
-        const stat = await Filesystem.stat({ path, directory: Directory.Data })
+        const stat = await Filesystem.stat({ path, directory: PUBLIC_STORAGE_DIR })
         const size = stat.size || 0
         return { success: true, data: { size, sizeMB: Math.round(size/1048576*100)/100, exists: true }}
       } catch {
         return { success: false, error: { code: 'NOT_FOUND', message: 'File not found' }}
       }
     },
-    openInFolder: async () => ({ success: true }),
+    openInFolder: async (path: string) => {
+      // v4.7.0: Share file ke app lain (file manager, Google Drive, dll)
+      if (!path || path.startsWith('data:')) return { success: true }
+      try {
+        const uri = await getFileUri(path)
+        if (!uri) return { success: false, error: 'Cannot resolve file URI' }
+        await Share.share({
+          title: 'ARAY Photo',
+          url: uri,
+          dialogTitle: 'Buka / share foto via...'
+        })
+        return { success: true }
+      } catch (e: any) {
+        return { success: false, error: e?.message || 'Share failed' }
+      }
+    },
     updateSyncStatus: async (id: string, status: string) => {
       const db = await loadDB()
       const idx = db.media.findIndex((m:any)=>m.id===id)
@@ -498,24 +534,88 @@ const arayAPI = {
   },
   storage: {
     getInfo: async () => ({ success: true, data: await getStorageInfo() }),
-    getPath: async () => ({ success: true, data: '/android/data/com.aray.booth/files/media' }),
+    getPath: async () => ({ success: true, data: '/storage/emulated/0/Documents/ARAY' }),
     setPath: async () => ({ success: true, data: await getSettings() }),
-    // v4.6.9: Android uses app sandbox — tidak bisa choose folder arbitrary.
-    // Return canceled=true supaya UI Settings tidak hang, tapi tetap tampilkan
-    // path sandbox di mana foto disimpan.
-    chooseFolder: async () => ({ canceled: true, path: null, message: 'Android menggunakan penyimpanan sandbox aplikasi. Foto disimpan otomatis di: /android/data/com.aray.booth/files/media/' }),
-    openFolder: async () => ({ success: true }),
+    // v4.7.0: Android Documents folder is the storage location. User can't
+    // change to arbitrary folder (Android 11+ scoped storage), but path is
+    // PUBLIC and accessible via Files app / file manager.
+    chooseFolder: async () => ({
+      canceled: true,
+      path: '/storage/emulated/0/Documents/ARAY',
+      message: 'Foto disimpan di: Internal Storage → Documents → ARAY\n\nBuka app "Files" atau "File Manager" di Android Anda untuk melihat folder ini. Anda bisa copy folder ARAY ke Google Drive, PC, atau flashdisk untuk backup.'
+    }),
+    openFolder: async () => {
+      // v4.7.0: Try to open Files app at ARAY folder via Share intent
+      try {
+        const uri = await Filesystem.getUri({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
+        await Share.share({
+          title: 'ARAY Photos Folder',
+          text: 'Folder ARAY berisi semua foto booth. Lokasi: Internal Storage → Documents → ARAY',
+          url: uri.uri,
+          dialogTitle: 'Buka folder ARAY'
+        })
+        return { success: true }
+      } catch (e: any) {
+        return { success: false, error: e?.message || 'Tidak bisa membuka folder' }
+      }
+    },
     ensure: async () => ({ success: true })
   },
   camera: { list: async () => ({ success: true, data: [] }), connect: async () => ({ success: true }), disconnect: async () => ({ success: true })},
-  settings: { get: async () => ({ success: true, data: await getSettings() }), update: async (p: any) => ({ success: true, data: await updateSettings(p) }), getDefaultStoragePath: async () => ({ success: true, data: '/android/data/com.aray.booth/files/media' })},
+  settings: { get: async () => ({ success: true, data: await getSettings() }), update: async (p: any) => ({ success: true, data: await updateSettings(p) }), getDefaultStoragePath: async () => ({ success: true, data: '/storage/emulated/0/Documents/ARAY' })},
   print: { queue: async () => ({ success: false, error: 'Print not available on Android' }), listPrinters: async () => ({ success: true, data: [] })},
-  // v4.6.9: Google Drive tidak tersedia di Android (butuh OAuth flow native).
-  // Return pesan jelas supaya UI bisa tampilkan ke user.
+  // v4.7.0: Google Drive backup via Share intent.
+  // User tap "Connect" → share sheet muncul → pilih Google Drive app → upload file.
+  // Ini cara native Android untuk share file ke app lain tanpa OAuth.
   googleDrive: {
-    connect: async () => ({ connected: false, message: 'Google Drive sync tidak tersedia di Android. Foto tersimpan lokal di perangkat. Untuk backup, transfer manual via file manager dari: /android/data/com.aray.booth/files/media/' }),
+    connect: async () => {
+      // Open Google Drive upload via Share intent (share folder URI)
+      try {
+        const uri = await Filesystem.getUri({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
+        await Share.share({
+          title: 'Backup ARAY Photos to Google Drive',
+          text: 'Upload folder ARAY ke Google Drive untuk backup',
+          url: uri.uri,
+          dialogTitle: 'Pilih Google Drive (atau app lain) untuk backup'
+        })
+        return { connected: false, message: 'Untuk backup ke Google Drive: pilih "Google Drive" di share sheet yang muncul, lalu upload folder ARAY. Anda juga bisa pilih WhatsApp, Email, atau app lain untuk transfer file.' }
+      } catch (e: any) {
+        return { connected: false, message: 'Tidak bisa membuka share sheet: ' + (e?.message || e) + '. Manual: buka app Files → Documents → ARAY → select all → share ke Google Drive.' }
+      }
+    },
     disconnect: async () => ({ success: true }),
-    status: async () => ({ connected: false, folder: null, totalFiles: 0, message: 'Not available on Android — gunakan file manager untuk backup manual' })
+    status: async () => ({
+      connected: false,
+      folder: null,
+      totalFiles: 0,
+      message: 'Backup manual via share sheet. Tap "Connect" untuk buka share sheet → pilih Google Drive.'
+    })
+  },
+  // v4.7.0: Tambah API share untuk share individual media ke app lain
+  share: {
+    shareFile: async (path: string, title?: string) => {
+      try {
+        const uri = await getFileUri(path)
+        if (!uri) {
+          return { success: false, error: 'File tidak ditemukan atau masih dalam format data URL' }
+        }
+        await Share.share({
+          title: title || 'ARAY Photo',
+          text: 'Foto dari ARAY Booth',
+          url: uri,
+          dialogTitle: 'Share foto via...'
+        })
+        return { success: true }
+      } catch (e: any) {
+        return { success: false, error: e?.message || 'Share gagal' }
+      }
+    },
+    shareMultiple: async (paths: string[], title?: string) => {
+      // Share.share hanya support 1 file at a time di Capacitor v6
+      // Untuk multiple files, share pertama, user bisa repeat
+      if (paths.length === 0) return { success: false, error: 'Tidak ada file untuk di-share' }
+      return arayAPI.share.shareFile(paths[0], title || `${paths.length} photos from ARAY`)
+    }
   },
   sync: { start: async () => ({ success: true, data: { started: true, backed: 0, skipped: 0, failed: 0 }}), pause: async () => ({ paused: true }), resume: async () => ({ resumed: true, backed: 0, skipped: 0, failed: 0 }), retry: async () => ({ retrying: true, backed: 0, skipped: 0, failed: 0 }), summary: async (eventId?: string) => arayAPI.media.stats(eventId) },
   fs: {
@@ -533,7 +633,7 @@ const arayAPI = {
     exists: async (p: string) => {
       if (p.startsWith('data:')) return { success: true }
       try {
-        await Filesystem.stat({ path: p, directory: Directory.Data })
+        await Filesystem.stat({ path: p, directory: PUBLIC_STORAGE_DIR })
         return { success: true }
       } catch {
         return { success: false }

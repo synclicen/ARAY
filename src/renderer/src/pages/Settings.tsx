@@ -80,14 +80,37 @@ export function SettingsPage() {
             />
           </div>
         )}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <ArayButton variant="silver" icon={<Folder className="w-4 h-4" />} onClick={chooseFolder} loading={busy}>
             Change folder
           </ArayButton>
           <ArayButton variant="ghost" onClick={loadStorageInfo}>
             Refresh
           </ArayButton>
+          {/* v4.7.0: Android — Open folder in Files app */}
+          {(window as any).aray?.isAndroid && (
+            <ArayButton variant="gold" icon={<Folder className="w-4 h-4" />} onClick={async () => {
+              const result = await window.aray.storage.openFolder()
+              if (!result.success) {
+                alert('Tidak bisa membuka folder otomatis. Manual: buka app Files → Documents → ARAY')
+              }
+            }}>
+              Open in Files app
+            </ArayButton>
+          )}
         </div>
+
+        {/* v4.7.0: Android info card — explain storage location */}
+        {(window as any).aray?.isAndroid && (
+          <div className="mt-4 p-3 rounded-xl bg-purple-haze-500/10 border border-purple-haze-500/30 text-sm">
+            <p className="text-purple-haze-100 font-medium mb-1">Penyimpanan Android</p>
+            <p className="text-silver-400 text-xs leading-relaxed">
+              Foto disimpan di <code className="text-gold-300">Internal Storage → Documents → ARAY</code>.
+              Folder ini <strong>publik</strong> — bisa diakses via app "Files" atau "File Manager" bawaan Android.
+              Untuk backup: tap "Open in Files app", lalu select all → share ke Google Drive, WhatsApp, atau copy ke PC.
+            </p>
+          </div>
+        )}
       </ArayCard>
 
       {/* ─── PHOTO SETTINGS ─── */}
