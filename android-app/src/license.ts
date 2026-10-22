@@ -199,18 +199,51 @@ async function recordFirstRun(): Promise<string> {
 
 // ─── Public API ────────────────────────────────────────────────────────────
 // v4.6.8: Event Session Lock — grace period untuk acara
+// v4.7.1 P0-2: Persist ke Preferences supaya survive app restart.
+// Sebelumnya hanya in-memory → app crash/restart = grace period hilang →
+// user kena lockout di tengah acara kalau license expired.
 let _eventSessionStartedAt: string | null = null
+let _eventSessionLoaded = false
 const EVENT_GRACE_PERIOD_HOURS = 72
+const EVENT_SESSION_KEY = 'aray_event_session_started_at'
 
-export function startEventSession(): void {
-  if (!_eventSessionStartedAt) {
-    _eventSessionStartedAt = new Date().toISOString()
-    console.log(`[ARAY LICENSE] Event session started at ${_eventSessionStartedAt}`)
-    console.log(`[ARAY LICENSE] Grace period active for ${EVENT_GRACE_PERIOD_HOURS}h`)
+// v4.7.1: Load persisted event session on first access
+async function loadEventSession(): Promise<void> {
+  if (_eventSessionLoaded) return
+  _eventSessionLoaded = true
+  try {
+    const { value } = await Preferences.get({ key: EVENT_SESSION_KEY })
+    if (value) {
+      const elapsed = Date.now() - new Date(value).getTime()
+      if (elapsed < EVENT_GRACE_PERIOD_HOURS * 3600 * 1000) {
+        _eventSessionStartedAt = value
+        console.log(`[ARAY LICENSE] Restored event session from ${value} (${Math.floor(elapsed/3600000)}h ago)`)
+      } else {
+        // Expired — clean up
+        await Preferences.remove({ key: EVENT_SESSION_KEY })
+      }
+    }
+  } catch (e) {
+    console.warn('[ARAY LICENSE] Failed to load event session:', e)
   }
 }
 
-export function isEventSessionActive(): boolean {
+export async function startEventSession(): Promise<void> {
+  await loadEventSession()
+  if (!_eventSessionStartedAt) {
+    _eventSessionStartedAt = new Date().toISOString()
+    try {
+      await Preferences.set({ key: EVENT_SESSION_KEY, value: _eventSessionStartedAt })
+      console.log(`[ARAY LICENSE] Event session started + persisted: ${_eventSessionStartedAt}`)
+      console.log(`[ARAY LICENSE] Grace period active for ${EVENT_GRACE_PERIOD_HOURS}h (survives app restart)`)
+    } catch (e) {
+      console.error('[ARAY LICENSE] Failed to persist event session:', e)
+    }
+  }
+}
+
+export async function isEventSessionActive(): Promise<boolean> {
+  await loadEventSession()
   if (!_eventSessionStartedAt) return false
   const elapsed = Date.now() - new Date(_eventSessionStartedAt).getTime()
   return elapsed < EVENT_GRACE_PERIOD_HOURS * 3600 * 1000
@@ -241,8 +274,8 @@ export async function checkLicenseStatus(): Promise<LicenseStatus> {
       ? Math.max(0, Math.ceil((new Date(licenseData.expiresAt).getTime() - now.getTime()) / 86400000))
       : 0
 
-    // v4.6.8: Event Session Lock grace period
-    const eventGraceActive = isExpired && isEventSessionActive()
+    // v4.6.8: Event Session Lock grace period (v4.7.1: now async, persisted)
+    const eventGraceActive = isExpired && (await isEventSessionActive())
     const graceHoursRemaining = eventGraceActive
       ? Math.ceil((EVENT_GRACE_PERIOD_HOURS * 3600 * 1000 - (Date.now() - new Date(_eventSessionStartedAt!).getTime())) / 3600000)
       : 0

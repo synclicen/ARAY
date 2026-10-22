@@ -497,30 +497,45 @@ function MediaDetailModal({
       const path = media.original_path
       if (!path) return
 
-      // v4.3.6: For video, pakai aray-file:// protocol (stream dari disk).
-      // Encode path untuk handle spaces dan special chars.
-      if (isVideo) {
-        // Windows path: C:\Users\Fajri Bowo\...\video.webm
-        // -> replace \ with / -> C:/Users/Fajri Bowo/.../video.webm
-        // -> encodeURIComponent setiap segment -> C%3A%2FUsers%2FFajri%20Bowo%2F...
-        // -> aray-file:/// + encoded path
-        const normalizedPath = path.replace(/\\/g, '/')
-        // Encode entire path — protocol handler akan decode
-        const encodedPath = encodeURIComponent(normalizedPath)
-        const url = `aray-file:///${encodedPath}`
-        console.log('[Gallery] Video URL:', url)
-        console.log('[Gallery] Video path:', path)
-        if (!cancelled) setVideoSrc(url)
-
-        // Get file info untuk debug
+      // v4.7.1 P1-3: Android — baca video via readFile → data URL (base64).
+      // aray-file:// protocol hanya terdaftar di Electron, broken di Android WebView.
+      const isAndroid = (window as any).aray?.isAndroid === true
+      if (isAndroid && isVideo) {
+        try {
+          const result = await window.aray.media.readFile(path)
+          if (!cancelled && result.success) {
+            const ext = path.toLowerCase().split('.').pop() || ''
+            const mime = ext === 'webm' ? 'video/webm' : ext === 'mp4' ? 'video/mp4' : 'video/webm'
+            setVideoSrc(`data:${mime};base64,${result.data}`)
+          } else {
+            console.error('[Gallery] Android video readFile failed:', result)
+          }
+        } catch (e) {
+          console.error('[Gallery] Android video load failed:', e)
+        }
+        // Get file info for debug
         try {
           const info = await window.aray.media.getFileInfo(path)
           if (!cancelled && info?.success) {
             const data = info.data as any
-            console.log('[Gallery] Video file size:', data.sizeMB, 'MB')
             setFileInfo({ sizeMB: data.sizeMB })
-          } else {
-            console.error('[Gallery] Video file not found or error:', info)
+          }
+        } catch {}
+        return
+      }
+
+      // v4.3.6: For video (Electron), pakai aray-file:// protocol (stream dari disk).
+      if (isVideo) {
+        const normalizedPath = path.replace(/\\/g, '/')
+        const encodedPath = encodeURIComponent(normalizedPath)
+        const url = `aray-file:///${encodedPath}`
+        if (!cancelled) setVideoSrc(url)
+
+        try {
+          const info = await window.aray.media.getFileInfo(path)
+          if (!cancelled && info?.success) {
+            const data = info.data as any
+            setFileInfo({ sizeMB: data.sizeMB })
           }
         } catch (e) {
           console.error('[Gallery] getFileInfo failed:', e)

@@ -53,9 +53,27 @@ async function loadDB() {
 
 // Debounced save — 100ms (turun dari 500ms default) untuk minimize data loss
 // saat crash. Untuk acara 5000 peserta, max 100ms window acceptable.
+// v4.7.1 P1-5: Force flush tiap 10 saves supaya metadata tidak hilang saat crash.
+let _saveCount = 0
+const FORCE_FLUSH_EVERY = 10
+
 async function saveDB(db: any) {
   _dbCache = db
   _dbCacheDirty = true
+  _saveCount++
+  // v4.7.1 P1-5: Setiap 10 saves, force flush sinkron (tidak debounce)
+  // Critical untuk 5000 peserta — kalau app crash mid-burst, max 10 captures hilang.
+  if (_saveCount % FORCE_FLUSH_EVERY === 0) {
+    if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null }
+    _dbCacheDirty = false
+    try {
+      await Preferences.set({ key: DB_KEY, value: JSON.stringify(_dbCache) })
+    } catch (e) {
+      console.error('[ARAY] saveDB force flush failed:', e)
+      _dbCacheDirty = true  // retry di debounce berikutnya
+    }
+    return
+  }
   if (_saveTimer) clearTimeout(_saveTimer)
   _saveTimer = setTimeout(async () => {
     if (!_dbCacheDirty) return
@@ -139,6 +157,14 @@ async function ensureMediaDir(eventId: string): Promise<void> {
 }
 
 // Returns: { path, isFilesystem } — path is either FS relative path or data URL
+// v4.7.1 P0-1: Guard disk-full — jangan fallback ke inline base64 untuk binary > 100KB.
+// Sebelumnya: kalau Filesystem gagal, simpan base64 inline di Preferences JSON.
+// Akibat: 3-5 foto composite (3MB each) → JSON Preferences > 5MB → Preferences.set
+// throw → SEMUA metadata (events, sessions, settings, semua 5000 media) hilang.
+// Fix: kalau Filesystem gagal DAN binary > 100KB, throw error eksplisit supaya
+// Booth.tsx bisa surface ke user "Storage penuh" tanpa corrupt database.
+const MAX_INLINE_BASE64_BYTES = 100 * 1024 // 100KB — kalau lebih, jangan inline
+
 async function writeFileToFS(filename: string, base64Data: string, eventId: string): Promise<{ path: string; isFilesystem: boolean }> {
   // Try Filesystem first (Directory.Documents — public folder)
   if (await isFilesystemAvailable()) {
@@ -153,10 +179,23 @@ async function writeFileToFS(filename: string, base64Data: string, eventId: stri
       // Store RELATIVE path (relative to Documents/) for consistent reads later
       return { path: relPath, isFilesystem: true }
     } catch (e) {
-      console.error('[ARAY] writeFileToFS failed, falling back to data URL:', e)
+      console.error('[ARAY] writeFileToFS failed:', e)
+      // v4.7.1 P0-1: Kalau binary besar, jangan fallback ke inline — throw error
+      const dataBytes = Math.floor(base64Data.length * 0.75)
+      if (dataBytes > MAX_INLINE_BASE64_BYTES) {
+        throw new Error(`Gagal menyimpan foto (${(dataBytes/1024/1024).toFixed(1)}MB). Storage mungkin penuh. Hapus media lama atau backup ke Drive lalu hapus dari perangkat.`)
+      }
+      // Binary kecil (< 100KB) — OK untuk fallback inline
+      console.warn(`[ARAY] Falling back to inline data URL (${dataBytes} bytes)`)
+    }
+  } else {
+    // Filesystem not available — cek size sebelum inline
+    const dataBytes = Math.floor(base64Data.length * 0.75)
+    if (dataBytes > MAX_INLINE_BASE64_BYTES) {
+      throw new Error(`Filesystem tidak tersedia dan foto terlalu besar (${(dataBytes/1024/1024).toFixed(1)}MB) untuk disimpan inline. Restart app atau hubungi teknisi.`)
     }
   }
-  // Fallback: store as data URL inline in Preferences (old behavior — works but bloats JSON)
+  // Fallback: store as data URL inline in Preferences (only for small binaries)
   const ext = filename.split('.').pop()?.toLowerCase() || 'jpg'
   const mime = ext === 'webm' ? 'video/webm' : 'image/jpeg'
   return { path: `data:${mime};base64,${base64Data}`, isFilesystem: false }
@@ -237,6 +276,10 @@ async function getSettings() {
   const db = await loadDB()
   const s = { ...DEFAULT_SETTINGS, ...db.settings }
   s.google_drive_connected = !!db.settings.backup_folder
+  // v4.7.1 P2-9: Inject real storage path supaya Settings page tidak kosong
+  if (!s.storage_path) {
+    s.storage_path = '/storage/emulated/0/Documents/ARAY'
+  }
   return s
 }
 
@@ -250,7 +293,7 @@ async function updateSettings(partial: any) {
 // ─── Storage info via Filesystem stat ────────────────────────────────────────
 async function getStorageInfo() {
   try {
-    // v4.7.0: Hitung total ukuran semua file di Documents/ARAY/
+    // v4.7.1 P1-8: Hitung total ukuran semua file di Documents/ARAY/
     let usedBytes = 0
     try {
       const dirResult = await Filesystem.readdir({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
@@ -266,8 +309,11 @@ async function getStorageInfo() {
         } catch {}
       }
     } catch {}
-    // Report realistic free space — Android device storage usually 8-128GB free
-    const TOTAL_BYTES = 8 * 1024 * 1024 * 1024 // 8GB reference
+    // v4.7.1 P1-8: Display realistis — 32GB reference (typical Android storage).
+    // Sebelumnya 8GB → misleading "Critical" setelah 7.6GB used (~1500 peserta).
+    // 32GB cukup untuk ~5000 peserta @ 5MB foto, atau ~2500 peserta @ 10MB foto+video.
+    // Note: real free space butuh native StatFs plugin — gunakan ini sebagai conservative estimate.
+    const TOTAL_BYTES = 32 * 1024 * 1024 * 1024 // 32GB reference
     const freeBytes = Math.max(0, TOTAL_BYTES - usedBytes)
     const usedPct = TOTAL_BYTES > 0 ? (usedBytes / TOTAL_BYTES) * 100 : 0
     return {
@@ -303,7 +349,8 @@ const arayAPI = {
       return { success: true, data: { machineId, displayMachineId: getDisplayMachineId(machineId) }}
     },
     // v4.6.8: Trigger event session lock — 72h grace period aktif
-    startEventSession: async () => { startEventSession(); return { success: true } }
+    // v4.7.1: startEventSession sekarang async (persist ke Preferences)
+    startEventSession: async () => { await startEventSession(); return { success: true } }
   },
   events: {
     create: async (input: any) => {
@@ -539,24 +586,44 @@ const arayAPI = {
     // v4.7.0: Android Documents folder is the storage location. User can't
     // change to arbitrary folder (Android 11+ scoped storage), but path is
     // PUBLIC and accessible via Files app / file manager.
+    // v4.7.1 P1-4: Folder URI share tidak reliable — ganti ke instructions-only.
     chooseFolder: async () => ({
       canceled: true,
       path: '/storage/emulated/0/Documents/ARAY',
       message: 'Foto disimpan di: Internal Storage → Documents → ARAY\n\nBuka app "Files" atau "File Manager" di Android Anda untuk melihat folder ini. Anda bisa copy folder ARAY ke Google Drive, PC, atau flashdisk untuk backup.'
     }),
     openFolder: async () => {
-      // v4.7.0: Try to open Files app at ARAY folder via Share intent
+      // v4.7.1 P1-4: Share folder URI tidak work (app penerima expect file URI).
+      // Ganti dengan share file pertama di folder — minimal user bisa lihat satu file
+      // dan dari sana bisa browse folder lainnya.
       try {
-        const uri = await Filesystem.getUri({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
-        await Share.share({
-          title: 'ARAY Photos Folder',
-          text: 'Folder ARAY berisi semua foto booth. Lokasi: Internal Storage → Documents → ARAY',
-          url: uri.uri,
-          dialogTitle: 'Buka folder ARAY'
-        })
-        return { success: true }
+        const dirResult = await Filesystem.readdir({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
+        if (dirResult.files.length === 0) {
+          return { success: false, error: 'Belum ada foto. Ambil foto pertama di Booth, lalu coba lagi.' }
+        }
+        // Cari file pertama di subfolder event pertama
+        for (const entry of dirResult.files) {
+          try {
+            const subDir = await Filesystem.readdir({ path: `${PUBLIC_ROOT_FOLDER}/${entry.name}`, directory: PUBLIC_STORAGE_DIR })
+            if (subDir.files.length > 0) {
+              const firstFile = subDir.files[0]
+              const uri = await Filesystem.getUri({
+                path: `${PUBLIC_ROOT_FOLDER}/${entry.name}/${firstFile.name}`,
+                directory: PUBLIC_STORAGE_DIR
+              })
+              await Share.share({
+                title: 'ARAY Photos',
+                text: `Foto ARAY di: Internal Storage → Documents → ARAY → ${entry.name}\n\nBuka app Files untuk melihat semua foto.`,
+                url: uri.uri,
+                dialogTitle: 'Buka foto / lihat folder ARAY'
+              })
+              return { success: true }
+            }
+          } catch {}
+        }
+        return { success: false, error: 'Tidak ada file ditemukan. Buka manual: Files app → Documents → ARAY' }
       } catch (e: any) {
-        return { success: false, error: e?.message || 'Tidak bisa membuka folder' }
+        return { success: false, error: 'Buka manual: Files app → Documents → ARAY. (' + (e?.message || 'error') + ')' }
       }
     },
     ensure: async () => ({ success: true })
