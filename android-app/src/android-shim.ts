@@ -22,6 +22,7 @@ import { Share } from '@capacitor/share'
 import {
   checkLicenseStatus, activateLicense, generateLicenseCode, getMachineId, getDisplayMachineId, startEventSession
 } from './license'
+import { DriveBackup } from './drive-backup'
 
 const DB_KEY = 'aray_database'
 
@@ -234,6 +235,51 @@ async function deleteFileFromFS(path: string): Promise<void> {
     await Filesystem.deleteFile({ path, directory: PUBLIC_STORAGE_DIR })
   } catch (e) {
     console.warn('[ARAY] deleteFileFromFS failed:', path, e)
+  }
+}
+
+// v4.7.3: Auto-upload ke Google Drive via SAF plugin.
+// Dipanggil setelah saveComposite/saveCapturedFrame/saveVideo sukses.
+// Jika Google Drive belum connected atau auto_backup off, skip silently.
+// Upload di-fire-and-forget (tidak block save) — kalau gagal, log saja.
+async function autoUploadToDrive(
+  localFilePath: string,
+  filename: string,
+  eventName: string,
+  mimeType: string = 'image/jpeg'
+): Promise<void> {
+  try {
+    const db = await loadDB()
+    const autoBackup = db.settings?.auto_backup ?? false
+    const backupFolder = db.settings?.backup_folder
+    if (!autoBackup || !backupFolder) return  // not configured — skip
+
+    // Get file:// URI from Filesystem relative path
+    let fileUri: string
+    if (localFilePath.startsWith('data:')) {
+      // Can't upload data URL — skip
+      return
+    }
+    const uriResult = await Filesystem.getUri({ path: localFilePath, directory: PUBLIC_STORAGE_DIR })
+    fileUri = uriResult.uri
+
+    // Fire-and-forget upload — jangan block save
+    DriveBackup.uploadFile({
+      localPath: fileUri,
+      filename: filename,
+      projectName: eventName || 'default',
+      mimeType: mimeType
+    }).then((result: any) => {
+      if (result?.success) {
+        console.log('[ARAY] Auto-upload to Drive SUCCESS:', filename)
+      } else {
+        console.warn('[ARAY] Auto-upload to Drive failed:', filename, result)
+      }
+    }).catch((e: any) => {
+      console.error('[ARAY] Auto-upload to Drive ERROR:', filename, e?.message || e)
+    })
+  } catch (e) {
+    console.error('[ARAY] autoUploadToDrive error:', e)
   }
 }
 
@@ -468,6 +514,9 @@ const arayAPI = {
         }
         db.media.unshift(m); await saveDB(db)
         console.log('[ARAY] saveCapturedFrame OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
+        // v4.7.3: Auto-upload ke Google Drive (jika connected + auto_backup on)
+        const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
+        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg')
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveCapturedFrame failed:', e)
@@ -496,6 +545,9 @@ const arayAPI = {
         }
         db.media.unshift(m); await saveDB(db)
         console.log('[ARAY] saveVideo OK — media id:', mediaId)
+        // v4.7.3: Auto-upload ke Google Drive
+        const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
+        autoUploadToDrive(filePath, filename, eventName, 'video/webm')
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveVideo failed:', e)
@@ -525,6 +577,9 @@ const arayAPI = {
         }
         db.media.unshift(m); await saveDB(db)
         console.log('[ARAY] saveComposite OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
+        // v4.7.3: Auto-upload ke Google Drive
+        const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
+        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg')
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveComposite failed:', e)
@@ -631,32 +686,52 @@ const arayAPI = {
   camera: { list: async () => ({ success: true, data: [] }), connect: async () => ({ success: true }), disconnect: async () => ({ success: true })},
   settings: { get: async () => ({ success: true, data: await getSettings() }), update: async (p: any) => ({ success: true, data: await updateSettings(p) }), getDefaultStoragePath: async () => ({ success: true, data: '/storage/emulated/0/Documents/ARAY' })},
   print: { queue: async () => ({ success: false, error: 'Print not available on Android' }), listPrinters: async () => ({ success: true, data: [] })},
-  // v4.7.2: Google Drive TIDAK bisa auto-connect di Android (butuh OAuth native plugin).
-  // API googleDrive.connect() tetap ada untuk backward compat, tapi UI label jelas
-  // "Share Photos" bukan "Connect Google Drive". Ini adalah SHARE INTENT, bukan connect beneran.
+  // v4.7.3: Google Drive auto-upload via native SAF plugin (DriveBackupPlugin).
+  // Port dari Saatiril-Andro DriveBackupManager — pakai Storage Access Framework.
+  // User tap "Connect" → SAF folder picker → pilih folder Google Drive →
+  // URI persisted → auto-upload setiap foto ke folder tersebut.
   googleDrive: {
     connect: async () => {
-      // v4.7.2: Share intent — user pilih app (Google Drive, WhatsApp, dll) di share sheet
       try {
-        const uri = await Filesystem.getUri({ path: PUBLIC_ROOT_FOLDER, directory: PUBLIC_STORAGE_DIR })
-        await Share.share({
-          title: 'Backup ARAY Photos',
-          text: 'Upload folder ARAY ke Google Drive atau app lain untuk backup',
-          url: uri.uri,
-          dialogTitle: 'Pilih app untuk backup (Google Drive, WhatsApp, dll)'
+        const result = await DriveBackup.pickFolder()
+        // Simpan URI ke settings supaya UI tahu connected
+        await updateSettings({
+          backup_folder: result.uri,
+          google_drive_connected: true,
+          google_drive_email: 'Google Drive (SAF)'
         })
-        return { connected: false, message: 'Pilih app di share sheet untuk backup. Untuk Google Drive: pilih "Google Drive" → upload.' }
+        console.log('[ARAY] Google Drive folder connected:', result.uri)
+        return { connected: true, message: 'Google Drive folder berhasil dihubungkan. Foto akan auto-upload ke folder tersebut.' }
       } catch (e: any) {
-        return { connected: false, message: 'Tidak bisa membuka share sheet: ' + (e?.message || e) + '. Manual: buka app Files → Documents → ARAY → select all → share.' }
+        return { connected: false, message: 'Gagal connect: ' + (e?.message || e) }
       }
     },
-    disconnect: async () => ({ success: true }),
-    status: async () => ({
-      connected: false,
-      folder: null,
-      totalFiles: 0,
-      message: 'Manual backup via Share. Tap "Share Photos" untuk buka share sheet.'
-    })
+    disconnect: async () => {
+      try {
+        await DriveBackup.clearFolder()
+        await updateSettings({
+          backup_folder: null,
+          google_drive_connected: false,
+          google_drive_email: null
+        })
+        return { success: true }
+      } catch (e: any) {
+        return { success: false, error: e?.message }
+      }
+    },
+    status: async () => {
+      try {
+        const result = await DriveBackup.hasFolder()
+        return {
+          connected: result.hasFolder,
+          folder: result.uri || null,
+          totalFiles: 0,
+          message: result.hasFolder ? 'Google Drive connected — auto-upload aktif' : 'Not connected'
+        }
+      } catch {
+        return { connected: false, folder: null, totalFiles: 0, message: 'Not available' }
+      }
+    }
   },
   // v4.7.0: Tambah API share untuk share individual media ke app lain
   share: {

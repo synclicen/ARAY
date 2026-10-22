@@ -29,14 +29,23 @@ export function SettingsPage() {
   const chooseFolder = async () => {
     setBusy(true)
     try {
+      // v4.7.3: Android — pakai SAF folder picker via googleDrive.connect()
+      // User pilih folder Google Drive → URI persisted → auto-upload aktif
+      if ((window as any).aray?.isAndroid) {
+        const result = await window.aray.googleDrive.connect()
+        if ((result as any)?.connected) {
+          alert('Google Drive folder berhasil dihubungkan!\n\nFoto akan otomatis di-upload ke folder tersebut setiap kali capture.\n\nPastikan "Auto backup" di Settings ON untuk mengaktifkan auto-upload.')
+          await loadSettings()
+        } else if ((result as any)?.message) {
+          alert((result as any).message)
+        }
+        return
+      }
+      // Electron — pakai native dialog
       const result = await window.aray.storage.chooseFolder()
-      // v4.6.9: Android returns { canceled: true, message: '...' } — show message to user
       const data: any = (result as any).data || result
       if (data && !data.canceled && data.path) {
         await setStoragePath(data.path)
-      } else if (data && data.message) {
-        // Android: show info message about sandbox storage
-        alert(data.message)
       }
     } catch (e: any) {
       alert('Gagal memilih folder: ' + (e?.message || e))
@@ -81,31 +90,24 @@ export function SettingsPage() {
           </div>
         )}
         <div className="flex items-center gap-3 flex-wrap">
-          {/* v4.7.2: Android — hide "Change folder" (tidak bisa diubah di scoped storage).
-              Tampilkan tombol "Open in Files app" sebagai gantinya. */}
-          {(window as any).aray?.isAndroid ? (
-            <>
-              <ArayButton variant="gold" icon={<Folder className="w-4 h-4" />} onClick={async () => {
-                const result = await window.aray.storage.openFolder()
-                if (!result.success) {
-                  alert('Tidak bisa membuka folder otomatis. Manual: buka app Files → Documents → ARAY')
-                }
-              }}>
-                Open in Files app
-              </ArayButton>
-              <ArayButton variant="ghost" onClick={loadStorageInfo}>
-                Refresh
-              </ArayButton>
-            </>
-          ) : (
-            <>
-              <ArayButton variant="silver" icon={<Folder className="w-4 h-4" />} onClick={chooseFolder} loading={busy}>
-                Change folder
-              </ArayButton>
-              <ArayButton variant="ghost" onClick={loadStorageInfo}>
-                Refresh
-              </ArayButton>
-            </>
+          {/* v4.7.3: Android — "Change folder" sekarang ACTUALLY works via SAF picker.
+              User tap → system folder picker → pilih folder Google Drive →
+              URI persisted → auto-upload aktif. */}
+          <ArayButton variant="silver" icon={<Folder className="w-4 h-4" />} onClick={chooseFolder} loading={busy}>
+            Change folder
+          </ArayButton>
+          <ArayButton variant="ghost" onClick={loadStorageInfo}>
+            Refresh
+          </ArayButton>
+          {(window as any).aray?.isAndroid && (
+            <ArayButton variant="gold" icon={<Folder className="w-4 h-4" />} onClick={async () => {
+              const result = await window.aray.storage.openFolder()
+              if (!result.success) {
+                alert('Tidak bisa membuka folder otomatis. Manual: buka app Files → Documents → ARAY')
+              }
+            }}>
+              Open in Files app
+            </ArayButton>
           )}
         </div>
 

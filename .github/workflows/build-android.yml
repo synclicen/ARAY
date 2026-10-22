@@ -106,10 +106,21 @@ jobs:
           cp android-patches/MainActivity.java "$MAIN_ACTIVITY"
           echo "OK Replaced MainActivity.java with permission-requesting version"
 
+          # v4.7.3: Copy DriveBackupPlugin.java (native SAF plugin for Google Drive auto-upload)
+          DRIVE_PLUGIN="android/app/src/main/java/com/aray/booth/DriveBackupPlugin.java"
+          cp android-patches/DriveBackupPlugin.java "$DRIVE_PLUGIN"
+          echo "OK Copied DriveBackupPlugin.java (SAF Google Drive plugin)"
+
           # Ensure androidx.core dependency in app/build.gradle (Capacitor 6 usually includes it transitively)
           if ! grep -q "androidx.core:core" android/app/build.gradle; then
             echo "  -> Adding androidx.core dependency"
             sed -i '/dependencies {/a \    implementation "androidx.core:core:1.13.1"' android/app/build.gradle
+          fi
+
+          # v4.7.3: Add androidx.documentfile dependency (required by DriveBackupPlugin for SAF)
+          if ! grep -q "androidx.documentfile:documentfile" android/app/build.gradle; then
+            echo "  -> Adding androidx.documentfile:documentfile dependency"
+            sed -i '/dependencies {/a \    implementation "androidx.documentfile:documentfile:1.0.1"' android/app/build.gradle
           fi
 
       - name: Sync Capacitor

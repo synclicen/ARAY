@@ -14,6 +14,11 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // v4.7.3: Register native DriveBackup plugin BEFORE super.onCreate
+        // Plugin uses Android Storage Access Framework (SAF) for Google Drive
+        // auto-upload — same approach as Saatiril-Andro
+        registerPlugin(DriveBackupPlugin.class);
+
         super.onCreate(savedInstanceState);
 
         // Request camera permission at startup — required for getUserMedia() in WebView
@@ -25,9 +30,6 @@ public class MainActivity extends BridgeActivity {
         }
 
         // v4.7.0: Request storage permissions for Documents/ARAY folder access
-        // Android 11+ (API 30+): scoped storage — Documents/ARAY accessible without
-        // special permission via Capacitor Filesystem plugin.
-        // Android 10 and below: request WRITE_EXTERNAL_STORAGE for public Documents.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     != PackageManager.PERMISSION_GRANTED) {
@@ -39,9 +41,6 @@ public class MainActivity extends BridgeActivity {
                     STORAGE_PERMISSION_REQUEST);
             }
         }
-
-        // Note: @capacitor/share and @capacitor/filesystem plugins are auto-registered
-        // by BridgeActivity in Capacitor 6. No manual registerPlugin() needed.
     }
 
     @Override
@@ -56,3 +55,4 @@ public class MainActivity extends BridgeActivity {
         }
     }
 }
+

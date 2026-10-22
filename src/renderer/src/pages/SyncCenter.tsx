@@ -97,115 +97,93 @@ export function SyncCenterPage() {
       )}
 
       {/* Connection status */}
-      {/* v4.7.2: Android — card terpisah yang HONEST tentang backup.
-          Tidak ada "Connect Google Drive" karena tidak bisa connect beneran di Android.
-          Ganti dengan 2 tombol jelas: Share Photos + Open Files app. */}
-      {(window as any).aray?.isAndroid ? (
-        <ArayCard className="p-6">
-          <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-2xl flex items-center justify-center bg-purple-haze-500/15 text-purple-haze-300">
+      {/* v4.7.3: Google Drive card — sekarang ACTUALLY works via SAF.
+          Connect → SAF folder picker → auto-upload setiap foto ke folder tersebut.
+          Disconnect → release URI permission. */}
+      <ArayCard className="p-6">
+        <div className="flex items-start gap-4">
+          <div
+            className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+              settings?.google_drive_connected
+                ? 'bg-green-500/15 text-green-300'
+                : 'bg-silver-200/10 text-silver-400'
+            }`}
+          >
+            {settings?.google_drive_connected ? (
               <Cloud className="w-7 h-7" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold">Backup & Share</h3>
-                <ArayBadge variant="silver">Manual</ArayBadge>
-              </div>
-              <p className="text-silver-400 text-sm mb-3">
-                Foto disimpan di <code className="text-gold-300 text-xs">Documents → ARAY</code>.
-                Android tidak support auto-sync Google Drive. Gunakan tombol di bawah untuk backup manual.
-              </p>
-              <div className="flex flex-col gap-2">
-                <ArayButton variant="gold" onClick={async () => {
-                  // v4.7.2: Pakai share intent — label jelas "Share Photos"
-                  // BUKAN "Connect Google Drive" yang misleading
-                  await window.aray.googleDrive.connect()
-                }}>
-                  Share Photos (to Google Drive, WhatsApp, dll)
-                </ArayButton>
-                <ArayButton variant="silver" onClick={async () => {
-                  const result = await window.aray.storage.openFolder()
-                  if (!result.success) {
-                    alert('Buka manual: app Files → Documents → ARAY')
-                  }
-                }}>
-                  Open in Files app
-                </ArayButton>
-              </div>
-            </div>
+            ) : (
+              <CloudOff className="w-7 h-7" />
+            )}
           </div>
-        </ArayCard>
-      ) : (
-        <ArayCard className="p-6">
-          <div className="flex items-start gap-4">
-            <div
-              className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
-                settings?.google_drive_connected
-                  ? 'bg-green-500/15 text-green-300'
-                  : 'bg-silver-200/10 text-silver-400'
-              }`}
-            >
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
+              <h3 className="text-lg font-semibold">Google Drive</h3>
               {settings?.google_drive_connected ? (
-                <Cloud className="w-7 h-7" />
+                <ArayBadge variant="success">Connected</ArayBadge>
               ) : (
-                <CloudOff className="w-7 h-7" />
+                <ArayBadge variant="silver">Not connected</ArayBadge>
               )}
             </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <h3 className="text-lg font-semibold">Google Drive</h3>
-                {settings?.google_drive_connected ? (
-                  <ArayBadge variant="success">Connected</ArayBadge>
-                ) : (
-                  <ArayBadge variant="silver">Not connected</ArayBadge>
-                )}
-              </div>
-              <p className="text-silver-400 text-sm">
-                {settings?.google_drive_connected
-                  ? `Signed in as ${settings.google_drive_email ?? '(unknown)'}`
+            <p className="text-silver-400 text-sm">
+              {settings?.google_drive_connected
+                ? 'Auto-upload aktif. Setiap foto yang di-capture akan otomatis di-upload ke folder Google Drive yang dipilih.'
+                : (window as any).aray?.isAndroid
+                  ? 'Tap "Connect" untuk pilih folder Google Drive. Foto akan auto-upload ke folder tersebut.'
                   : 'Local-only mode. All captures are saved safely on your drive. Connect Google Drive in Phase 3 for cloud sync.'}
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <ArayButton variant="silver" onClick={async () => {
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <ArayButton
+              variant={settings?.google_drive_connected ? "ghost" : "gold"}
+              onClick={async () => {
                 const result = await window.aray.googleDrive.connect()
                 console.log('[SyncCenter] Connect result:', result)
+                const res: any = result as any
+                if (res?.connected) {
+                  // Auto-enable auto_backup saat connect
+                  await window.aray.settings.update({ auto_backup: true })
+                }
+                await loadSettings()
+              }}
+            >
+              {settings?.google_drive_connected ? 'Change Folder' : 'Connect'}
+            </ArayButton>
+            {settings?.google_drive_connected && (
+              <ArayButton variant="ghost" onClick={async () => {
+                await window.aray.googleDrive.disconnect()
+                await window.aray.settings.update({ auto_backup: false })
                 await loadSettings()
               }}>
-                {settings?.google_drive_connected ? 'Manage' : 'Connect'}
+                Disconnect
               </ArayButton>
-              {settings?.google_drive_connected && (
-                <ArayButton variant="ghost" onClick={async () => {
-                  await window.aray.googleDrive.disconnect()
-                  await loadSettings()
-                }}>
-                  Disconnect
-                </ArayButton>
-              )}
-            </div>
+            )}
           </div>
-        </ArayCard>
-      )}
+        </div>
+      </ArayCard>
 
-      {/* v4.7.2: Android info banner dengan 3 opsi backup jelas */}
-      {(window as any).aray?.isAndroid && (
-        <ArayCard className="p-4 border-purple-haze-500/30">
-          <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-purple-haze-300 shrink-0 mt-0.5" />
-            <div className="text-sm">
-              <p className="font-medium text-purple-haze-100 mb-1">Cara Backup di Android</p>
-              <p className="text-silver-400 mb-2">
-                Foto tersimpan di: <code className="text-gold-300 text-xs">Internal Storage → Documents → ARAY</code>
-              </p>
-              <p className="text-silver-500 text-xs leading-relaxed">
-                <strong className="text-silver-300">Opsi 1:</strong> Tap "Share Photos" → pilih Google Drive di share sheet → upload.<br/>
-                <strong className="text-silver-300">Opsi 2:</strong> Tap "Open in Files app" → select all → share/copy ke Google Drive / PC / flashdisk.<br/>
-                <strong className="text-silver-300">Opsi 3:</strong> Connect HP ke PC via USB → browse Documents → ARAY → copy folder.
-              </p>
-            </div>
+      {/* v4.7.3: Auto-backup toggle — aktif/nonaktifkan auto-upload */}
+      <ArayCard className="p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold mb-1">Auto Backup</h3>
+            <p className="text-silver-400 text-sm">
+              {settings?.google_drive_connected
+                ? 'Otomatis upload setiap foto ke Google Drive setelah capture.'
+                : 'Hubungkan Google Drive terlebih dahulu untuk mengaktifkan auto-upload.'}
+            </p>
           </div>
-        </ArayCard>
-      )}
+          <ArayButton
+            variant={settings?.auto_backup ? "gold" : "silver"}
+            disabled={!settings?.google_drive_connected}
+            onClick={async () => {
+              await window.aray.settings.update({ auto_backup: !settings?.auto_backup })
+              await loadSettings()
+            }}
+          >
+            {settings?.auto_backup ? 'ON' : 'OFF'}
+          </ArayButton>
+        </div>
+      </ArayCard>
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
