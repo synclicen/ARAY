@@ -757,7 +757,15 @@ function generateEventCode() {
 }
 function createEvent(input) {
   const db = loadDB();
-  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const now = Date.now();
+  const existing = db.events.find(
+    (e) => e.name === input.name && e.event_date === (input.event_date || null) && now - new Date(e.created_at).getTime() < 5e3
+  );
+  if (existing) {
+    console.log("[ARAY] createEvent DEDUP \u2014 returning existing:", existing.id);
+    return existing;
+  }
+  const isoNow = (/* @__PURE__ */ new Date()).toISOString();
   const event = {
     id: crypto2.randomUUID(),
     code: generateEventCode(),
@@ -771,8 +779,8 @@ function createEvent(input) {
     google_drive_folder_id: null,
     sync_status: "LOCAL_ONLY",
     status: "active",
-    created_at: now,
-    updated_at: now
+    created_at: isoNow,
+    updated_at: isoNow
   };
   db.events.unshift(event);
   saveDB(db);
