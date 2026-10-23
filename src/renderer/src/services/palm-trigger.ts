@@ -184,6 +184,18 @@ export class PalmTrigger {
   }
 
   /**
+   * v4.7.13: Preload MediaPipe scripts + model (tanpa start detection).
+   * Dipanggil saat greeting screen supaya saat masuk preview, palm trigger
+   * langsung siap tanpa delay loading.
+   */
+  async preload(): Promise<void> {
+    if (this.hands) return  // already initialized
+    console.log('[ARAY Palm v3] Preloading MediaPipe scripts + model...')
+    await this.initialize()
+    console.log('[ARAY Palm v3] Preload complete')
+  }
+
+  /**
    * Start detection. Will auto-initialize if needed.
    * @param video    HTMLVideoElement with camera stream
    * @param _sensitivity  ignored (kept for backward compat — MediaPipe uses 0.3 confidence)

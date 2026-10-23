@@ -332,9 +332,8 @@ export function BoothPage() {
       return
     }
 
-    // Flash effect
-    setLastFlash(true)
-    setTimeout(() => setLastFlash(false), 220)
+    // v4.7.13: Flash effect sudah di-set di runCountdown (sebelum phase=flash)
+    // supaya sync dengan "YAP!" text. Tidak perlu set lagi di sini.
 
     try {
       let sessionId = (window as any).__aray_current_session_id as string | undefined
@@ -696,8 +695,12 @@ export function BoothPage() {
       await sleep(1000)
     }
     setCountdown(0)
+    // v4.7.13: Set flash BEFORE phase change supaya sync dengan "YAP!" text
+    setLastFlash(true)
     setPhase('flash')
     await performCapture(shotToCapture)
+    // Flash off setelah 220ms (sudah di performCapture, tapi pastikan sync)
+    setTimeout(() => setLastFlash(false), 220)
     await sleep(400)
 
     // v4.6.2: If retaking, go back to result. Otherwise continue sequence.
@@ -742,10 +745,21 @@ export function BoothPage() {
     if (phase === 'greeting' && !streamRef.current) {
       startCamera()
       // v4.6.8: Trigger event session lock — grace period 72 jam aktif
-      // untuk prevent lockout kalau license expire mid-acara
       ;(window as any).aray?.license?.startEventSession?.()
+      // v4.7.13: Preload PalmTrigger MediaPipe scripts saat greeting (bukan saat preview)
+      // Supaya saat user masuk preview, palm trigger langsung siap tanpa delay loading
+      if (settings?.palm_trigger && !palmTriggerRef.current) {
+        import('../services/palm-trigger').then(({ PalmTrigger }) => {
+          if (!palmTriggerRef.current && phase === 'greeting') {
+            palmTriggerRef.current = new PalmTrigger()
+            // Preload scripts + model (tidak start detection, cuma load assets)
+            palmTriggerRef.current.preload?.()
+            console.log('[Booth] PalmTrigger preloaded during greeting')
+          }
+        }).catch(() => {})
+      }
     }
-  }, [phase, startCamera])
+  }, [phase, startCamera, settings?.palm_trigger])
 
   // v4.6.8 P2#9: Auto-recover camera saat app resume dari background.
   // Android WebView pause camera saat app background. Saat resume, stream mati
@@ -1101,18 +1115,11 @@ export function BoothPage() {
             exit={{ opacity: 0, scale: 0.96 }}
             className="absolute inset-0 z-10 flex flex-col items-center justify-center"
           >
-            {/* Dark overlay over live camera background */}
-            <div className="absolute inset-0 bg-gradient-to-b from-purple-haze-950/80 via-surface-base/60 to-purple-haze-950/80" />
-            <div
-              className="absolute inset-0 opacity-20 pointer-events-none"
-              style={{
-                backgroundImage:
-                  'radial-gradient(circle at 30% 30%, rgba(123,97,168,0.4) 0%, transparent 50%), radial-gradient(circle at 70% 70%, rgba(212,175,55,0.2) 0%, transparent 45%)'
-              }}
-            />
+            {/* v4.7.13: Simplified overlay — lighter for Android WebView performance */}
+            <div className="absolute inset-0 bg-surface-base/70" />
             <div className="relative z-10 text-center">
-              <ArayLogo size="xl" animated className="mb-8" />
-              <p className="text-silver-300 text-xl italic mb-8">Let's make a memory.</p>
+              <ArayLogo size="md" className="mb-6" />
+              <p className="text-silver-300 text-lg italic mb-6">Let's make a memory.</p>
 
               {/* v4.6.4: Mode selector — hanya tampil jika booth_mode = 'combined'.
                   Photo only / Video only: mode sudah locked, selector hidden. */}
@@ -1330,22 +1337,8 @@ export function BoothPage() {
             {/* "Shot X of Y" info — sekarang digabung dengan shutter button
                 (lihat bottom capture button). Tidak ada teks terpisah lagi. */}
 
-            {!(mode === 'video' && isRecording) && !fullscreenBooth && !palmTriggerActive && (
-              <div className="text-center mb-32">
-                {mode === 'photo' ? (
-                  <p className="text-silver-200 text-2xl font-semibold mb-1">
-                    Ready
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-silver-200 text-2xl font-semibold mb-1">
-                      Ready to record
-                    </p>
-                    <p className="text-silver-400 text-sm italic">Click record to start</p>
-                  </>
-                )}
-              </div>
-            )}
+            {/* v4.7.13: Hapus "Ready" text — tidak perlu, preview sudah jelas.
+                Sebelumnya muncul dengan latar gelap yang terlihat seperti glitch. */}
 
             {mode === 'video' ? (
               isRecording ? (
