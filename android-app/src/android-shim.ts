@@ -211,9 +211,8 @@ async function getLocalFolderPath(): Promise<string | null> {
 }
 
 // v4.7.3: Auto-upload ke Google Drive via SAF plugin.
-// v4.7.6: Pakai enqueueUpload (persistent queue with retry) bukan fire-and-forget.
-// Dipanggil setelah saveComposite/saveCapturedFrame/saveVideo sukses.
-// Jika Google Drive belum connected atau auto_backup off, skip silently.
+// v4.7.8: Langsung upload via uploadFile (synchronous) + update media.sync_status.
+// Tidak pakai queue — lebih simple dan reliable. Retry via sync.start/Sync Now.
 async function autoUploadToDrive(
   localFilePath: string,
   filename: string,
@@ -230,25 +229,61 @@ async function autoUploadToDrive(
     // Can't upload data URL — skip
     if (localFilePath.startsWith('data:')) return
 
-    // v4.7.6: Enqueue upload ke persistent queue (survive app restart)
-    await DriveBackup.enqueueUpload({
+    // v4.7.8: Set sync_status PENDING sebelum upload
+    if (mediaId) {
+      const idx = db.media.findIndex((m:any)=>m.id===mediaId)
+      if (idx !== -1) {
+        db.media[idx].sync_status = 'PENDING'
+        await saveDB(db)
+      }
+    }
+
+    // v4.7.8: Langsung upload via uploadFile (synchronous, reliable)
+    console.log('[ARAY] Uploading to Drive:', filename, 'from', localFilePath.substring(0, 60))
+    const result = await DriveBackup.uploadFile({
       localPath: localFilePath,
       filename: filename,
       projectName: eventName || 'default',
-      mimeType: mimeType,
-      mediaId: mediaId
+      mimeType: mimeType
     })
-    console.log('[ARAY] Enqueued upload to Drive:', filename, '(mediaId:', mediaId + ')')
 
-    // v4.7.6: Trigger processNextUpload — process queue immediately
-    // Process up to 3 items per call supaya tidak block UI terlalu lama
-    for (let i = 0; i < 3; i++) {
-      const result = await DriveBackup.processNextUpload()
-      if (!result.processed) break  // queue empty
-      console.log('[ARAY] Upload processed:', result.filename, 'success:', result.success)
+    if (result.success) {
+      console.log('[ARAY] Upload to Drive SUCCESS:', filename)
+      // Update sync_status to SYNCED
+      if (mediaId) {
+        const db2 = await loadDB()
+        const idx2 = db2.media.findIndex((m:any)=>m.id===mediaId)
+        if (idx2 !== -1) {
+          db2.media[idx2].sync_status = 'SYNCED'
+          db2.media[idx2].uploaded_at = new Date().toISOString()
+          await saveDB(db2)
+        }
+      }
+    } else {
+      console.error('[ARAY] Upload to Drive FAILED:', filename)
+      if (mediaId) {
+        const db2 = await loadDB()
+        const idx2 = db2.media.findIndex((m:any)=>m.id===mediaId)
+        if (idx2 !== -1) {
+          db2.media[idx2].sync_status = 'FAILED'
+          await saveDB(db2)
+        }
+      }
     }
-  } catch (e) {
-    console.error('[ARAY] autoUploadToDrive error:', e)
+  } catch (e: any) {
+    console.error('[ARAY] autoUploadToDrive error:', e?.message || e)
+    // Set sync_status to FAILED
+    if (mediaId) {
+      try {
+        const db2 = await loadDB()
+        const idx2 = db2.media.findIndex((m:any)=>m.id===mediaId)
+        if (idx2 !== -1) {
+          db2.media[idx2].sync_status = 'FAILED'
+          db2.media[idx2].last_error = e?.message || 'Upload error'
+          await saveDB(db2)
+        }
+      } catch {}
+    }
   }
 }
 
@@ -712,58 +747,61 @@ const arayAPI = {
     }
   },
   sync: {
+    // v4.7.8: sync.start = retry upload untuk semua media LOCAL_ONLY + FAILED
     start: async () => {
-      // v4.7.6: Process upload queue
       let backed = 0, failed = 0
-      for (let i = 0; i < 50; i++) {  // process max 50 per call
-        const result = await DriveBackup.processNextUpload()
-        if (!result.processed) break
-        if (result.success) backed++
-        else failed++
+      try {
+        const db = await loadDB()
+        const autoBackup = db.settings?.auto_backup ?? false
+        const backupFolder = db.settings?.backup_folder
+        if (!autoBackup || !backupFolder) {
+          return { success: true, data: { started: true, backed: 0, skipped: 0, failed: 0 } }
+        }
+        // Cari semua media LOCAL_ONLY atau FAILED → retry upload
+        const toUpload = db.media.filter((m:any) =>
+          m.sync_status === 'LOCAL_ONLY' || m.sync_status === 'FAILED'
+        )
+        for (const m of toUpload) {
+          if (!m.original_path || m.original_path.startsWith('data:')) continue
+          const event = db.events.find((e:any)=>e.id===m.event_id)
+          const eventName = event?.name || 'default'
+          const mimeType = m.type === 'video' ? 'video/webm' : 'image/jpeg'
+          try {
+            const result = await DriveBackup.uploadFile({
+              localPath: m.original_path,
+              filename: m.original_path.split('/').pop() || `${m.id}.jpg`,
+              projectName: eventName,
+              mimeType: mimeType
+            })
+            if (result.success) {
+              m.sync_status = 'SYNCED'
+              m.uploaded_at = new Date().toISOString()
+              backed++
+            } else {
+              m.sync_status = 'FAILED'
+              failed++
+            }
+          } catch (e) {
+            m.sync_status = 'FAILED'
+            failed++
+          }
+        }
+        await saveDB(db)
+      } catch (e: any) {
+        console.error('[ARAY] sync.start error:', e)
       }
       return { success: true, data: { started: true, backed, skipped: 0, failed } }
     },
     pause: async () => ({ paused: true }),
     resume: async () => {
-      let backed = 0, failed = 0
-      for (let i = 0; i < 50; i++) {
-        const result = await DriveBackup.processNextUpload()
-        if (!result.processed) break
-        if (result.success) backed++
-        else failed++
-      }
-      return { resumed: true, backed, skipped: 0, failed }
+      return arayAPI.sync.start()
     },
     retry: async () => {
-      // v4.7.6: Retry all failed uploads
-      await DriveBackup.retryAllFailed()
-      let backed = 0, failed = 0
-      for (let i = 0; i < 50; i++) {
-        const result = await DriveBackup.processNextUpload()
-        if (!result.processed) break
-        if (result.success) backed++
-        else failed++
-      }
-      return { retrying: true, backed, skipped: 0, failed }
+      return arayAPI.sync.start()
     },
+    // v4.7.8: summary pakai media.stats() langsung (sync_status based, reliable)
     summary: async (eventId?: string) => {
-      const stats = await arayAPI.media.stats(eventId)
-      // v4.7.6: Merge with upload queue stats
-      try {
-        const queueStats = await DriveBackup.getUploadStats()
-        return {
-          success: true,
-          data: {
-            total: stats.data.total,
-            synced: Math.max(0, stats.data.total - queueStats.queueSize),
-            pending: queueStats.pending,
-            failed: queueStats.failed,
-            uploading: queueStats.uploading
-          }
-        }
-      } catch {
-        return stats
-      }
+      return arayAPI.media.stats(eventId)
     }
   },
   fs: {
@@ -806,46 +844,57 @@ if (typeof document !== 'undefined') {
   })
 }
 
-// v4.7.6: Background upload queue processor — process queue every 5 seconds.
-// Ini memastikan semua foto pada akhirnya ter-upload ke Google Drive, bahkan
-// kalau autoUploadToDrive saat capture hanya process 3 items. Untuk 5000 peserta,
-// queue bisa backlog ratusan items — processor ini akan drain pelan-pelan.
-let _uploadProcessorRunning = false
-async function startUploadProcessor() {
-  if (_uploadProcessorRunning) return
-  _uploadProcessorRunning = true
+// v4.7.8: Background retry processor — retry FAILED/LOCAL_ONLY uploads every 10 seconds.
+// Tidak pakai queue — langsung retry upload via DriveBackup.uploadFile + update sync_status.
+let _retryProcessorRunning = false
+async function startRetryProcessor() {
+  if (_retryProcessorRunning) return
+  _retryProcessorRunning = true
 
   async function tick() {
     try {
-      // Cek apakah Drive connected + auto_backup on
       const db = await loadDB()
       const autoBackup = db.settings?.auto_backup ?? false
       const backupFolder = db.settings?.backup_folder
       if (autoBackup && backupFolder) {
-        // Process up to 10 items per tick
-        for (let i = 0; i < 10; i++) {
-          const result = await DriveBackup.processNextUpload()
-          if (!result.processed) break  // queue empty
-          if (result.success) {
-            console.log('[ARAY] Background upload SUCCESS:', result.filename)
-          } else {
-            console.warn('[ARAY] Background upload FAILED:', result.filename, result.error)
-            break  // stop jika gagal — akan di-retry tick berikutnya
+        // Cari media LOCAL_ONLY atau FAILED → retry upload (max 5 per tick)
+        const toRetry = db.media.filter((m:any) =>
+          (m.sync_status === 'LOCAL_ONLY' || m.sync_status === 'FAILED') &&
+          m.original_path && !m.original_path.startsWith('data:')
+        ).slice(0, 5)
+
+        for (const m of toRetry) {
+          try {
+            const event = db.events.find((e:any)=>e.id===m.event_id)
+            const eventName = event?.name || 'default'
+            const mimeType = m.type === 'video' ? 'video/webm' : 'image/jpeg'
+            const result = await DriveBackup.uploadFile({
+              localPath: m.original_path,
+              filename: m.original_path.split('/').pop() || `${m.id}.jpg`,
+              projectName: eventName,
+              mimeType: mimeType
+            })
+            if (result.success) {
+              m.sync_status = 'SYNCED'
+              m.uploaded_at = new Date().toISOString()
+              console.log('[ARAY] Background retry SUCCESS:', m.id)
+            }
+          } catch (e) {
+            // skip — will retry next tick
           }
         }
+        if (toRetry.length > 0) await saveDB(db)
       }
     } catch (e) {
-      console.error('[ARAY] Upload processor error:', e)
+      console.error('[ARAY] Retry processor error:', e)
     }
-    // Schedule next tick — 5 detik
-    setTimeout(tick, 5000)
+    setTimeout(tick, 10000)  // 10 detik
   }
   tick()
 }
 
-// Start upload processor after 2 seconds (let app initialize first)
 if (typeof window !== 'undefined') {
-  setTimeout(startUploadProcessor, 2000)
+  setTimeout(startRetryProcessor, 3000)  // start after 3s
 }
 
 export {}
