@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Plus,
@@ -253,9 +253,12 @@ function CreateEventModal({
   const [eventDate, setEventDate] = useState('')
   const [operator, setOperator] = useState('')
   const [busy, setBusy] = useState(false)
+  const submittingRef = useRef(false)  // v4.7.16: sync guard — prevent double-submit
 
   const submit = async () => {
     if (!name.trim()) return
+    if (submittingRef.current) return  // already submitting — block
+    submittingRef.current = true
     setBusy(true)
     try {
       await onCreate({
@@ -267,6 +270,7 @@ function CreateEventModal({
       })
     } finally {
       setBusy(false)
+      submittingRef.current = false
     }
   }
 

@@ -369,6 +369,18 @@ const arayAPI = {
   events: {
     create: async (input: any) => {
       const db = await loadDB()
+      // v4.7.16: Dedup — cek apakah event dengan nama + date yang sama sudah ada
+      // (dibuat dalam 5 detik terakhir). Prevent double-create dari race condition.
+      const now = Date.now()
+      const existing = db.events.find((e:any) =>
+        e.name === input.name &&
+        e.event_date === (input.event_date||null) &&
+        (now - new Date(e.created_at).getTime()) < 5000
+      )
+      if (existing) {
+        console.log('[ARAY] events.create DEDUP — returning existing event:', existing.id)
+        return { success: true, data: existing }
+      }
       const ev = { id: crypto.randomUUID(),
         code: `ARAY_EVENT_${new Date().getFullYear()}_${String(db.events.length+1).padStart(4,'0')}`,
         name: input.name, client: input.client||null, venue: input.venue||null,
@@ -378,6 +390,7 @@ const arayAPI = {
         created_at: new Date().toISOString(), updated_at: new Date().toISOString()
       }
       db.events.unshift(ev); await saveDB(db)
+      console.log('[ARAY] events.create OK:', ev.name, ev.id)
       return { success: true, data: ev }
     },
     list: async () => { const db = await loadDB(); return { success: true, data: db.events }},

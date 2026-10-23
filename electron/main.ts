@@ -427,14 +427,25 @@ function generateEventCode(): string {
 
 function createEvent(input: any) {
   const db = loadDB()
-  const now = new Date().toISOString()
+  // v4.7.16: Dedup — prevent double-create dari race condition
+  const now = Date.now()
+  const existing = db.events.find((e: any) =>
+    e.name === input.name &&
+    e.event_date === (input.event_date || null) &&
+    (now - new Date(e.created_at).getTime()) < 5000
+  )
+  if (existing) {
+    console.log('[ARAY] createEvent DEDUP — returning existing:', existing.id)
+    return existing
+  }
+  const isoNow = new Date().toISOString()
   const event = {
     id: crypto.randomUUID(), code: generateEventCode(), name: input.name,
     client: input.client || null, venue: input.venue || null,
     event_date: input.event_date || null, operator: input.operator || null,
     template_id: input.template_id || null,
     storage_path: '', google_drive_folder_id: null, sync_status: 'LOCAL_ONLY',
-    status: 'active', created_at: now, updated_at: now
+    status: 'active', created_at: isoNow, updated_at: isoNow
   }
   db.events.unshift(event); saveDB(db)
   ensureEventStorage(event); saveDB(loadDB())
