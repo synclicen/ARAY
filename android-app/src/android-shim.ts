@@ -140,7 +140,7 @@ async function isFilesystemAvailable(): Promise<boolean> {
 
 // v4.7.5: writeFileToFS — pakai native DocumentFile.saveLocalFile
 // Returns: { path, isFilesystem } — path is document URI (for readLocalFile)
-async function writeFileToFS(filename: string, base64Data: string, eventId: string): Promise<{ path: string; isFilesystem: boolean }> {
+async function writeFileToFS(filename: string, base64Data: string, subfolder: string): Promise<{ path: string; isFilesystem: boolean }> {
   // Strip data: prefix if present
   const cleanBase64 = base64Data.startsWith('data:') ? base64Data.split(',')[1] : base64Data
 
@@ -151,7 +151,7 @@ async function writeFileToFS(filename: string, base64Data: string, eventId: stri
       const result = await DriveBackup.saveLocalFile({
         base64Data: cleanBase64,
         filename: filename,
-        subfolder: eventId,
+        subfolder: subfolder,
         mimeType: mimeType
       })
       if (result.success) {
@@ -208,6 +208,59 @@ async function getLocalFolderPath(): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+// v4.7.12: Helper functions — port dari Electron untuk naming consistency
+// sanitizeFilename: strip invalid chars, replace spaces with -, max 80 chars
+function sanitizeFilename(name: string): string {
+  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80) || 'Untitled'
+}
+
+// buildEventFolderName: <EventName>_<YYYY-MM-DD>
+function buildEventFolderName(event: any): string {
+  const parts: string[] = []
+  if (event.name) parts.push(sanitizeFilename(event.name))
+  else parts.push('Untitled-Event')
+  if (event.event_date) {
+    const d = new Date(event.event_date)
+    if (!isNaN(d.getTime())) {
+      parts.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`)
+    }
+  }
+  return parts.join('_')
+}
+
+// getDateStr: YYYY-MM-DD dari event atau today
+function getDateStr(event: any): string {
+  if (event.event_date) {
+    const d = new Date(event.event_date)
+    if (!isNaN(d.getTime())) {
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+    }
+  }
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`
+}
+
+// getSequenceNumber: cari nomor urut berikutnya berdasarkan media yang sudah ada
+function getSequenceNumber(eventId: string, type: string): number {
+  const db = loadDB_cached()
+  const eventMedia = db.media.filter((m:any) => m.event_id === eventId && m.type === type)
+  return eventMedia.length + 1
+}
+
+// Helper: load DB from cache (sync version for getSequenceNumber)
+function loadDB_cached(): any {
+  return _dbCache || { events: [], sessions: [], media: [], settings: {} }
+}
+
+// buildFilename: <EventName>_<DateStr>_<001>.jpg
+function buildFilename(event: any, type: 'photo' | 'video', ext: string = 'jpg'): string {
+  const eventName = sanitizeFilename(event.name || 'ARAY')
+  const dateStr = getDateStr(event)
+  const seq = getSequenceNumber(event.id, type)
+  const extFinal = type === 'video' ? 'webm' : ext
+  return `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.${extFinal}`
 }
 
 // v4.7.10: Direct upload ke Google Drive — synchronous, surface error ke user.
@@ -490,8 +543,11 @@ const arayAPI = {
       try {
         const db = await loadDB()
         const mediaId = crypto.randomUUID()
-        const filename = `${mediaId}.jpg`
-        const { path: filePath } = await writeFileToFS(filename, p.frame_base64, p.event_id)
+        const event = db.events.find((e:any)=>e.id===p.event_id)
+        // v4.7.12: Electron-style filename
+        const filename = buildFilename(event, 'photo')
+        const subfolder = buildEventFolderName(event)
+        const { path: filePath } = await writeFileToFS(filename, p.frame_base64, subfolder)
         const m = {
           id: mediaId,
           event_id: p.event_id,
@@ -507,10 +563,8 @@ const arayAPI = {
           uploaded_at: null
         }
         db.media.unshift(m); await saveDB(db)
-        console.log('[ARAY] saveCapturedFrame OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
-        // v4.7.3: Auto-upload ke Google Drive (jika connected + auto_backup on)
-        const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
-        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg', mediaId)
+        console.log('[ARAY] saveCapturedFrame OK:', filename)
+        autoUploadToDrive(filePath, filename, subfolder, 'image/jpeg', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveCapturedFrame failed:', e)
@@ -521,8 +575,11 @@ const arayAPI = {
       try {
         const db = await loadDB()
         const mediaId = crypto.randomUUID()
-        const filename = `${mediaId}.webm`
-        const { path: filePath } = await writeFileToFS(filename, p.video_base64, p.event_id)
+        const event = db.events.find((e:any)=>e.id===p.event_id)
+        // v4.7.12: Electron-style filename
+        const filename = buildFilename(event, 'video')
+        const subfolder = buildEventFolderName(event)
+        const { path: filePath } = await writeFileToFS(filename, p.video_base64, subfolder)
         const m = {
           id: mediaId,
           event_id: p.event_id,
@@ -538,10 +595,8 @@ const arayAPI = {
           uploaded_at: null
         }
         db.media.unshift(m); await saveDB(db)
-        console.log('[ARAY] saveVideo OK — media id:', mediaId)
-        // v4.7.3: Auto-upload ke Google Drive
-        const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
-        autoUploadToDrive(filePath, filename, eventName, 'video/webm', mediaId)
+        console.log('[ARAY] saveVideo OK:', filename)
+        autoUploadToDrive(filePath, filename, subfolder, 'video/webm', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveVideo failed:', e)
@@ -552,8 +607,11 @@ const arayAPI = {
       try {
         const db = await loadDB()
         const mediaId = crypto.randomUUID()
-        const filename = `${mediaId}.jpg`
-        const { path: filePath } = await writeFileToFS(filename, p.image_base64, p.event_id)
+        const event = db.events.find((e:any)=>e.id===p.event_id)
+        // v4.7.12: Electron-style filename
+        const filename = buildFilename(event, 'photo')
+        const subfolder = buildEventFolderName(event)
+        const { path: filePath } = await writeFileToFS(filename, p.image_base64, subfolder)
         const m = {
           id: mediaId,
           event_id: p.event_id,
@@ -570,10 +628,8 @@ const arayAPI = {
           processed_path: filePath
         }
         db.media.unshift(m); await saveDB(db)
-        console.log('[ARAY] saveComposite OK — media id:', mediaId, 'path:', filePath.substring(0, 60))
-        // v4.7.3: Auto-upload ke Google Drive
-        const eventName = db.events.find((e:any)=>e.id===p.event_id)?.name || 'default'
-        autoUploadToDrive(filePath, filename, eventName, 'image/jpeg', mediaId)
+        console.log('[ARAY] saveComposite OK:', filename)
+        autoUploadToDrive(filePath, filename, subfolder, 'image/jpeg', mediaId)
         return { success: true, data: m }
       } catch (e: any) {
         console.error('[ARAY] saveComposite failed:', e)
@@ -765,13 +821,14 @@ const arayAPI = {
         console.log('[ARAY] Sync Now — retrying', toUpload.length, 'items')
         for (const m of toUpload) {
           const event = db.events.find((e:any)=>e.id===m.event_id)
-          const eventName = event?.name || 'default'
+          const subfolder = buildEventFolderName(event)
           const mimeType = m.type === 'video' ? 'video/webm' : 'image/jpeg'
-          const filename = m.original_path.split('/').pop() || `${m.id}.jpg`
+          // v4.7.12: Use original filename (already Electron-style from save)
+          const filename = m.original_path.split('%2F').pop()?.split('/').pop() || `${m.id}.jpg`
           const result = await DriveBackup.uploadFile({
             localPath: m.original_path,
             filename: filename,
-            projectName: eventName,
+            projectName: subfolder,
             mimeType: mimeType
           })
           if (result.success) {
@@ -860,13 +917,13 @@ async function startRetryProcessor() {
 
         for (const m of toRetry) {
           const event = db.events.find((e:any)=>e.id===m.event_id)
-          const eventName = event?.name || 'default'
+          const subfolder = buildEventFolderName(event)
           const mimeType = m.type === 'video' ? 'video/webm' : 'image/jpeg'
-          const filename = m.original_path.split('/').pop() || `${m.id}.jpg`
+          const filename = m.original_path.split('%2F').pop()?.split('/').pop() || `${m.id}.jpg`
           const result = await DriveBackup.uploadFile({
             localPath: m.original_path,
             filename: filename,
-            projectName: eventName,
+            projectName: subfolder,
             mimeType: mimeType
           })
           if (result.success) {
