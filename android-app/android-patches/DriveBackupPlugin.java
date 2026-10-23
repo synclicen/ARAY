@@ -1,9 +1,13 @@
 package com.aray.booth;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.database.Cursor;
 import android.net.Uri;
 import android.util.Base64;
 import android.util.Log;
@@ -23,14 +27,15 @@ import java.io.OutputStream;
 /**
  * ARAY Storage Plugin — Native Android Storage Access Framework (SAF).
  *
- * Port dari Saatiril-Andro DriveBackupManager.kt
+ * Port dari Saatiril-Andro DriveBackupManager.kt + UploadQueueStore.kt
+ *
+ * v4.7.9: SQLite-backed upload queue (bukan SharedPreferences) — reliable,
+ * survive app restart, support retry with backoff.
  *
  * DUA fungsi utama:
  * 1. LOCAL STORAGE — user pilih folder di HP untuk simpan foto lokal
  * 2. GOOGLE DRIVE BACKUP — user pilih folder Google Drive untuk auto-upload
- *
- * v4.7.6: Folder structure match Electron — Events/<EventName>/Photos/ dan Videos/
- * v4.7.6: Upload queue dengan retry — failed uploads di-retry otomatis
+ *    dengan SQLite queue + retry
  */
 @CapacitorPlugin(name = "DriveBackup")
 public class DriveBackupPlugin extends Plugin {
@@ -38,9 +43,187 @@ public class DriveBackupPlugin extends Plugin {
     private static final String PREFS_NAME = "aray_drive_prefs";
     private static final String KEY_DRIVE_URI = "backup_folder_uri";
     private static final String KEY_LOCAL_URI = "local_folder_uri";
-    private static final String KEY_UPLOAD_QUEUE = "upload_queue";
     private static final String MIME_JPEG = "image/jpeg";
     private static final String MIME_VIDEO = "video/webm";
+
+    private UploadQueueDb queueDb;
+
+    @Override
+    public void load() {
+        super.load();
+        // Initialize SQLite queue database
+        try {
+            queueDb = new UploadQueueDb(getContext());
+            Log.i(TAG, "Upload queue database initialized");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to init upload queue DB: " + e.getMessage(), e);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SQLite Upload Queue (port dari Saatiril-Andro UploadQueueStore.kt)
+    // ════════════════════════════════════════════════════════════════════════
+
+    private static class UploadQueueDb extends SQLiteOpenHelper {
+        private static final String DB_NAME = "aray_upload_queue.db";
+        private static final int DB_VERSION = 1;
+        private static final String TABLE = "upload_queue";
+        private static final String COL_ID = "id";
+        private static final String COL_FILENAME = "filename";
+        private static final String COL_LOCAL_URI = "local_uri";
+        private static final String COL_PROJECT_NAME = "project_name";
+        private static final String COL_MIME_TYPE = "mime_type";
+        private static final String COL_STATUS = "status";
+        private static final String COL_RETRY_COUNT = "retry_count";
+        private static final String COL_CREATED_AT = "created_at";
+        private static final String COL_UPLOADED_AT = "uploaded_at";
+        private static final String COL_ERROR = "error";
+
+        static final String STATUS_PENDING = "pending";
+        static final String STATUS_UPLOADING = "uploading";
+        static final String STATUS_DONE = "done";
+        static final String STATUS_FAILED = "failed";
+
+        private static final int MAX_RETRIES = 5;
+
+        UploadQueueDb(Context context) {
+            super(context, DB_NAME, null, DB_VERSION);
+            getReadableDatabase(); // trigger onCreate
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE " + TABLE + " (" +
+                    COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT," +
+                    COL_FILENAME + " TEXT NOT NULL," +
+                    COL_LOCAL_URI + " TEXT NOT NULL," +
+                    COL_PROJECT_NAME + " TEXT NOT NULL," +
+                    COL_MIME_TYPE + " TEXT NOT NULL DEFAULT 'image/jpeg'," +
+                    COL_STATUS + " TEXT NOT NULL DEFAULT '" + STATUS_PENDING + "'," +
+                    COL_RETRY_COUNT + " INTEGER NOT NULL DEFAULT 0," +
+                    COL_CREATED_AT + " INTEGER NOT NULL," +
+                    COL_UPLOADED_AT + " INTEGER," +
+                    COL_ERROR + " TEXT)");
+            db.execSQL("CREATE INDEX idx_status ON " + TABLE + " (" + COL_STATUS + ")");
+            db.execSQL("CREATE INDEX idx_project ON " + TABLE + " (" + COL_PROJECT_NAME + ")");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            // Future migrations
+        }
+
+        long enqueue(String filename, String localUri, String projectName, String mimeType) {
+            ContentValues values = new ContentValues();
+            values.put(COL_FILENAME, filename);
+            values.put(COL_LOCAL_URI, localUri);
+            values.put(COL_PROJECT_NAME, projectName);
+            values.put(COL_MIME_TYPE, mimeType);
+            values.put(COL_STATUS, STATUS_PENDING);
+            values.put(COL_RETRY_COUNT, 0);
+            values.put(COL_CREATED_AT, System.currentTimeMillis());
+            long id = getWritableDatabase().insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE);
+            Log.i(TAG, "Enqueued: " + filename + " (id=" + id + ")");
+            return id;
+        }
+
+        Cursor dequeueCursor() {
+            return getReadableDatabase().query(TABLE, null,
+                    COL_STATUS + " = ?", new String[]{STATUS_PENDING},
+                    null, null, COL_ID + " ASC", "1");
+        }
+
+        void markUploading(long id) {
+            ContentValues values = new ContentValues();
+            values.put(COL_STATUS, STATUS_UPLOADING);
+            getWritableDatabase().update(TABLE, values, COL_ID + " = ?", new String[]{String.valueOf(id)});
+        }
+
+        void markDone(long id) {
+            ContentValues values = new ContentValues();
+            values.put(COL_STATUS, STATUS_DONE);
+            values.put(COL_UPLOADED_AT, System.currentTimeMillis());
+            getWritableDatabase().delete(TABLE, COL_ID + " = ?", new String[]{String.valueOf(id)});
+        }
+
+        void markFailed(long id, String error) {
+            Cursor cursor = getReadableDatabase().query(TABLE, new String[]{COL_RETRY_COUNT},
+                    COL_ID + " = ?", new String[]{String.valueOf(id)},
+                    null, null, null);
+            int retryCount = 0;
+            if (cursor != null && cursor.moveToFirst()) {
+                retryCount = cursor.getInt(0);
+                cursor.close();
+            }
+            ContentValues values = new ContentValues();
+            values.put(COL_ERROR, error);
+            if (retryCount + 1 >= MAX_RETRIES) {
+                values.put(COL_STATUS, STATUS_FAILED);
+                values.put(COL_RETRY_COUNT, retryCount + 1);
+            } else {
+                values.put(COL_STATUS, STATUS_PENDING);
+                values.put(COL_RETRY_COUNT, retryCount + 1);
+            }
+            getWritableDatabase().update(TABLE, values, COL_ID + " = ?", new String[]{String.valueOf(id)});
+        }
+
+        void resetStuckItems() {
+            ContentValues values = new ContentValues();
+            values.put(COL_STATUS, STATUS_PENDING);
+            int count = getWritableDatabase().update(TABLE, values,
+                    COL_STATUS + " = ?", new String[]{STATUS_UPLOADING});
+            if (count > 0) Log.i(TAG, "Reset " + count + " stuck UPLOADING items");
+        }
+
+        void retryAllFailed() {
+            ContentValues values = new ContentValues();
+            values.put(COL_STATUS, STATUS_PENDING);
+            values.put(COL_RETRY_COUNT, 0);
+            values.putNull(COL_ERROR);
+            int count = getWritableDatabase().update(TABLE, values,
+                    COL_STATUS + " = ?", new String[]{STATUS_FAILED});
+            Log.i(TAG, "Retried " + count + " failed uploads");
+        }
+
+        int countByStatus(String status) {
+            Cursor cursor = getReadableDatabase().rawQuery(
+                    "SELECT COUNT(*) FROM " + TABLE + " WHERE " + COL_STATUS + " = ?",
+                    new String[]{status});
+            int count = 0;
+            if (cursor != null && cursor.moveToFirst()) {
+                count = cursor.getInt(0);
+                cursor.close();
+            }
+            return count;
+        }
+
+        int getTotalUploaded() {
+            // Track via separate counter table (like Saatiril)
+            try {
+                Cursor cursor = getReadableDatabase().rawQuery(
+                        "SELECT count FROM upload_counter WHERE type = 'uploaded'", null);
+                int count = 0;
+                if (cursor != null && cursor.moveToFirst()) {
+                    count = cursor.getInt(0);
+                    cursor.close();
+                }
+                return count;
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+
+        void incrementUploaded() {
+            try {
+                getWritableDatabase().execSQL(
+                        "CREATE TABLE IF NOT EXISTS upload_counter (type TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)");
+                getWritableDatabase().execSQL(
+                        "INSERT OR REPLACE INTO upload_counter (type, count) VALUES ('uploaded', COALESCE((SELECT count FROM upload_counter WHERE type='uploaded'), 0) + 1)");
+            } catch (Exception e) {
+                Log.w(TAG, "incrementUploaded error: " + e.getMessage());
+            }
+        }
+    }
 
     // ════════════════════════════════════════════════════════════════════════
     // LOCAL STORAGE
@@ -96,16 +279,6 @@ public class DriveBackupPlugin extends Plugin {
     @PluginMethod
     public void clearLocalFolder(PluginCall call) {
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String uriStr = prefs.getString(KEY_LOCAL_URI, null);
-        if (uriStr != null) {
-            try {
-                Uri uri = Uri.parse(uriStr);
-                int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
-                getContext().getContentResolver().releasePersistableUriPermission(uri, flags);
-            } catch (Exception e) {
-                Log.w(TAG, "Could not release permission: " + e.getMessage());
-            }
-        }
         prefs.edit().remove(KEY_LOCAL_URI).apply();
         call.resolve();
     }
@@ -137,24 +310,21 @@ public class DriveBackupPlugin extends Plugin {
                 return;
             }
 
-            // v4.7.6: Structure match Electron — Events/<EventName>/Photos/ or Videos/
+            // Structure: Events/<EventName>/Photos/ or Videos/
             DocumentFile parentFolder = rootDocFile;
             if (subfolder != null && !subfolder.isEmpty()) {
                 String sanitizedName = subfolder.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
                 if (!sanitizedName.isEmpty()) {
-                    // Create Events/ subfolder
                     DocumentFile eventsFolder = rootDocFile.findFile("Events");
                     if (eventsFolder == null || !eventsFolder.isDirectory()) {
                         eventsFolder = rootDocFile.createDirectory("Events");
                     }
                     if (eventsFolder != null) {
-                        // Create Events/<EventName>/ subfolder
                         DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
                         if (eventFolder == null || !eventFolder.isDirectory()) {
                             eventFolder = eventsFolder.createDirectory(sanitizedName);
                         }
                         if (eventFolder != null) {
-                            // Create Events/<EventName>/Photos/ or Videos/ subfolder
                             String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
                             DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
                             if (typeFolder == null || !typeFolder.isDirectory()) {
@@ -304,7 +474,7 @@ public class DriveBackupPlugin extends Plugin {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // GOOGLE DRIVE BACKUP — with upload queue + retry
+    // GOOGLE DRIVE BACKUP — SQLite queue + reliable processNext
     // ════════════════════════════════════════════════════════════════════════
 
     @PluginMethod
@@ -357,16 +527,6 @@ public class DriveBackupPlugin extends Plugin {
     @PluginMethod
     public void clearFolder(PluginCall call) {
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String uriStr = prefs.getString(KEY_DRIVE_URI, null);
-        if (uriStr != null) {
-            try {
-                Uri uri = Uri.parse(uriStr);
-                int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
-                getContext().getContentResolver().releasePersistableUriPermission(uri, flags);
-            } catch (Exception e) {
-                Log.w(TAG, "Could not release permission: " + e.getMessage());
-            }
-        }
         prefs.edit().remove(KEY_DRIVE_URI).apply();
         call.resolve();
     }
@@ -382,23 +542,19 @@ public class DriveBackupPlugin extends Plugin {
     }
 
     /**
-     * v4.7.6: Enqueue upload — simpan ke persistent queue, return immediately.
-     * Upload akan di-process oleh processNextUpload() yang dipanggil secara periodic.
-     * Queue survive app restart (SharedPreferences).
-     *
-     * @param localPath   document URI of local file
-     * @param filename    filename to use in Drive
-     * @param projectName event name (for subfolder)
-     * @param mimeType    "image/jpeg" or "video/webm"
-     * @param mediaId     unique ID for tracking (stored in queue)
+     * v4.7.9: Enqueue upload ke SQLite queue. Return immediately.
+     * Upload di-process oleh processNextUpload() yang dipanggil periodic.
      */
     @PluginMethod
     public void enqueueUpload(PluginCall call) {
+        if (queueDb == null) {
+            call.reject("Queue database not initialized");
+            return;
+        }
         String localPath = call.getString("localPath");
         String filename = call.getString("filename");
         String projectName = call.getString("projectName", "default");
         String mimeType = call.getString("mimeType", MIME_JPEG);
-        String mediaId = call.getString("mediaId", "");
 
         if (localPath == null || filename == null) {
             call.reject("localPath and filename required");
@@ -406,29 +562,11 @@ public class DriveBackupPlugin extends Plugin {
         }
 
         try {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String queueStr = prefs.getString(KEY_UPLOAD_QUEUE, "[]");
-            JSONArray queue = new JSONArray(queueStr);
-
-            JSONObject item = new JSONObject();
-            item.put("id", mediaId != null && !mediaId.isEmpty() ? mediaId : "upload_" + System.currentTimeMillis());
-            item.put("localPath", localPath);
-            item.put("filename", filename);
-            item.put("projectName", projectName);
-            item.put("mimeType", mimeType);
-            item.put("status", "PENDING");
-            item.put("attempts", 0);
-            item.put("lastError", "");
-            item.put("createdAt", System.currentTimeMillis());
-
-            queue.put(item);
-            prefs.edit().putString(KEY_UPLOAD_QUEUE, queue.toString()).apply();
-
-            Log.i(TAG, "Enqueued upload: " + filename + " (queue size: " + queue.length() + ")");
-
+            long id = queueDb.enqueue(filename, localPath, projectName, mimeType);
             JSObject ret = new JSObject();
             ret.put("success", true);
-            ret.put("queueSize", queue.length());
+            ret.put("id", id);
+            ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
             call.resolve(ret);
         } catch (Exception e) {
             Log.e(TAG, "enqueueUpload FAILED: " + e.getMessage(), e);
@@ -437,77 +575,74 @@ public class DriveBackupPlugin extends Plugin {
     }
 
     /**
-     * v4.7.6: Process next upload from queue. Called periodically by JS.
-     * Returns: { processed: true/false, success: true/false, filename, error, queueSize }
+     * v4.7.9: Process next upload from SQLite queue. Reliable — dequeue + upload + mark done/failed.
+     * Returns detail: { processed, success, filename, error, queueSize, totalUploaded }
      */
     @PluginMethod
     public void processNextUpload(PluginCall call) {
+        if (queueDb == null) {
+            call.reject("Queue database not initialized");
+            return;
+        }
         try {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String queueStr = prefs.getString(KEY_UPLOAD_QUEUE, "[]");
-            JSONArray queue = new JSONArray(queueStr);
+            // Reset stuck UPLOADING items first
+            queueDb.resetStuckItems();
 
-            // Find next PENDING item
-            int nextIdx = -1;
-            for (int i = 0; i < queue.length(); i++) {
-                JSONObject item = queue.getJSONObject(i);
-                if ("PENDING".equals(item.getString("status"))) {
-                    nextIdx = i;
-                    break;
-                }
-            }
-
-            if (nextIdx == -1) {
+            // Dequeue next PENDING item
+            Cursor cursor = queueDb.dequeueCursor();
+            if (cursor == null || !cursor.moveToFirst()) {
+                if (cursor != null) cursor.close();
                 JSObject ret = new JSObject();
                 ret.put("processed", false);
-                ret.put("queueSize", queue.length());
+                ret.put("queueSize", 0);
                 call.resolve(ret);
                 return;
             }
 
-            JSONObject item = queue.getJSONObject(nextIdx);
-            String localPath = item.getString("localPath");
-            String filename = item.getString("filename");
-            String projectName = item.getString("projectName");
-            String mimeType = item.getString("mimeType");
-            int attempts = item.optInt("attempts", 0);
+            long id = cursor.getLong(cursor.getColumnIndexOrThrow("id"));
+            String filename = cursor.getString(cursor.getColumnIndexOrThrow("filename"));
+            String localPath = cursor.getString(cursor.getColumnIndexOrThrow("local_uri"));
+            String projectName = cursor.getString(cursor.getColumnIndexOrThrow("project_name"));
+            String mimeType = cursor.getString(cursor.getColumnIndexOrThrow("mime_type"));
+            cursor.close();
 
             // Mark as UPLOADING
-            item.put("status", "UPLOADING");
-            item.put("attempts", attempts + 1);
-            queue.put(nextIdx, item);
-            prefs.edit().putString(KEY_UPLOAD_QUEUE, queue.toString()).apply();
+            queueDb.markUploading(id);
 
             // Attempt upload
-            boolean success = doUpload(localPath, filename, projectName, mimeType);
+            String uploadError = null;
+            boolean success = false;
+            try {
+                success = doUpload(localPath, filename, projectName, mimeType);
+            } catch (Exception e) {
+                uploadError = e.getMessage();
+                Log.e(TAG, "processNextUpload upload exception: " + uploadError, e);
+            }
 
             if (success) {
-                // Remove from queue on success
-                JSONArray newQueue = new JSONArray();
-                for (int i = 0; i < queue.length(); i++) {
-                    if (i != nextIdx) newQueue.put(queue.get(i));
-                }
-                prefs.edit().putString(KEY_UPLOAD_QUEUE, newQueue.toString()).apply();
+                queueDb.markDone(id);
+                queueDb.incrementUploaded();
+                Log.i(TAG, "Upload SUCCESS: " + filename);
 
                 JSObject ret = new JSObject();
                 ret.put("processed", true);
                 ret.put("success", true);
                 ret.put("filename", filename);
-                ret.put("queueSize", newQueue.length());
+                ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
+                ret.put("totalUploaded", queueDb.getTotalUploaded());
                 call.resolve(ret);
             } else {
-                // Mark as FAILED — will be retried by next processNextUpload call
-                item.put("status", "PENDING");
-                item.put("lastError", "Upload failed");
-                queue.put(nextIdx, item);
-                prefs.edit().putString(KEY_UPLOAD_QUEUE, queue.toString()).apply();
+                String error = uploadError != null ? uploadError : "Upload failed (no exception)";
+                queueDb.markFailed(id, error);
+                Log.w(TAG, "Upload FAILED: " + filename + " — " + error);
 
                 JSObject ret = new JSObject();
                 ret.put("processed", true);
                 ret.put("success", false);
                 ret.put("filename", filename);
-                ret.put("error", "Upload failed");
-                ret.put("queueSize", queue.length());
+                ret.put("error", error);
+                ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
+                ret.put("totalUploaded", queueDb.getTotalUploaded());
                 call.resolve(ret);
             }
         } catch (Exception e) {
@@ -518,186 +653,126 @@ public class DriveBackupPlugin extends Plugin {
 
     /**
      * Core upload logic — creates Events/<EventName>/Photos|Videos/<filename> structure.
-     * Match Electron: {backupFolder}/Events/{EventName}/Photos/<filename>
+     * Throws on error so caller can markFailed with detail.
      */
-    private boolean doUpload(String localPath, String filename, String projectName, String mimeType) {
-        try {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String treeUriStr = prefs.getString(KEY_DRIVE_URI, null);
-            if (treeUriStr == null) {
-                Log.e(TAG, "doUpload: no Drive folder set");
-                return false;
-            }
-
-            Uri treeUri = Uri.parse(treeUriStr);
-            DocumentFile rootDocFile = DocumentFile.fromTreeUri(getContext(), treeUri);
-            if (rootDocFile == null || !rootDocFile.canWrite()) {
-                Log.e(TAG, "doUpload: cannot access Drive folder");
-                return false;
-            }
-
-            // v4.7.6: Create Events/ subfolder (match Electron structure)
-            DocumentFile eventsFolder = rootDocFile.findFile("Events");
-            if (eventsFolder == null || !eventsFolder.isDirectory()) {
-                eventsFolder = rootDocFile.createDirectory("Events");
-            }
-            if (eventsFolder == null) {
-                Log.e(TAG, "doUpload: cannot create Events folder");
-                return false;
-            }
-
-            // Create Events/<EventName>/ subfolder
-            String sanitizedName = projectName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
-            if (sanitizedName.isEmpty()) sanitizedName = "default";
-
-            DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
-            if (eventFolder == null || !eventFolder.isDirectory()) {
-                eventFolder = eventsFolder.createDirectory(sanitizedName);
-            }
-            if (eventFolder == null) {
-                Log.e(TAG, "doUpload: cannot create event folder: " + sanitizedName);
-                return false;
-            }
-
-            // Create Events/<EventName>/Photos/ or Videos/ subfolder (match Electron)
-            String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
-            DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
-            if (typeFolder == null || !typeFolder.isDirectory()) {
-                typeFolder = eventFolder.createDirectory(typeSubfolder);
-            }
-            if (typeFolder == null) {
-                Log.e(TAG, "doUpload: cannot create " + typeSubfolder + " folder");
-                return false;
-            }
-
-            // Create file in Drive folder
-            DocumentFile driveFile = typeFolder.createFile(mimeType, filename);
-            if (driveFile == null) {
-                Log.e(TAG, "doUpload: createFile returned null for " + filename);
-                return false;
-            }
-
-            // Copy bytes: local file → Drive document
-            Uri localUri = Uri.parse(localPath);
-            InputStream input = getContext().getContentResolver().openInputStream(localUri);
-            OutputStream output = getContext().getContentResolver().openOutputStream(driveFile.getUri());
-
-            if (input == null || output == null) {
-                Log.e(TAG, "doUpload: cannot open streams");
-                try { driveFile.delete(); } catch (Exception _e) {}
-                return false;
-            }
-
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = input.read(buffer)) > 0) {
-                output.write(buffer, 0, read);
-            }
-            output.flush();
-            input.close();
-            output.close();
-
-            Log.i(TAG, "doUpload SUCCESS: " + filename + " → Events/" + sanitizedName + "/" + typeSubfolder + "/");
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "doUpload FAILED: " + e.getMessage(), e);
-            return false;
+    private boolean doUpload(String localPath, String filename, String projectName, String mimeType) throws Exception {
+        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        String treeUriStr = prefs.getString(KEY_DRIVE_URI, null);
+        if (treeUriStr == null) {
+            throw new Exception("No Drive folder set");
         }
+
+        Uri treeUri = Uri.parse(treeUriStr);
+        DocumentFile rootDocFile = DocumentFile.fromTreeUri(getContext(), treeUri);
+        if (rootDocFile == null) {
+            throw new Exception("Cannot access Drive folder — fromTreeUri returned null");
+        }
+        if (!rootDocFile.canWrite()) {
+            throw new Exception("Drive folder not writable — may need to re-connect");
+        }
+
+        // Create Events/ subfolder
+        DocumentFile eventsFolder = rootDocFile.findFile("Events");
+        if (eventsFolder == null || !eventsFolder.isDirectory()) {
+            eventsFolder = rootDocFile.createDirectory("Events");
+        }
+        if (eventsFolder == null) {
+            throw new Exception("Cannot create Events folder in Drive");
+        }
+
+        // Create Events/<EventName>/ subfolder
+        String sanitizedName = projectName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
+        if (sanitizedName.isEmpty()) sanitizedName = "default";
+
+        DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
+        if (eventFolder == null || !eventFolder.isDirectory()) {
+            eventFolder = eventsFolder.createDirectory(sanitizedName);
+        }
+        if (eventFolder == null) {
+            throw new Exception("Cannot create event folder: " + sanitizedName);
+        }
+
+        // Create Events/<EventName>/Photos/ or Videos/ subfolder
+        String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
+        DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
+        if (typeFolder == null || !typeFolder.isDirectory()) {
+            typeFolder = eventFolder.createDirectory(typeSubfolder);
+        }
+        if (typeFolder == null) {
+            throw new Exception("Cannot create " + typeSubfolder + " folder");
+        }
+
+        // Create file in Drive folder
+        DocumentFile driveFile = typeFolder.createFile(mimeType, filename);
+        if (driveFile == null) {
+            throw new Exception("createFile returned null for " + filename);
+        }
+
+        // Copy bytes: local file → Drive document
+        Uri localUri = Uri.parse(localPath);
+        InputStream input = getContext().getContentResolver().openInputStream(localUri);
+        if (input == null) {
+            try { driveFile.delete(); } catch (Exception _e) {}
+            throw new Exception("Cannot open input stream for: " + localPath);
+        }
+        OutputStream output = getContext().getContentResolver().openOutputStream(driveFile.getUri());
+        if (output == null) {
+            input.close();
+            try { driveFile.delete(); } catch (Exception _e) {}
+            throw new Exception("Cannot open output stream for Drive document");
+        }
+
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = input.read(buffer)) > 0) {
+            output.write(buffer, 0, read);
+        }
+        output.flush();
+        input.close();
+        output.close();
+
+        Log.i(TAG, "doUpload SUCCESS: " + filename + " → Events/" + sanitizedName + "/" + typeSubfolder + "/");
+        return true;
     }
 
     /**
-     * Get upload queue stats — for SyncCenter UI.
+     * Get upload stats — reliable, never throws.
      */
     @PluginMethod
     public void getUploadStats(PluginCall call) {
-        try {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String queueStr = prefs.getString(KEY_UPLOAD_QUEUE, "[]");
-            JSONArray queue = new JSONArray(queueStr);
-
-            int pending = 0, uploading = 0, failed = 0;
-            for (int i = 0; i < queue.length(); i++) {
-                JSONObject item = queue.getJSONObject(i);
-                String status = item.getString("status");
-                if ("PENDING".equals(status)) {
-                    int attempts = item.optInt("attempts", 0);
-                    if (attempts > 0) failed++;
-                    else pending++;
-                } else if ("UPLOADING".equals(status)) {
-                    uploading++;
-                }
-            }
-
-            JSObject ret = new JSObject();
-            ret.put("queueSize", queue.length());
-            ret.put("pending", pending);
-            ret.put("uploading", uploading);
-            ret.put("failed", failed);
+        JSObject ret = new JSObject();
+        if (queueDb == null) {
+            ret.put("queueSize", 0);
+            ret.put("pending", 0);
+            ret.put("uploading", 0);
+            ret.put("failed", 0);
+            ret.put("totalUploaded", 0);
             call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("Stats failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Retry all failed uploads — set status back to PENDING.
-     */
-    @PluginMethod
-    public void retryAllFailed(PluginCall call) {
-        try {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String queueStr = prefs.getString(KEY_UPLOAD_QUEUE, "[]");
-            JSONArray queue = new JSONArray(queueStr);
-
-            int reset = 0;
-            for (int i = 0; i < queue.length(); i++) {
-                JSONObject item = queue.getJSONObject(i);
-                String status = item.getString("status");
-                if ("PENDING".equals(status) && item.optInt("attempts", 0) > 0) {
-                    item.put("status", "PENDING");
-                    item.put("attempts", 0);
-                    item.put("lastError", "");
-                    queue.put(i, item);
-                    reset++;
-                }
-            }
-            prefs.edit().putString(KEY_UPLOAD_QUEUE, queue.toString()).apply();
-
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("reset", reset);
-            call.resolve(ret);
-        } catch (Exception e) {
-            call.reject("Retry failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Remove an item from queue by mediaId (after successful upload from JS side).
-     */
-    @PluginMethod
-    public void removeFromQueue(PluginCall call) {
-        String mediaId = call.getString("mediaId");
-        if (mediaId == null) {
-            call.reject("mediaId required");
             return;
         }
         try {
-            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-            String queueStr = prefs.getString(KEY_UPLOAD_QUEUE, "[]");
-            JSONArray queue = new JSONArray(queueStr);
-
-            JSONArray newQueue = new JSONArray();
-            for (int i = 0; i < queue.length(); i++) {
-                JSONObject item = queue.getJSONObject(i);
-                if (!mediaId.equals(item.optString("id", ""))) {
-                    newQueue.put(item);
-                }
-            }
-            prefs.edit().putString(KEY_UPLOAD_QUEUE, newQueue.toString()).apply();
-            call.resolve();
+            ret.put("pending", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
+            ret.put("uploading", queueDb.countByStatus(UploadQueueDb.STATUS_UPLOADING));
+            ret.put("failed", queueDb.countByStatus(UploadQueueDb.STATUS_FAILED));
+            ret.put("totalUploaded", queueDb.getTotalUploaded());
+            ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING)
+                    + queueDb.countByStatus(UploadQueueDb.STATUS_UPLOADING)
+                    + queueDb.countByStatus(UploadQueueDb.STATUS_FAILED));
         } catch (Exception e) {
-            call.reject("Remove failed: " + e.getMessage());
+            ret.put("queueSize", 0);
+            ret.put("pending", 0);
+            ret.put("uploading", 0);
+            ret.put("failed", 0);
+            ret.put("totalUploaded", 0);
         }
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void retryAllFailed(PluginCall call) {
+        if (queueDb != null) {
+            queueDb.retryAllFailed();
+        }
+        call.resolve();
     }
 }
