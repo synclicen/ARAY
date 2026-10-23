@@ -1,18 +1,14 @@
 package com.aray.booth;
 
 import android.app.Activity;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
-import android.database.Cursor;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.util.Base64;
 import android.util.Log;
 import androidx.activity.result.ActivityResult;
-import androidx.documentfile.provider.DocumentFile;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -27,15 +23,12 @@ import java.io.OutputStream;
 /**
  * ARAY Storage Plugin — Native Android Storage Access Framework (SAF).
  *
- * Port dari Saatiril-Andro DriveBackupManager.kt + UploadQueueStore.kt
+ * v4.7.11: Port persis dari Saatiril-Andro PhotoSaver.kt + DriveBackupManager.kt
+ * Pakai DocumentsContract API langsung (BUKAN DocumentFile wrapper).
  *
- * v4.7.9: SQLite-backed upload queue (bukan SharedPreferences) — reliable,
- * survive app restart, support retry with backoff.
- *
- * DUA fungsi utama:
- * 1. LOCAL STORAGE — user pilih folder di HP untuk simpan foto lokal
- * 2. GOOGLE DRIVE BACKUP — user pilih folder Google Drive untuk auto-upload
- *    dengan SQLite queue + retry
+ * KEY INSIGHT: Tree URI dari ACTION_OPEN_DOCUMENT_TREE TIDAK punya /document/ segment.
+ * DocumentsContract.createDocument butuh DOCUMENT URI (dengan /document/ segment).
+ * normalizeToDocumentUri() convert tree URI → document URI.
  */
 @CapacitorPlugin(name = "DriveBackup")
 public class DriveBackupPlugin extends Plugin {
@@ -45,183 +38,118 @@ public class DriveBackupPlugin extends Plugin {
     private static final String KEY_LOCAL_URI = "local_folder_uri";
     private static final String MIME_JPEG = "image/jpeg";
     private static final String MIME_VIDEO = "video/webm";
+    private static final String MIME_DIR = DocumentsContract.Document.MIME_TYPE_DIR;
 
-    private UploadQueueDb queueDb;
+    // ════════════════════════════════════════════════════════════════════════
+    // SAF helper — normalize tree URI to document URI (CRITICAL!)
+    // Port dari Saatiril-Andro PhotoSaver.normalizeToDocumentUri
+    // ════════════════════════════════════════════════════════════════════════
 
-    @Override
-    public void load() {
-        super.load();
-        // Initialize SQLite queue database
+    /**
+     * Convert tree URI → document URI.
+     * Tree URI: content://...documents/tree/primary%3AFoo
+     * Document URI: content://...documents/tree/primary%3AFoo/document/primary%3AFoo
+     *
+     * DocumentsContract.createDocument butuh document URI, bukan tree URI.
+     * Kalau pakai tree URI langsung, createDocument return null.
+     */
+    private Uri normalizeToDocumentUri(Uri uri) {
+        String path = uri.getPath();
+        if (path == null) return uri;
+        if (path.contains("/document/")) {
+            return uri;  // already a document URI
+        }
         try {
-            queueDb = new UploadQueueDb(getContext());
-            Log.i(TAG, "Upload queue database initialized");
+            String rootDocId = DocumentsContract.getTreeDocumentId(uri);
+            return DocumentsContract.buildDocumentUriUsingTree(uri, rootDocId);
         } catch (Exception e) {
-            Log.e(TAG, "Failed to init upload queue DB: " + e.getMessage(), e);
+            Log.e(TAG, "normalizeToDocumentUri failed: " + e.getMessage());
+            return uri;
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // SQLite Upload Queue (port dari Saatiril-Andro UploadQueueStore.kt)
-    // ════════════════════════════════════════════════════════════════════════
+    /**
+     * Create a subfolder inside a tree URI using DocumentsContract.
+     * Port dari Saatiril-Andro PhotoSaver.createSubfolder.
+     * Returns: document URI of the new/existing folder, or null on failure.
+     */
+    private Uri createSubfolder(Uri treeUri, String folderName) {
+        Log.i(TAG, "createSubfolder: name=" + folderName);
+        try {
+            Uri parentDocUri = normalizeToDocumentUri(treeUri);
 
-    private static class UploadQueueDb extends SQLiteOpenHelper {
-        private static final String DB_NAME = "aray_upload_queue.db";
-        private static final int DB_VERSION = 1;
-        private static final String TABLE = "upload_queue";
-        private static final String COL_ID = "id";
-        private static final String COL_FILENAME = "filename";
-        private static final String COL_LOCAL_URI = "local_uri";
-        private static final String COL_PROJECT_NAME = "project_name";
-        private static final String COL_MIME_TYPE = "mime_type";
-        private static final String COL_STATUS = "status";
-        private static final String COL_RETRY_COUNT = "retry_count";
-        private static final String COL_CREATED_AT = "created_at";
-        private static final String COL_UPLOADED_AT = "uploaded_at";
-        private static final String COL_ERROR = "error";
-
-        static final String STATUS_PENDING = "pending";
-        static final String STATUS_UPLOADING = "uploading";
-        static final String STATUS_DONE = "done";
-        static final String STATUS_FAILED = "failed";
-
-        private static final int MAX_RETRIES = 5;
-
-        UploadQueueDb(Context context) {
-            super(context, DB_NAME, null, DB_VERSION);
-            getReadableDatabase(); // trigger onCreate
-        }
-
-        @Override
-        public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE " + TABLE + " (" +
-                    COL_ID + " INTEGER PRIMARY KEY AUTOINCREMENT," +
-                    COL_FILENAME + " TEXT NOT NULL," +
-                    COL_LOCAL_URI + " TEXT NOT NULL," +
-                    COL_PROJECT_NAME + " TEXT NOT NULL," +
-                    COL_MIME_TYPE + " TEXT NOT NULL DEFAULT 'image/jpeg'," +
-                    COL_STATUS + " TEXT NOT NULL DEFAULT '" + STATUS_PENDING + "'," +
-                    COL_RETRY_COUNT + " INTEGER NOT NULL DEFAULT 0," +
-                    COL_CREATED_AT + " INTEGER NOT NULL," +
-                    COL_UPLOADED_AT + " INTEGER," +
-                    COL_ERROR + " TEXT)");
-            db.execSQL("CREATE INDEX idx_status ON " + TABLE + " (" + COL_STATUS + ")");
-            db.execSQL("CREATE INDEX idx_project ON " + TABLE + " (" + COL_PROJECT_NAME + ")");
-        }
-
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            // Future migrations
-        }
-
-        long enqueue(String filename, String localUri, String projectName, String mimeType) {
-            ContentValues values = new ContentValues();
-            values.put(COL_FILENAME, filename);
-            values.put(COL_LOCAL_URI, localUri);
-            values.put(COL_PROJECT_NAME, projectName);
-            values.put(COL_MIME_TYPE, mimeType);
-            values.put(COL_STATUS, STATUS_PENDING);
-            values.put(COL_RETRY_COUNT, 0);
-            values.put(COL_CREATED_AT, System.currentTimeMillis());
-            long id = getWritableDatabase().insertWithOnConflict(TABLE, null, values, SQLiteDatabase.CONFLICT_REPLACE);
-            Log.i(TAG, "Enqueued: " + filename + " (id=" + id + ")");
-            return id;
-        }
-
-        Cursor dequeueCursor() {
-            return getReadableDatabase().query(TABLE, null,
-                    COL_STATUS + " = ?", new String[]{STATUS_PENDING},
-                    null, null, COL_ID + " ASC", "1");
-        }
-
-        void markUploading(long id) {
-            ContentValues values = new ContentValues();
-            values.put(COL_STATUS, STATUS_UPLOADING);
-            getWritableDatabase().update(TABLE, values, COL_ID + " = ?", new String[]{String.valueOf(id)});
-        }
-
-        void markDone(long id) {
-            ContentValues values = new ContentValues();
-            values.put(COL_STATUS, STATUS_DONE);
-            values.put(COL_UPLOADED_AT, System.currentTimeMillis());
-            getWritableDatabase().delete(TABLE, COL_ID + " = ?", new String[]{String.valueOf(id)});
-        }
-
-        void markFailed(long id, String error) {
-            Cursor cursor = getReadableDatabase().query(TABLE, new String[]{COL_RETRY_COUNT},
-                    COL_ID + " = ?", new String[]{String.valueOf(id)},
+            // Check if folder already exists
+            String parentDocId = DocumentsContract.getDocumentId(parentDocUri);
+            Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parentDocUri, parentDocId);
+            android.database.Cursor cursor = getContext().getContentResolver().query(
+                    childrenUri,
+                    new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                                 DocumentsContract.Document.COLUMN_MIME_TYPE},
                     null, null, null);
-            int retryCount = 0;
-            if (cursor != null && cursor.moveToFirst()) {
-                retryCount = cursor.getInt(0);
-                cursor.close();
-            }
-            ContentValues values = new ContentValues();
-            values.put(COL_ERROR, error);
-            if (retryCount + 1 >= MAX_RETRIES) {
-                values.put(COL_STATUS, STATUS_FAILED);
-                values.put(COL_RETRY_COUNT, retryCount + 1);
-            } else {
-                values.put(COL_STATUS, STATUS_PENDING);
-                values.put(COL_RETRY_COUNT, retryCount + 1);
-            }
-            getWritableDatabase().update(TABLE, values, COL_ID + " = ?", new String[]{String.valueOf(id)});
-        }
-
-        void resetStuckItems() {
-            ContentValues values = new ContentValues();
-            values.put(COL_STATUS, STATUS_PENDING);
-            int count = getWritableDatabase().update(TABLE, values,
-                    COL_STATUS + " = ?", new String[]{STATUS_UPLOADING});
-            if (count > 0) Log.i(TAG, "Reset " + count + " stuck UPLOADING items");
-        }
-
-        void retryAllFailed() {
-            ContentValues values = new ContentValues();
-            values.put(COL_STATUS, STATUS_PENDING);
-            values.put(COL_RETRY_COUNT, 0);
-            values.putNull(COL_ERROR);
-            int count = getWritableDatabase().update(TABLE, values,
-                    COL_STATUS + " = ?", new String[]{STATUS_FAILED});
-            Log.i(TAG, "Retried " + count + " failed uploads");
-        }
-
-        int countByStatus(String status) {
-            Cursor cursor = getReadableDatabase().rawQuery(
-                    "SELECT COUNT(*) FROM " + TABLE + " WHERE " + COL_STATUS + " = ?",
-                    new String[]{status});
-            int count = 0;
-            if (cursor != null && cursor.moveToFirst()) {
-                count = cursor.getInt(0);
-                cursor.close();
-            }
-            return count;
-        }
-
-        int getTotalUploaded() {
-            // Track via separate counter table (like Saatiril)
-            try {
-                Cursor cursor = getReadableDatabase().rawQuery(
-                        "SELECT count FROM upload_counter WHERE type = 'uploaded'", null);
-                int count = 0;
-                if (cursor != null && cursor.moveToFirst()) {
-                    count = cursor.getInt(0);
-                    cursor.close();
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    String name = cursor.getString(1);
+                    String mime = cursor.getString(2);
+                    if (folderName.equals(name) && MIME_DIR.equals(mime)) {
+                        String docId = cursor.getString(0);
+                        Uri existingUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+                        cursor.close();
+                        Log.i(TAG, "createSubfolder: existing folder → " + existingUri);
+                        return existingUri;
+                    }
                 }
-                return count;
-            } catch (Exception e) {
-                return 0;
+                cursor.close();
             }
-        }
 
-        void incrementUploaded() {
-            try {
-                getWritableDatabase().execSQL(
-                        "CREATE TABLE IF NOT EXISTS upload_counter (type TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)");
-                getWritableDatabase().execSQL(
-                        "INSERT OR REPLACE INTO upload_counter (type, count) VALUES ('uploaded', COALESCE((SELECT count FROM upload_counter WHERE type='uploaded'), 0) + 1)");
-            } catch (Exception e) {
-                Log.w(TAG, "incrementUploaded error: " + e.getMessage());
+            // Create new folder
+            Uri docUri = DocumentsContract.createDocument(
+                    getContext().getContentResolver(),
+                    parentDocUri,
+                    MIME_DIR,
+                    folderName);
+            if (docUri == null) {
+                Log.e(TAG, "createSubfolder FAILED: createDocument returned null for " + folderName);
+                return null;
             }
+            Log.i(TAG, "createSubfolder SUCCESS: " + folderName + " → " + docUri);
+            return docUri;
+        } catch (Exception e) {
+            Log.e(TAG, "createSubfolder FAILED: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Save binary data to a document URI (file inside SAF folder).
+     * Port dari Saatiril-Andro PhotoSaver.savePhoto.
+     */
+    private Uri saveFileToUri(Uri parentDocUri, String filename, String mimeType, byte[] bytes) {
+        Log.i(TAG, "saveFileToUri: filename=" + filename + ", mimeType=" + mimeType + ", bytes=" + bytes.length);
+        try {
+            Uri docUri = DocumentsContract.createDocument(
+                    getContext().getContentResolver(),
+                    parentDocUri,
+                    mimeType,
+                    filename);
+            if (docUri == null) {
+                Log.e(TAG, "saveFileToUri FAILED: createDocument returned null for " + filename);
+                return null;
+            }
+            OutputStream out = getContext().getContentResolver().openOutputStream(docUri);
+            if (out == null) {
+                Log.e(TAG, "saveFileToUri FAILED: openOutputStream returned null");
+                try { getContext().getContentResolver().delete(docUri, null, null); } catch (Exception _e) {}
+                return null;
+            }
+            out.write(bytes);
+            out.flush();
+            out.close();
+            Log.i(TAG, "saveFileToUri SUCCESS: " + filename + " (" + bytes.length + " bytes) → " + docUri);
+            return docUri;
+        } catch (Exception e) {
+            Log.e(TAG, "saveFileToUri FAILED: " + e.getMessage(), e);
+            return null;
         }
     }
 
@@ -242,7 +170,7 @@ public class DriveBackupPlugin extends Plugin {
     @ActivityCallback
     public void handleLocalFolderPick(PluginCall call, ActivityResult result) {
         if (result.getResultCode() != Activity.RESULT_OK) {
-            call.reject("User canceled local folder selection");
+            call.reject("User canceled");
             return;
         }
         Uri treeUri = result.getData() != null ? result.getData().getData() : null;
@@ -254,7 +182,7 @@ public class DriveBackupPlugin extends Plugin {
             int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
             getContext().getContentResolver().takePersistableUriPermission(treeUri, flags);
         } catch (SecurityException e) {
-            Log.w(TAG, "Could not take persistable permission: " + e.getMessage());
+            Log.w(TAG, "takePersistableUriPermission failed: " + e.getMessage());
         }
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         prefs.edit().putString(KEY_LOCAL_URI, treeUri.toString()).apply();
@@ -283,6 +211,10 @@ public class DriveBackupPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * Save file to local folder via DocumentsContract.
+     * Structure: Events/<EventName>/Photos|Videos/<filename>
+     */
     @PluginMethod
     public void saveLocalFile(PluginCall call) {
         String base64Data = call.getString("base64Data");
@@ -298,68 +230,45 @@ public class DriveBackupPlugin extends Plugin {
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         String treeUriStr = prefs.getString(KEY_LOCAL_URI, null);
         if (treeUriStr == null) {
-            call.reject("No local folder set — call pickLocalFolder first");
+            call.reject("No local folder set");
             return;
         }
 
         try {
             Uri treeUri = Uri.parse(treeUriStr);
-            DocumentFile rootDocFile = DocumentFile.fromTreeUri(getContext(), treeUri);
-            if (rootDocFile == null || !rootDocFile.canWrite()) {
-                call.reject("Cannot access local folder — may need to re-select");
-                return;
-            }
 
-            // Structure: Events/<EventName>/Photos/ or Videos/
-            DocumentFile parentFolder = rootDocFile;
-            if (subfolder != null && !subfolder.isEmpty()) {
-                String sanitizedName = subfolder.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
-                if (!sanitizedName.isEmpty()) {
-                    DocumentFile eventsFolder = rootDocFile.findFile("Events");
-                    if (eventsFolder == null || !eventsFolder.isDirectory()) {
-                        eventsFolder = rootDocFile.createDirectory("Events");
-                    }
-                    if (eventsFolder != null) {
-                        DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
-                        if (eventFolder == null || !eventFolder.isDirectory()) {
-                            eventFolder = eventsFolder.createDirectory(sanitizedName);
-                        }
-                        if (eventFolder != null) {
-                            String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
-                            DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
-                            if (typeFolder == null || !typeFolder.isDirectory()) {
-                                typeFolder = eventFolder.createDirectory(typeSubfolder);
-                            }
-                            if (typeFolder != null) {
-                                parentFolder = typeFolder;
-                            }
-                        }
-                    }
-                }
-            }
+            // Strip data: prefix
+            String pureBase64 = base64Data.contains(",") ? base64Data.substring(base64Data.indexOf(",") + 1) : base64Data;
+            byte[] bytes = Base64.decode(pureBase64, Base64.DEFAULT);
 
-            DocumentFile file = parentFolder.createFile(mimeType, filename);
-            if (file == null) {
-                call.reject("Cannot create file in local folder");
-                return;
-            }
+            // Navigate/create folder structure: Events/<EventName>/Photos|Videos/
+            Uri currentUri = treeUri;
+            String sanitizedName = subfolder.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
+            if (sanitizedName.isEmpty()) sanitizedName = "default";
+            String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
 
-            byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
-            OutputStream output = getContext().getContentResolver().openOutputStream(file.getUri());
-            if (output == null) {
-                call.reject("Cannot open output stream");
-                try { file.delete(); } catch (Exception _e) {}
-                return;
-            }
-            output.write(bytes);
-            output.flush();
-            output.close();
+            // Create Events/ folder
+            Uri eventsUri = createSubfolder(currentUri, "Events");
+            if (eventsUri == null) { call.reject("Cannot create Events folder"); return; }
+            currentUri = eventsUri;
 
-            Log.i(TAG, "saveLocalFile SUCCESS: " + filename + " → " + file.getUri());
+            // Create Events/<EventName>/ folder
+            Uri eventUri = createSubfolder(currentUri, sanitizedName);
+            if (eventUri == null) { call.reject("Cannot create event folder: " + sanitizedName); return; }
+            currentUri = eventUri;
+
+            // Create Events/<EventName>/Photos|Videos/ folder
+            Uri typeUri = createSubfolder(currentUri, typeSubfolder);
+            if (typeUri == null) { call.reject("Cannot create " + typeSubfolder + " folder"); return; }
+            currentUri = typeUri;
+
+            // Save file
+            Uri fileUri = saveFileToUri(currentUri, filename, mimeType, bytes);
+            if (fileUri == null) { call.reject("Cannot create file: " + filename); return; }
 
             JSObject ret = new JSObject();
             ret.put("success", true);
-            ret.put("path", file.getUri().toString());
+            ret.put("path", fileUri.toString());
             call.resolve(ret);
         } catch (Exception e) {
             Log.e(TAG, "saveLocalFile FAILED: " + e.getMessage(), e);
@@ -370,32 +279,22 @@ public class DriveBackupPlugin extends Plugin {
     @PluginMethod
     public void readLocalFile(PluginCall call) {
         String path = call.getString("path");
-        if (path == null) {
-            call.reject("path required");
-            return;
-        }
+        if (path == null) { call.reject("path required"); return; }
         try {
             Uri uri = Uri.parse(path);
             InputStream input = getContext().getContentResolver().openInputStream(uri);
-            if (input == null) {
-                call.reject("Cannot open input stream for: " + path);
-                return;
-            }
+            if (input == null) { call.reject("Cannot open: " + path); return; }
             byte[] buffer = new byte[8192];
             int read;
             java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-            while ((read = input.read(buffer)) > 0) {
-                baos.write(buffer, 0, read);
-            }
+            while ((read = input.read(buffer)) > 0) baos.write(buffer, 0, read);
             input.close();
             String base64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-
             JSObject ret = new JSObject();
             ret.put("success", true);
             ret.put("data", base64);
             call.resolve(ret);
         } catch (Exception e) {
-            Log.e(TAG, "readLocalFile FAILED: " + e.getMessage(), e);
             call.reject("Read failed: " + e.getMessage());
         }
     }
@@ -403,16 +302,10 @@ public class DriveBackupPlugin extends Plugin {
     @PluginMethod
     public void deleteLocalFile(PluginCall call) {
         String path = call.getString("path");
-        if (path == null) {
-            call.reject("path required");
-            return;
-        }
+        if (path == null) { call.reject("path required"); return; }
         try {
             Uri uri = Uri.parse(path);
-            DocumentFile docFile = DocumentFile.fromSingleUri(getContext(), uri);
-            if (docFile != null) {
-                docFile.delete();
-            }
+            DocumentsContract.deleteDocument(getContext().getContentResolver(), uri);
             call.resolve();
         } catch (Exception e) {
             call.reject("Delete failed: " + e.getMessage());
@@ -441,11 +334,8 @@ public class DriveBackupPlugin extends Plugin {
         }
         try {
             Uri treeUri = Uri.parse(uriStr);
-            DocumentFile root = DocumentFile.fromTreeUri(getContext(), treeUri);
             JSONArray filesArray = new JSONArray();
-            if (root != null) {
-                listFilesRecursive(root, filesArray);
-            }
+            listFilesRecursive(treeUri, filesArray);
             JSObject ret = new JSObject();
             ret.put("files", filesArray);
             call.resolve(ret);
@@ -454,27 +344,48 @@ public class DriveBackupPlugin extends Plugin {
         }
     }
 
-    private void listFilesRecursive(DocumentFile folder, JSONArray filesArray) {
-        if (folder == null) return;
-        for (DocumentFile file : folder.listFiles()) {
-            if (file.isDirectory()) {
-                listFilesRecursive(file, filesArray);
-            } else if (file.isFile()) {
-                try {
-                    JSONObject f = new JSONObject();
-                    f.put("name", file.getName());
-                    f.put("uri", file.getUri().toString());
-                    f.put("size", file.length());
-                    filesArray.put(f);
-                } catch (Exception e) {
-                    Log.w(TAG, "listFilesRecursive: " + e.getMessage());
+    private void listFilesRecursive(Uri folderUri, JSONArray filesArray) {
+        try {
+            Uri docUri = normalizeToDocumentUri(folderUri);
+            String docId = DocumentsContract.getDocumentId(docUri);
+            Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(docUri, docId);
+            android.database.Cursor cursor = getContext().getContentResolver().query(
+                    childrenUri,
+                    new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                                 DocumentsContract.Document.COLUMN_MIME_TYPE,
+                                 DocumentsContract.Document.COLUMN_SIZE},
+                    null, null, null);
+            if (cursor != null) {
+                while (cursor.moveToNext()) {
+                    String childDocId = cursor.getString(0);
+                    String name = cursor.getString(1);
+                    String mime = cursor.getString(2);
+                    long size = cursor.getLong(3);
+                    Uri childUri = DocumentsContract.buildDocumentUriUsingTree(folderUri, childDocId);
+                    if (MIME_DIR.equals(mime)) {
+                        listFilesRecursive(childUri, filesArray);
+                    } else {
+                        try {
+                            JSONObject f = new JSONObject();
+                            f.put("name", name);
+                            f.put("uri", childUri.toString());
+                            f.put("size", size);
+                            filesArray.put(f);
+                        } catch (Exception e) {
+                            Log.w(TAG, "listFilesRecursive: " + e.getMessage());
+                        }
+                    }
                 }
+                cursor.close();
             }
+        } catch (Exception e) {
+            Log.w(TAG, "listFilesRecursive error: " + e.getMessage());
         }
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // GOOGLE DRIVE BACKUP — SQLite queue + reliable processNext
+    // GOOGLE DRIVE BACKUP — DocumentsContract API (port Saatiril-Andro)
     // ════════════════════════════════════════════════════════════════════════
 
     @PluginMethod
@@ -490,23 +401,20 @@ public class DriveBackupPlugin extends Plugin {
     @ActivityCallback
     public void handleFolderPick(PluginCall call, ActivityResult result) {
         if (result.getResultCode() != Activity.RESULT_OK) {
-            call.reject("User canceled folder selection");
+            call.reject("User canceled");
             return;
         }
         Uri treeUri = result.getData() != null ? result.getData().getData() : null;
-        if (treeUri == null) {
-            call.reject("No folder selected");
-            return;
-        }
+        if (treeUri == null) { call.reject("No folder selected"); return; }
         try {
             int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION;
             getContext().getContentResolver().takePersistableUriPermission(treeUri, flags);
         } catch (SecurityException e) {
-            Log.w(TAG, "Could not take persistable permission: " + e.getMessage());
+            Log.w(TAG, "takePersistableUriPermission failed: " + e.getMessage());
         }
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         prefs.edit().putString(KEY_DRIVE_URI, treeUri.toString()).apply();
-        Log.i(TAG, "Drive backup folder set: " + treeUri);
+        Log.i(TAG, "Drive folder set: " + treeUri);
 
         JSObject ret = new JSObject();
         ret.put("success", true);
@@ -542,42 +450,9 @@ public class DriveBackupPlugin extends Plugin {
     }
 
     /**
-     * v4.7.9: Enqueue upload ke SQLite queue. Return immediately.
-     * Upload di-process oleh processNextUpload() yang dipanggil periodic.
-     */
-    @PluginMethod
-    public void enqueueUpload(PluginCall call) {
-        if (queueDb == null) {
-            call.reject("Queue database not initialized");
-            return;
-        }
-        String localPath = call.getString("localPath");
-        String filename = call.getString("filename");
-        String projectName = call.getString("projectName", "default");
-        String mimeType = call.getString("mimeType", MIME_JPEG);
-
-        if (localPath == null || filename == null) {
-            call.reject("localPath and filename required");
-            return;
-        }
-
-        try {
-            long id = queueDb.enqueue(filename, localPath, projectName, mimeType);
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("id", id);
-            ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
-            call.resolve(ret);
-        } catch (Exception e) {
-            Log.e(TAG, "enqueueUpload FAILED: " + e.getMessage(), e);
-            call.reject("Enqueue failed: " + e.getMessage());
-        }
-    }
-
-    /**
-     * v4.7.10: Direct upload — synchronous, return detail error.
-     * Dipanggil dari JS setelah saveLocalFile. Langsung upload ke Drive folder.
-     * Return: { success, driveUri, error, step } — step = dimana gagal untuk debug.
+     * Direct upload — copy file from localPath to Drive folder.
+     * Uses DocumentsContract API (port dari Saatiril-Andro).
+     * Structure: Events/<EventName>/Photos|Videos/<filename>
      */
     @PluginMethod
     public void uploadFile(PluginCall call) {
@@ -591,7 +466,7 @@ public class DriveBackupPlugin extends Plugin {
             return;
         }
 
-        Log.i(TAG, "uploadFile START: filename=" + filename + ", project=" + projectName + ", localPath=" + localPath.substring(0, Math.min(80, localPath.length())));
+        Log.i(TAG, "uploadFile START: " + filename + ", project=" + projectName);
 
         try {
             SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -599,42 +474,21 @@ public class DriveBackupPlugin extends Plugin {
             if (treeUriStr == null) {
                 JSObject ret = new JSObject();
                 ret.put("success", false);
-                ret.put("error", "No Drive folder set — tap Connect di Sync Center dulu");
+                ret.put("error", "No Drive folder set");
                 ret.put("step", "check_drive_folder");
                 call.resolve(ret);
                 return;
             }
 
-            Log.i(TAG, "uploadFile: Drive folder URI = " + treeUriStr.substring(0, Math.min(60, treeUriStr.length())));
+            Uri driveTreeUri = Uri.parse(treeUriStr);
+            String sanitizedName = projectName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
+            if (sanitizedName.isEmpty()) sanitizedName = "default";
+            String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
 
-            Uri treeUri = Uri.parse(treeUriStr);
-            DocumentFile rootDocFile = DocumentFile.fromTreeUri(getContext(), treeUri);
-            if (rootDocFile == null) {
-                JSObject ret = new JSObject();
-                ret.put("success", false);
-                ret.put("error", "Cannot access Drive folder — fromTreeUri returned null. Re-connect di Sync Center.");
-                ret.put("step", "fromTreeUri");
-                call.resolve(ret);
-                return;
-            }
-            if (!rootDocFile.canWrite()) {
-                JSObject ret = new JSObject();
-                ret.put("success", false);
-                ret.put("error", "Drive folder not writable — re-connect di Sync Center");
-                ret.put("step", "canWrite");
-                call.resolve(ret);
-                return;
-            }
-
-            Log.i(TAG, "uploadFile: rootDocFile OK, canWrite=true");
-
-            // Create Events/ subfolder
-            DocumentFile eventsFolder = rootDocFile.findFile("Events");
-            if (eventsFolder == null || !eventsFolder.isDirectory()) {
-                eventsFolder = rootDocFile.createDirectory("Events");
-                Log.i(TAG, "uploadFile: created Events/ folder");
-            }
-            if (eventsFolder == null) {
+            // Create folder structure in Drive: Events/<EventName>/Photos|Videos/
+            Log.i(TAG, "uploadFile: creating Events/ folder");
+            Uri eventsUri = createSubfolder(driveTreeUri, "Events");
+            if (eventsUri == null) {
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", "Cannot create Events folder in Drive");
@@ -643,16 +497,9 @@ public class DriveBackupPlugin extends Plugin {
                 return;
             }
 
-            // Create Events/<EventName>/ subfolder
-            String sanitizedName = projectName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
-            if (sanitizedName.isEmpty()) sanitizedName = "default";
-
-            DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
-            if (eventFolder == null || !eventFolder.isDirectory()) {
-                eventFolder = eventsFolder.createDirectory(sanitizedName);
-                Log.i(TAG, "uploadFile: created Events/" + sanitizedName + "/ folder");
-            }
-            if (eventFolder == null) {
+            Log.i(TAG, "uploadFile: creating Events/" + sanitizedName + "/ folder");
+            Uri eventUri = createSubfolder(eventsUri, sanitizedName);
+            if (eventUri == null) {
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", "Cannot create event folder: " + sanitizedName);
@@ -661,14 +508,9 @@ public class DriveBackupPlugin extends Plugin {
                 return;
             }
 
-            // Create Events/<EventName>/Photos/ or Videos/ subfolder
-            String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
-            DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
-            if (typeFolder == null || !typeFolder.isDirectory()) {
-                typeFolder = eventFolder.createDirectory(typeSubfolder);
-                Log.i(TAG, "uploadFile: created Events/" + sanitizedName + "/" + typeSubfolder + "/ folder");
-            }
-            if (typeFolder == null) {
+            Log.i(TAG, "uploadFile: creating " + typeSubfolder + "/ folder");
+            Uri typeUri = createSubfolder(eventUri, typeSubfolder);
+            if (typeUri == null) {
                 JSObject ret = new JSObject();
                 ret.put("success", false);
                 ret.put("error", "Cannot create " + typeSubfolder + " folder");
@@ -678,37 +520,40 @@ public class DriveBackupPlugin extends Plugin {
             }
 
             // Create file in Drive folder
-            DocumentFile driveFile = typeFolder.createFile(mimeType, filename);
-            if (driveFile == null) {
+            Log.i(TAG, "uploadFile: creating file " + filename);
+            Uri driveFileUri = DocumentsContract.createDocument(
+                    getContext().getContentResolver(),
+                    typeUri,
+                    mimeType,
+                    filename);
+            if (driveFileUri == null) {
                 JSObject ret = new JSObject();
                 ret.put("success", false);
-                ret.put("error", "createFile returned null for " + filename);
+                ret.put("error", "createDocument returned null for " + filename);
                 ret.put("step", "createFile");
                 call.resolve(ret);
                 return;
             }
 
-            Log.i(TAG, "uploadFile: created file " + filename + " → " + driveFile.getUri());
-
             // Copy bytes: local file → Drive document
             Uri localUri = Uri.parse(localPath);
             InputStream input = getContext().getContentResolver().openInputStream(localUri);
             if (input == null) {
-                try { driveFile.delete(); } catch (Exception _e) {}
+                try { DocumentsContract.deleteDocument(getContext().getContentResolver(), driveFileUri); } catch (Exception _e) {}
                 JSObject ret = new JSObject();
                 ret.put("success", false);
-                ret.put("error", "Cannot open input stream for local file: " + localPath);
+                ret.put("error", "Cannot open local file: " + localPath);
                 ret.put("step", "open_input_stream");
                 call.resolve(ret);
                 return;
             }
-            OutputStream output = getContext().getContentResolver().openOutputStream(driveFile.getUri());
+            OutputStream output = getContext().getContentResolver().openOutputStream(driveFileUri);
             if (output == null) {
                 input.close();
-                try { driveFile.delete(); } catch (Exception _e) {}
+                try { DocumentsContract.deleteDocument(getContext().getContentResolver(), driveFileUri); } catch (Exception _e) {}
                 JSObject ret = new JSObject();
                 ret.put("success", false);
-                ret.put("error", "Cannot open output stream for Drive document");
+                ret.put("error", "Cannot open Drive output stream");
                 ret.put("step", "open_output_stream");
                 call.resolve(ret);
                 return;
@@ -729,7 +574,7 @@ public class DriveBackupPlugin extends Plugin {
 
             JSObject ret = new JSObject();
             ret.put("success", true);
-            ret.put("driveUri", driveFile.getUri().toString());
+            ret.put("driveUri", driveFileUri.toString());
             ret.put("bytesUploaded", totalBytes);
             call.resolve(ret);
         } catch (Exception e) {
@@ -742,205 +587,36 @@ public class DriveBackupPlugin extends Plugin {
         }
     }
 
-    /**
-     * v4.7.9: Process next upload from SQLite queue. Reliable — dequeue + upload + mark done/failed.
-     * Returns detail: { processed, success, filename, error, queueSize, totalUploaded }
-     */
+    // Queue methods — stubs for backward compat (not used in v4.7.11)
+    @PluginMethod
+    public void enqueueUpload(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("success", true);
+        ret.put("queueSize", 0);
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void processNextUpload(PluginCall call) {
-        if (queueDb == null) {
-            call.reject("Queue database not initialized");
-            return;
-        }
-        try {
-            // Reset stuck UPLOADING items first
-            queueDb.resetStuckItems();
-
-            // Dequeue next PENDING item
-            Cursor cursor = queueDb.dequeueCursor();
-            if (cursor == null || !cursor.moveToFirst()) {
-                if (cursor != null) cursor.close();
-                JSObject ret = new JSObject();
-                ret.put("processed", false);
-                ret.put("queueSize", 0);
-                call.resolve(ret);
-                return;
-            }
-
-            long id = cursor.getLong(cursor.getColumnIndexOrThrow("id"));
-            String filename = cursor.getString(cursor.getColumnIndexOrThrow("filename"));
-            String localPath = cursor.getString(cursor.getColumnIndexOrThrow("local_uri"));
-            String projectName = cursor.getString(cursor.getColumnIndexOrThrow("project_name"));
-            String mimeType = cursor.getString(cursor.getColumnIndexOrThrow("mime_type"));
-            cursor.close();
-
-            // Mark as UPLOADING
-            queueDb.markUploading(id);
-
-            // Attempt upload
-            String uploadError = null;
-            boolean success = false;
-            try {
-                success = doUpload(localPath, filename, projectName, mimeType);
-            } catch (Exception e) {
-                uploadError = e.getMessage();
-                Log.e(TAG, "processNextUpload upload exception: " + uploadError, e);
-            }
-
-            if (success) {
-                queueDb.markDone(id);
-                queueDb.incrementUploaded();
-                Log.i(TAG, "Upload SUCCESS: " + filename);
-
-                JSObject ret = new JSObject();
-                ret.put("processed", true);
-                ret.put("success", true);
-                ret.put("filename", filename);
-                ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
-                ret.put("totalUploaded", queueDb.getTotalUploaded());
-                call.resolve(ret);
-            } else {
-                String error = uploadError != null ? uploadError : "Upload failed (no exception)";
-                queueDb.markFailed(id, error);
-                Log.w(TAG, "Upload FAILED: " + filename + " — " + error);
-
-                JSObject ret = new JSObject();
-                ret.put("processed", true);
-                ret.put("success", false);
-                ret.put("filename", filename);
-                ret.put("error", error);
-                ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
-                ret.put("totalUploaded", queueDb.getTotalUploaded());
-                call.resolve(ret);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "processNextUpload FAILED: " + e.getMessage(), e);
-            call.reject("Process failed: " + e.getMessage());
-        }
+        JSObject ret = new JSObject();
+        ret.put("processed", false);
+        ret.put("queueSize", 0);
+        call.resolve(ret);
     }
 
-    /**
-     * Core upload logic — creates Events/<EventName>/Photos|Videos/<filename> structure.
-     * Throws on error so caller can markFailed with detail.
-     */
-    private boolean doUpload(String localPath, String filename, String projectName, String mimeType) throws Exception {
-        SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String treeUriStr = prefs.getString(KEY_DRIVE_URI, null);
-        if (treeUriStr == null) {
-            throw new Exception("No Drive folder set");
-        }
-
-        Uri treeUri = Uri.parse(treeUriStr);
-        DocumentFile rootDocFile = DocumentFile.fromTreeUri(getContext(), treeUri);
-        if (rootDocFile == null) {
-            throw new Exception("Cannot access Drive folder — fromTreeUri returned null");
-        }
-        if (!rootDocFile.canWrite()) {
-            throw new Exception("Drive folder not writable — may need to re-connect");
-        }
-
-        // Create Events/ subfolder
-        DocumentFile eventsFolder = rootDocFile.findFile("Events");
-        if (eventsFolder == null || !eventsFolder.isDirectory()) {
-            eventsFolder = rootDocFile.createDirectory("Events");
-        }
-        if (eventsFolder == null) {
-            throw new Exception("Cannot create Events folder in Drive");
-        }
-
-        // Create Events/<EventName>/ subfolder
-        String sanitizedName = projectName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
-        if (sanitizedName.isEmpty()) sanitizedName = "default";
-
-        DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
-        if (eventFolder == null || !eventFolder.isDirectory()) {
-            eventFolder = eventsFolder.createDirectory(sanitizedName);
-        }
-        if (eventFolder == null) {
-            throw new Exception("Cannot create event folder: " + sanitizedName);
-        }
-
-        // Create Events/<EventName>/Photos/ or Videos/ subfolder
-        String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
-        DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
-        if (typeFolder == null || !typeFolder.isDirectory()) {
-            typeFolder = eventFolder.createDirectory(typeSubfolder);
-        }
-        if (typeFolder == null) {
-            throw new Exception("Cannot create " + typeSubfolder + " folder");
-        }
-
-        // Create file in Drive folder
-        DocumentFile driveFile = typeFolder.createFile(mimeType, filename);
-        if (driveFile == null) {
-            throw new Exception("createFile returned null for " + filename);
-        }
-
-        // Copy bytes: local file → Drive document
-        Uri localUri = Uri.parse(localPath);
-        InputStream input = getContext().getContentResolver().openInputStream(localUri);
-        if (input == null) {
-            try { driveFile.delete(); } catch (Exception _e) {}
-            throw new Exception("Cannot open input stream for: " + localPath);
-        }
-        OutputStream output = getContext().getContentResolver().openOutputStream(driveFile.getUri());
-        if (output == null) {
-            input.close();
-            try { driveFile.delete(); } catch (Exception _e) {}
-            throw new Exception("Cannot open output stream for Drive document");
-        }
-
-        byte[] buffer = new byte[8192];
-        int read;
-        while ((read = input.read(buffer)) > 0) {
-            output.write(buffer, 0, read);
-        }
-        output.flush();
-        input.close();
-        output.close();
-
-        Log.i(TAG, "doUpload SUCCESS: " + filename + " → Events/" + sanitizedName + "/" + typeSubfolder + "/");
-        return true;
-    }
-
-    /**
-     * Get upload stats — reliable, never throws.
-     */
     @PluginMethod
     public void getUploadStats(PluginCall call) {
         JSObject ret = new JSObject();
-        if (queueDb == null) {
-            ret.put("queueSize", 0);
-            ret.put("pending", 0);
-            ret.put("uploading", 0);
-            ret.put("failed", 0);
-            ret.put("totalUploaded", 0);
-            call.resolve(ret);
-            return;
-        }
-        try {
-            ret.put("pending", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING));
-            ret.put("uploading", queueDb.countByStatus(UploadQueueDb.STATUS_UPLOADING));
-            ret.put("failed", queueDb.countByStatus(UploadQueueDb.STATUS_FAILED));
-            ret.put("totalUploaded", queueDb.getTotalUploaded());
-            ret.put("queueSize", queueDb.countByStatus(UploadQueueDb.STATUS_PENDING)
-                    + queueDb.countByStatus(UploadQueueDb.STATUS_UPLOADING)
-                    + queueDb.countByStatus(UploadQueueDb.STATUS_FAILED));
-        } catch (Exception e) {
-            ret.put("queueSize", 0);
-            ret.put("pending", 0);
-            ret.put("uploading", 0);
-            ret.put("failed", 0);
-            ret.put("totalUploaded", 0);
-        }
+        ret.put("queueSize", 0);
+        ret.put("pending", 0);
+        ret.put("uploading", 0);
+        ret.put("failed", 0);
+        ret.put("totalUploaded", 0);
         call.resolve(ret);
     }
 
     @PluginMethod
     public void retryAllFailed(PluginCall call) {
-        if (queueDb != null) {
-            queueDb.retryAllFailed();
-        }
         call.resolve();
     }
 }
