@@ -695,13 +695,12 @@ export function BoothPage() {
       await sleep(1000)
     }
     setCountdown(0)
-    // v4.7.13: Set flash BEFORE phase change supaya sync dengan "YAP!" text
-    setLastFlash(true)
     setPhase('flash')
+    setLastFlash(true)
+    // v4.7.14: Flash + YAP! bersamaan. Hapus flash setelah 200ms.
+    setTimeout(() => setLastFlash(false), 200)
     await performCapture(shotToCapture)
-    // Flash off setelah 220ms (sudah di performCapture, tapi pastikan sync)
-    setTimeout(() => setLastFlash(false), 220)
-    await sleep(400)
+    await sleep(300)
 
     // v4.6.2: If retaking, go back to result. Otherwise continue sequence.
     if (retakeShotNumber) {

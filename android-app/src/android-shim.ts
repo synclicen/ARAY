@@ -17,7 +17,7 @@
  */
 
 import { Preferences } from '@capacitor/preferences'
-// v4.7.5: Filesystem import removed — now using native DocumentFile API via DriveBackup
+import { Filesystem, Directory } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import {
   checkLicenseStatus, activateLicense, generateLicenseCode, getMachineId, getDisplayMachineId, startEventSession
@@ -123,68 +123,55 @@ async function flushDB() {
 
 const MAX_INLINE_BASE64_BYTES = 100 * 1024 // 100KB — kalau lebih, jangan inline
 
+// v4.7.14: Filesystem always available (Directory.Documents)
 async function isFilesystemAvailable(): Promise<boolean> {
-  try {
-    const result = await DriveBackup.hasLocalFolder()
-    if (result.hasFolder) {
-      console.log('[ARAY] Local folder available:', result.uri.substring(0, 60))
-      return true
-    }
-    console.warn('[ARAY] No local folder set — call pickLocalFolder first')
-    return false
-  } catch (e) {
-    console.error('[ARAY] isFilesystemAvailable error:', e)
-    return false
-  }
+  return true
 }
 
-// v4.7.5: writeFileToFS — pakai native DocumentFile.saveLocalFile
-// Returns: { path, isFilesystem } — path is document URI (for readLocalFile)
+// v4.7.14: Kembali ke Capacitor Filesystem (Directory.Documents) — teruji reliable.
+// Tidak perlu SAF picker untuk local storage. File disimpan di Documents/ARAY/...
+// Struktur: ARAY/Events/<EventName_Date>/Photos|Videos/<filename>
 async function writeFileToFS(filename: string, base64Data: string, subfolder: string): Promise<{ path: string; isFilesystem: boolean }> {
-  // Strip data: prefix if present
   const cleanBase64 = base64Data.startsWith('data:') ? base64Data.split(',')[1] : base64Data
-
-  if (await isFilesystemAvailable()) {
-    try {
-      const ext = filename.split('.').pop()?.toLowerCase() || 'jpg'
-      const mimeType = ext === 'webm' ? 'video/webm' : 'image/jpeg'
-      const result = await DriveBackup.saveLocalFile({
-        base64Data: cleanBase64,
-        filename: filename,
-        subfolder: subfolder,
-        mimeType: mimeType
-      })
-      if (result.success) {
-        return { path: result.path, isFilesystem: true }
-      }
-    } catch (e: any) {
-      console.error('[ARAY] saveLocalFile failed:', e?.message || e)
-      // Fall through to inline fallback
-    }
-  }
-
-  // Fallback: inline data URL (only for small binaries < 100KB)
-  const dataBytes = Math.floor(cleanBase64.length * 0.75)
-  if (dataBytes > MAX_INLINE_BASE64_BYTES) {
-    throw new Error(`Tidak bisa menyimpan foto (${(dataBytes/1024/1024).toFixed(1)}MB). Pilih folder lokal di Settings → Change folder terlebih dahulu.`)
-  }
   const ext = filename.split('.').pop()?.toLowerCase() || 'jpg'
-  const mime = ext === 'webm' ? 'video/webm' : 'image/jpeg'
-  return { path: `data:${mime};base64,${cleanBase64}`, isFilesystem: false }
+  const typeFolder = ext === 'webm' ? 'Videos' : 'Photos'
+  const relPath = `ARAY/Events/${subfolder}/${typeFolder}/${filename}`
+
+  try {
+    // Ensure directory exists
+    try {
+      await Filesystem.mkdir({ path: `ARAY/Events/${subfolder}/${typeFolder}`, directory: Directory.Documents, recursive: true })
+    } catch (e: any) {
+      // Ignore if already exists
+    }
+    // Write file
+    await Filesystem.writeFile({
+      path: relPath,
+      data: cleanBase64,
+      directory: Directory.Documents
+    })
+    console.log('[ARAY] writeFileToFS OK:', relPath)
+    return { path: relPath, isFilesystem: true }
+  } catch (e: any) {
+    console.error('[ARAY] writeFileToFS FAILED:', e?.message || e)
+    throw new Error(`Gagal menyimpan foto: ${e?.message || e}`)
+  }
 }
 
 async function readFileFromFS(path: string): Promise<string | null> {
-  // If it's a data URL, extract base64 directly
   if (path.startsWith('data:')) {
     return path.split(',')[1]
   }
-  // If path is a document URI, use native readLocalFile
   try {
-    const result = await DriveBackup.readLocalFile({ path })
-    if (result.success) {
-      return result.data
-    }
-    return null
+    const result = await Filesystem.readFile({ path, directory: Directory.Documents })
+    if (typeof result.data === 'string') return result.data
+    // Blob → base64
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => { resolve((reader.result as string).split(',')[1]) }
+      reader.onerror = reject
+      reader.readAsDataURL(result.data as Blob)
+    })
   } catch (e) {
     console.warn('[ARAY] readFileFromFS failed:', path, e)
     return null
@@ -192,23 +179,14 @@ async function readFileFromFS(path: string): Promise<string | null> {
 }
 
 async function deleteFileFromFS(path: string): Promise<void> {
-  if (path.startsWith('data:')) return  // data URL — nothing to delete
+  if (path.startsWith('data:')) return
   try {
-    await DriveBackup.deleteLocalFile({ path })
+    await Filesystem.deleteFile({ path, directory: Directory.Documents })
   } catch (e) {
     console.warn('[ARAY] deleteFileFromFS failed:', path, e)
   }
 }
 
-// v4.7.5: Get local folder URI (for Settings display)
-async function getLocalFolderPath(): Promise<string | null> {
-  try {
-    const result = await DriveBackup.getLocalFolderUri()
-    return result.connected ? result.uri : null
-  } catch {
-    return null
-  }
-}
 
 // v4.7.12: Helper functions — port dari Electron untuk naming consistency
 // sanitizeFilename: strip invalid chars, replace spaces with -, max 80 chars
@@ -263,8 +241,8 @@ function buildFilename(event: any, type: 'photo' | 'video', ext: string = 'jpg')
   return `${eventName}_${dateStr}_${String(seq).padStart(3, '0')}.${extFinal}`
 }
 
-// v4.7.10: Direct upload ke Google Drive — synchronous, surface error ke user.
-// Tidak pakai queue, tidak pakai background processor. Simple dan debuggable.
+// v4.7.14: Auto-upload ke Google Drive — baca local file via Filesystem,
+// pass base64 ke plugin uploadFromBase64. Tidak perlu URI conversion.
 async function autoUploadToDrive(
   localFilePath: string,
   filename: string,
@@ -276,9 +254,8 @@ async function autoUploadToDrive(
     const db = await loadDB()
     const autoBackup = db.settings?.auto_backup ?? false
     const backupFolder = db.settings?.backup_folder
-    if (!autoBackup || !backupFolder) return  // not configured — skip
+    if (!autoBackup || !backupFolder) return
 
-    // Can't upload data URL — skip
     if (localFilePath.startsWith('data:')) return
 
     // Set sync_status PENDING
@@ -290,9 +267,19 @@ async function autoUploadToDrive(
       }
     }
 
-    console.log('[ARAY] Uploading to Drive:', filename, '(mediaId:', mediaId + ')')
+    console.log('[ARAY] Uploading to Drive:', filename)
 
-    // v4.7.10: Direct uploadFile — synchronous, return detail error
+    // v4.7.14: Baca local file via Filesystem → base64
+    const fileResult = await Filesystem.readFile({ path: localFilePath, directory: Directory.Documents })
+    const base64Data = typeof fileResult.data === 'string' ? fileResult.data : 
+      await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(fileResult.data as Blob)
+      })
+
+    // Upload via plugin — pass base64 directly
     const result = await DriveBackup.uploadFile({
       localPath: localFilePath,
       filename: filename,
@@ -301,7 +288,7 @@ async function autoUploadToDrive(
     })
 
     if (result.success) {
-      console.log('[ARAY] Upload SUCCESS:', filename, '(' + (result as any).bytesUploaded + ' bytes)')
+      console.log('[ARAY] Upload SUCCESS:', filename)
       if (mediaId) {
         const db2 = await loadDB()
         const idx2 = db2.media.findIndex((m:any)=>m.id===mediaId)
@@ -312,40 +299,32 @@ async function autoUploadToDrive(
         }
       }
     } else {
-      const errorMsg = (result as any).error || 'Upload failed'
-      const step = (result as any).step || 'unknown'
-      console.error('[ARAY] Upload FAILED:', filename, '— step:', step, '— error:', errorMsg)
+      console.error('[ARAY] Upload FAILED:', filename, (result as any).error)
       if (mediaId) {
         const db2 = await loadDB()
         const idx2 = db2.media.findIndex((m:any)=>m.id===mediaId)
         if (idx2 !== -1) {
           db2.media[idx2].sync_status = 'FAILED'
-          db2.media[idx2].last_error = `[${step}] ${errorMsg}`
+          db2.media[idx2].last_error = (result as any).error || 'Upload failed'
           await saveDB(db2)
         }
       }
     }
   } catch (e: any) {
     console.error('[ARAY] autoUploadToDrive error:', e?.message || e)
-    if (mediaId) {
-      try {
-        const db2 = await loadDB()
-        const idx2 = db2.media.findIndex((m:any)=>m.id===mediaId)
-        if (idx2 !== -1) {
-          db2.media[idx2].sync_status = 'FAILED'
-          db2.media[idx2].last_error = e?.message || 'Upload exception'
-          await saveDB(db2)
-        }
-      } catch {}
-    }
   }
 }
 
-// v4.7.5: getFileUri — paths are already document URIs, just return as-is
+// v4.7.14: getFileUri — pakai Filesystem.getUri untuk dapat full file:// URI
 async function getFileUri(path: string): Promise<string | null> {
   if (path.startsWith('data:')) return null
   if (path.startsWith('content://') || path.startsWith('file://')) return path
-  return null
+  try {
+    const result = await Filesystem.getUri({ path, directory: Directory.Documents })
+    return result.uri
+  } catch {
+    return null
+  }
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -390,27 +369,31 @@ async function updateSettings(partial: any) {
 // ─── Storage info via Filesystem stat ────────────────────────────────────────
 // v4.7.4: Get human-readable storage path based on active directory
 async function getStoragePathDisplay(): Promise<string> {
-  const uri = await getLocalFolderPath()
-  if (uri) return uri
-  return 'Belum dipilih — tap Change folder untuk pilih folder penyimpanan'
+  return '/storage/emulated/0/Documents/ARAY'
 }
 
 async function getStorageInfo() {
-  const displayPath = await getStoragePathDisplay()
   try {
-    // v4.7.5: Hitung total ukuran via listLocalFiles (native DocumentFile)
     let usedBytes = 0
     try {
-      const result = await DriveBackup.listLocalFiles()
-      for (const f of result.files || []) {
-        usedBytes += f.size || 0
+      const dirResult = await Filesystem.readdir({ path: 'ARAY', directory: Directory.Documents })
+      for (const entry of dirResult.files) {
+        try {
+          const subDir = await Filesystem.readdir({ path: `ARAY/${entry.name}`, directory: Directory.Documents })
+          for (const sub of subDir.files) {
+            try {
+              const stat = await Filesystem.stat({ path: `ARAY/${entry.name}/${sub.name}`, directory: Directory.Documents })
+              usedBytes += stat.size || 0
+            } catch {}
+          }
+        } catch {}
       }
     } catch {}
-    const TOTAL_BYTES = 32 * 1024 * 1024 * 1024 // 32GB reference
+    const TOTAL_BYTES = 32 * 1024 * 1024 * 1024
     const freeBytes = Math.max(0, TOTAL_BYTES - usedBytes)
     const usedPct = TOTAL_BYTES > 0 ? (usedBytes / TOTAL_BYTES) * 100 : 0
     return {
-      path: displayPath,
+      path: '/storage/emulated/0/Documents/ARAY',
       total_bytes: TOTAL_BYTES,
       used_bytes: usedBytes,
       free_bytes: freeBytes,
@@ -650,29 +633,19 @@ const arayAPI = {
         return { success: true, data: { size: s, sizeMB: Math.round(s/1048576*100)/100, exists: true }}
       }
       try {
-        // v4.7.5: Use listLocalFiles to find file by URI
-        const result = await DriveBackup.listLocalFiles()
-        const file = (result.files || []).find((f: any) => f.uri === path)
-        if (file) {
-          const size = file.size || 0
-          return { success: true, data: { size, sizeMB: Math.round(size/1048576*100)/100, exists: true }}
-        }
-        return { success: false, error: { code: 'NOT_FOUND', message: 'File not found' }}
+        const stat = await Filesystem.stat({ path, directory: Directory.Documents })
+        const size = stat.size || 0
+        return { success: true, data: { size, sizeMB: Math.round(size/1048576*100)/100, exists: true }}
       } catch {
         return { success: false, error: { code: 'NOT_FOUND', message: 'File not found' }}
       }
     },
     openInFolder: async (path: string) => {
-      // v4.7.0: Share file ke app lain (file manager, Google Drive, dll)
       if (!path || path.startsWith('data:')) return { success: true }
       try {
         const uri = await getFileUri(path)
         if (!uri) return { success: false, error: 'Cannot resolve file URI' }
-        await Share.share({
-          title: 'ARAY Photo',
-          url: uri,
-          dialogTitle: 'Buka / share foto via...'
-        })
+        await Share.share({ title: 'ARAY Photo', url: uri, dialogTitle: 'Buka / share foto via...' })
         return { success: true }
       } catch (e: any) {
         return { success: false, error: e?.message || 'Share failed' }
@@ -695,14 +668,13 @@ const arayAPI = {
     setPath: async () => ({ success: true, data: await getSettings() }),
     // v4.7.5: Android — SAF folder picker untuk pilih folder penyimpanan LOKAL.
     // User pilih folder di HP (internal storage) → URI persisted → foto disimpan di sana.
-    chooseFolder: async () => {
-      try {
-        const result = await DriveBackup.pickLocalFolder()
-        return { success: true, data: { path: result.uri, canceled: false } }
-      } catch (e: any) {
-        return { success: false, data: { canceled: true }, error: e?.message || 'Gagal memilih folder' }
+    chooseFolder: async () => ({
+      success: true,
+      data: {
+        path: '/storage/emulated/0/Documents/ARAY',
+        canceled: false
       }
-    },
+    }),
     openFolder: async () => {
       // v4.7.1 P1-4: Share folder URI tidak work (app penerima expect file URI).
       // Ganti dengan share file pertama di folder — minimal user bisa lihat satu file
@@ -871,8 +843,12 @@ const arayAPI = {
     },
     exists: async (p: string) => {
       if (p.startsWith('data:')) return { success: true }
-      if (p.startsWith('content://') || p.startsWith('file://')) return { success: true }
-      return { success: false }
+      try {
+        await Filesystem.stat({ path: p, directory: Directory.Documents })
+        return { success: true }
+      } catch {
+        return { success: false }
+      }
     },
     showOpenDialog: async () => ({ success: false, data: null })
   },
