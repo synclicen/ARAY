@@ -575,6 +575,174 @@ public class DriveBackupPlugin extends Plugin {
     }
 
     /**
+     * v4.7.10: Direct upload — synchronous, return detail error.
+     * Dipanggil dari JS setelah saveLocalFile. Langsung upload ke Drive folder.
+     * Return: { success, driveUri, error, step } — step = dimana gagal untuk debug.
+     */
+    @PluginMethod
+    public void uploadFile(PluginCall call) {
+        String localPath = call.getString("localPath");
+        String filename = call.getString("filename");
+        String projectName = call.getString("projectName", "default");
+        String mimeType = call.getString("mimeType", MIME_JPEG);
+
+        if (localPath == null || filename == null) {
+            call.reject("localPath and filename required");
+            return;
+        }
+
+        Log.i(TAG, "uploadFile START: filename=" + filename + ", project=" + projectName + ", localPath=" + localPath.substring(0, Math.min(80, localPath.length())));
+
+        try {
+            SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+            String treeUriStr = prefs.getString(KEY_DRIVE_URI, null);
+            if (treeUriStr == null) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "No Drive folder set — tap Connect di Sync Center dulu");
+                ret.put("step", "check_drive_folder");
+                call.resolve(ret);
+                return;
+            }
+
+            Log.i(TAG, "uploadFile: Drive folder URI = " + treeUriStr.substring(0, Math.min(60, treeUriStr.length())));
+
+            Uri treeUri = Uri.parse(treeUriStr);
+            DocumentFile rootDocFile = DocumentFile.fromTreeUri(getContext(), treeUri);
+            if (rootDocFile == null) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Cannot access Drive folder — fromTreeUri returned null. Re-connect di Sync Center.");
+                ret.put("step", "fromTreeUri");
+                call.resolve(ret);
+                return;
+            }
+            if (!rootDocFile.canWrite()) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Drive folder not writable — re-connect di Sync Center");
+                ret.put("step", "canWrite");
+                call.resolve(ret);
+                return;
+            }
+
+            Log.i(TAG, "uploadFile: rootDocFile OK, canWrite=true");
+
+            // Create Events/ subfolder
+            DocumentFile eventsFolder = rootDocFile.findFile("Events");
+            if (eventsFolder == null || !eventsFolder.isDirectory()) {
+                eventsFolder = rootDocFile.createDirectory("Events");
+                Log.i(TAG, "uploadFile: created Events/ folder");
+            }
+            if (eventsFolder == null) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Cannot create Events folder in Drive");
+                ret.put("step", "create_Events");
+                call.resolve(ret);
+                return;
+            }
+
+            // Create Events/<EventName>/ subfolder
+            String sanitizedName = projectName.replaceAll("[^a-zA-Z0-9_\\-\\s]", "").replaceAll("\\s+", "_");
+            if (sanitizedName.isEmpty()) sanitizedName = "default";
+
+            DocumentFile eventFolder = eventsFolder.findFile(sanitizedName);
+            if (eventFolder == null || !eventFolder.isDirectory()) {
+                eventFolder = eventsFolder.createDirectory(sanitizedName);
+                Log.i(TAG, "uploadFile: created Events/" + sanitizedName + "/ folder");
+            }
+            if (eventFolder == null) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Cannot create event folder: " + sanitizedName);
+                ret.put("step", "create_event_folder");
+                call.resolve(ret);
+                return;
+            }
+
+            // Create Events/<EventName>/Photos/ or Videos/ subfolder
+            String typeSubfolder = mimeType.startsWith("video/") ? "Videos" : "Photos";
+            DocumentFile typeFolder = eventFolder.findFile(typeSubfolder);
+            if (typeFolder == null || !typeFolder.isDirectory()) {
+                typeFolder = eventFolder.createDirectory(typeSubfolder);
+                Log.i(TAG, "uploadFile: created Events/" + sanitizedName + "/" + typeSubfolder + "/ folder");
+            }
+            if (typeFolder == null) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Cannot create " + typeSubfolder + " folder");
+                ret.put("step", "create_type_folder");
+                call.resolve(ret);
+                return;
+            }
+
+            // Create file in Drive folder
+            DocumentFile driveFile = typeFolder.createFile(mimeType, filename);
+            if (driveFile == null) {
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "createFile returned null for " + filename);
+                ret.put("step", "createFile");
+                call.resolve(ret);
+                return;
+            }
+
+            Log.i(TAG, "uploadFile: created file " + filename + " → " + driveFile.getUri());
+
+            // Copy bytes: local file → Drive document
+            Uri localUri = Uri.parse(localPath);
+            InputStream input = getContext().getContentResolver().openInputStream(localUri);
+            if (input == null) {
+                try { driveFile.delete(); } catch (Exception _e) {}
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Cannot open input stream for local file: " + localPath);
+                ret.put("step", "open_input_stream");
+                call.resolve(ret);
+                return;
+            }
+            OutputStream output = getContext().getContentResolver().openOutputStream(driveFile.getUri());
+            if (output == null) {
+                input.close();
+                try { driveFile.delete(); } catch (Exception _e) {}
+                JSObject ret = new JSObject();
+                ret.put("success", false);
+                ret.put("error", "Cannot open output stream for Drive document");
+                ret.put("step", "open_output_stream");
+                call.resolve(ret);
+                return;
+            }
+
+            byte[] buffer = new byte[8192];
+            int read;
+            long totalBytes = 0;
+            while ((read = input.read(buffer)) > 0) {
+                output.write(buffer, 0, read);
+                totalBytes += read;
+            }
+            output.flush();
+            input.close();
+            output.close();
+
+            Log.i(TAG, "uploadFile SUCCESS: " + filename + " (" + totalBytes + " bytes) → Events/" + sanitizedName + "/" + typeSubfolder + "/");
+
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("driveUri", driveFile.getUri().toString());
+            ret.put("bytesUploaded", totalBytes);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e(TAG, "uploadFile EXCEPTION: " + e.getMessage(), e);
+            JSObject ret = new JSObject();
+            ret.put("success", false);
+            ret.put("error", e.getMessage() != null ? e.getMessage() : e.toString());
+            ret.put("step", "exception");
+            call.resolve(ret);
+        }
+    }
+
+    /**
      * v4.7.9: Process next upload from SQLite queue. Reliable — dequeue + upload + mark done/failed.
      * Returns detail: { processed, success, filename, error, queueSize, totalUploaded }
      */

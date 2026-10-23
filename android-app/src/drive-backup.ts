@@ -37,7 +37,13 @@ export interface DriveBackupPlugin {
     filename: string
     projectName?: string
     mimeType?: string
-  }): Promise<{ success: boolean; driveUri: string }>
+  }): Promise<{
+    success: boolean
+    driveUri?: string
+    bytesUploaded?: number
+    error?: string
+    step?: string
+  }>
 
   // v4.7.6: Upload queue with retry
   enqueueUpload(options: {
