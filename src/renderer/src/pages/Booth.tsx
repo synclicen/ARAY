@@ -907,13 +907,11 @@ export function BoothPage() {
           }`}
           style={{
             filter: activeFilter.css,
-            // v4.7.17: Consistent aspect ratio display — object-cover fills container,
-            // aspect-ratio CSS ensures correct crop untuk semua ratio.
-            // Sama seperti Electron: video fills available space, cropped to ratio.
             aspectRatio: currentAspectRatio.replace(':', ' / '),
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover'
+            maxHeight: '100dvh',
+            maxWidth: '100%',
+            width: currentAspectRatio === '16:9' ? '100%' : 'auto',
+            height: currentAspectRatio === '16:9' ? '100%' : '100dvh'
           }}
         />
       </div>
@@ -1346,41 +1344,17 @@ export function BoothPage() {
 
             {mode === 'video' ? (
               isRecording ? (
-                // v4.5.10: During recording — no red circle (RECORDING overlay di bawah sudah cukup)
                 null
               ) : (
-                // v4.7.17: Before recording — aspect ratio selector + record button
-                <div className="flex flex-col items-center gap-3">
-                  {!fullscreenBooth && (
-                    <div className="flex items-center gap-1.5 bg-black/50 backdrop-blur-md rounded-full px-2 py-1.5">
-                      {(['9:16', '1:1', '4:3', '16:9'] as const).map((r) => (
-                        <button
-                          key={r}
-                          onClick={() => {
-                            setAspectRatioVideo(r)
-                            updateSettings({ aspect_ratio_video: r })
-                          }}
-                          className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                            currentAspectRatio === r
-                              ? 'bg-purple-haze-500/30 text-purple-haze-100 border border-purple-haze-400/40'
-                              : 'text-silver-500 hover:text-silver-300'
-                          }`}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <button
-                    onClick={() => {
-                      setPhase('countdown')
-                      runCountdown()
-                    }}
-                    className="w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold"
-                  >
-                    <Video className="w-10 h-10 text-purple-haze-950" />
-                  </button>
-                </div>
+                <button
+                  onClick={() => {
+                    setPhase('countdown')
+                    runCountdown()
+                  }}
+                  className="w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold"
+                >
+                  <Video className="w-10 h-10 text-purple-haze-950" />
+                </button>
               )
             ) : null}
           </motion.div>
@@ -1628,28 +1602,7 @@ export function BoothPage() {
           v4.1.8: SELALU tampil termasuk saat fullscreen booth.
           Shot count "1/2" digabung di dalam lingkaran shutter (compact format). */}
       {phase === 'preview' && mode === 'photo' && (
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center gap-3">
-          {/* v4.7.17: Aspect ratio quick selector — sama seperti Electron */}
-          {!fullscreenBooth && (
-            <div className="flex items-center gap-1.5 bg-black/50 backdrop-blur-md rounded-full px-2 py-1.5">
-              {(['9:16', '1:1', '4:3', '16:9'] as const).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => {
-                    setAspectRatio(r)
-                    updateSettings({ aspect_ratio: r })
-                  }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                    currentAspectRatio === r
-                      ? 'bg-purple-haze-500/30 text-purple-haze-100 border border-purple-haze-400/40'
-                      : 'text-silver-500 hover:text-silver-300'
-                  }`}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
           <button
             onClick={() => {
               setPhase('countdown')
