@@ -37,10 +37,22 @@ export const useEventStore = create<EventStore>((set, get) => ({
   },
 
   createEvent: async (input) => {
+    // v4.7.21: Cek existing di store dulu — prevent double-add ke UI
+    const existing = get().events.find(e =>
+      e.name === input.name && e.event_date === (input.event_date || undefined)
+    )
+    if (existing) {
+      console.log('[EventStore] createEvent DEDUP — returning existing:', existing.id)
+      set({ activeEventId: existing.id })
+      return existing
+    }
     const result = await window.aray.events.create(input)
     if (result.success) {
       const event = result.data as ArayEvent
-      set({ events: [event, ...get().events], activeEventId: event.id })
+      // Cek lagi — mungkin dah ada dari call lain
+      if (!get().events.find(e => e.id === event.id)) {
+        set({ events: [event, ...get().events], activeEventId: event.id })
+      }
       return event
     }
     return null

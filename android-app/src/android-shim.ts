@@ -424,19 +424,22 @@ const arayAPI = {
     },
     list: async () => {
       const db = await loadDB()
-      // v4.7.20: Dedup saat list — hapus event duplikat dengan code sama.
-      // Keep yang pertama (paling lama), hapus sisanya.
+      // v4.7.21: Dedup — hapus event duplikat berdasarkan NAMA + DATE (bukan code).
+      // 2 event duplikat punya code BERBEDA (0001 vs 0002) karena race condition.
+      // Tapi nama + date pasti sama.
       const seen = new Set<string>()
       const deduped = []
       for (const e of db.events) {
-        if (e.code && seen.has(e.code)) {
-          console.log('[ARAY] events.list DEDUP — removing duplicate:', e.code, e.id)
+        const key = `${e.name}|${e.event_date||''}`
+        if (seen.has(key)) {
+          console.log('[ARAY] events.list DEDUP — removing duplicate:', e.name, e.id)
           continue
         }
-        seen.add(e.code)
+        seen.add(key)
         deduped.push(e)
       }
       if (deduped.length !== db.events.length) {
+        console.log('[ARAY] events.list — removed', db.events.length - deduped.length, 'duplicates')
         db.events = deduped
         await Preferences.set({ key: DB_KEY, value: JSON.stringify(db) })
         _dbCache = db
