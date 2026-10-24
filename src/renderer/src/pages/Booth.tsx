@@ -203,11 +203,20 @@ export function BoothPage() {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
+    // v4.7.22: Clear video srcObject supaya tidak stuck di stream mati
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
   }, [])
 
   const startCamera = useCallback(async () => {
     try {
       setError(null)
+      // v4.7.22: Stop existing stream dulu (kalau ada yang zombie)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+      }
       // v4.6.5: pakai setting camera_facing ('user' atau 'environment').
       // Default 'user' (front) untuk kompatibilitas dengan versi sebelumnya.
       const facingMode = settings?.camera_facing ?? 'user'
@@ -227,7 +236,12 @@ export function BoothPage() {
       streamRef.current = stream
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        await videoRef.current.play()
+        // v4.7.22: Wait for loadedmetadata sebelum play — prevent black screen
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current?.play().catch(() => {})
+        }
+        // Fallback: try play after 200ms
+        setTimeout(() => { videoRef.current?.play().catch(() => {}) }, 200)
       }
       return true
     } catch (e: any) {
@@ -690,6 +704,9 @@ export function BoothPage() {
     }
 
     const shotToCapture = retakeShotNumber ?? currentShot
+    // v4.7.22: Set phase='countdown' di sini juga (bukan hanya di caller)
+    // supaya countdown pasti muncul bahkan kalau caller lupa set phase
+    setPhase('countdown')
     for (let i = countdownSeconds; i > 0; i--) {
       setCountdown(i)
       await sleep(1000)
@@ -741,6 +758,19 @@ export function BoothPage() {
 
   // v4.6.4: Determine if mode selector should be shown in greeting
   const showModeSelector = boothModeSetting === 'combined'
+
+  // v4.7.22: Cleanup camera on unmount — prevent zombie stream + black screen
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null
+      }
+    }
+  }, [])
 
   // Auto-start camera on greeting screen for live background
   useEffect(() => {

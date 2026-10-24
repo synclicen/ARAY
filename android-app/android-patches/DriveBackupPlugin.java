@@ -69,16 +69,16 @@ public class DriveBackupPlugin extends Plugin {
     }
 
     /**
-     * Create a subfolder inside a tree URI using DocumentsContract.
-     * Port dari Saatiril-Andro PhotoSaver.createSubfolder.
-     * Returns: document URI of the new/existing folder, or null on failure.
+     * v4.7.22: Create a subfolder — robust against Google Drive duplicate name issue.
+     * Google Drive allows 2 folders with same name. If createDocument returns
+     * a folder with " (1)" suffix, we find and return the original.
      */
     private Uri createSubfolder(Uri treeUri, String folderName) {
         Log.i(TAG, "createSubfolder: name=" + folderName);
         try {
             Uri parentDocUri = normalizeToDocumentUri(treeUri);
 
-            // Check if folder already exists
+            // Check if folder already exists — query children
             String parentDocId = DocumentsContract.getDocumentId(parentDocUri);
             Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parentDocUri, parentDocId);
             android.database.Cursor cursor = getContext().getContentResolver().query(
@@ -95,23 +95,53 @@ public class DriveBackupPlugin extends Plugin {
                         String docId = cursor.getString(0);
                         Uri existingUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
                         cursor.close();
-                        Log.i(TAG, "createSubfolder: existing folder → " + existingUri);
+                        Log.i(TAG, "createSubfolder: existing folder found → " + existingUri);
                         return existingUri;
                     }
                 }
                 cursor.close();
             }
 
-            // Create new folder
+            // Not found — create new
             Uri docUri = DocumentsContract.createDocument(
                     getContext().getContentResolver(),
                     parentDocUri,
                     MIME_DIR,
                     folderName);
             if (docUri == null) {
-                Log.e(TAG, "createSubfolder FAILED: createDocument returned null for " + folderName);
+                Log.e(TAG, "createSubfolder FAILED: createDocument returned null");
                 return null;
             }
+
+            // v4.7.22: Check if Google Drive added " (1)" suffix (duplicate name).
+            // If so, query again for the original name and return that instead.
+            String createdName = docUri.getLastPathSegment();
+            if (createdName != null && createdName.contains("%20(1)")) {
+                Log.w(TAG, "createSubfolder: duplicate detected (" + createdName + ") — finding original");
+                cursor = getContext().getContentResolver().query(
+                        childrenUri,
+                        new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                                     DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                                     DocumentsContract.Document.COLUMN_MIME_TYPE},
+                        null, null, null);
+                if (cursor != null) {
+                    while (cursor.moveToNext()) {
+                        String name = cursor.getString(1);
+                        String mime = cursor.getString(2);
+                        if (folderName.equals(name) && MIME_DIR.equals(mime)) {
+                            String docId = cursor.getString(0);
+                            Uri existingUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
+                            cursor.close();
+                            // Delete the duplicate we just created
+                            try { DocumentsContract.deleteDocument(getContext().getContentResolver(), docUri); } catch (Exception _e) {}
+                            Log.i(TAG, "createSubfolder: returning original, deleted duplicate");
+                            return existingUri;
+                        }
+                    }
+                    cursor.close();
+                }
+            }
+
             Log.i(TAG, "createSubfolder SUCCESS: " + folderName + " → " + docUri);
             return docUri;
         } catch (Exception e) {
