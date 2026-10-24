@@ -26,6 +26,15 @@ import { DriveBackup } from './drive-backup'
 
 const DB_KEY = 'aray_database'
 
+// v4.7.19: Synchronous lock untuk prevent double-create race condition.
+// Module-level variable — checked BEFORE any async operations.
+// Tidak bisa pakai dedup check di async function karena race condition:
+// Call 1: loadDB() → no existing → create → saveDB() (async, debounced)
+// Call 2: loadDB() → no existing (Call 1 belum save) → create → saveDB()
+// Result: 2 events dengan code sama.
+// Fix: _createLock synchronous — block Call 2 immediately sebelum loadDB.
+let _createEventLock = false
+
 // v4.7.0: Pakai Directory.Documents supaya foto bisa diakses user via file manager.
 // Path: /storage/emulated/0/Documents/ARAY/<event_id>/<media_id>.jpg
 // User bisa browse dengan app "Files" bawaan Android.
@@ -368,30 +377,50 @@ const arayAPI = {
   },
   events: {
     create: async (input: any) => {
-      const db = await loadDB()
-      // v4.7.16: Dedup — cek apakah event dengan nama + date yang sama sudah ada
-      // (dibuat dalam 5 detik terakhir). Prevent double-create dari race condition.
-      const now = Date.now()
-      const existing = db.events.find((e:any) =>
-        e.name === input.name &&
-        e.event_date === (input.event_date||null) &&
-        (now - new Date(e.created_at).getTime()) < 5000
-      )
-      if (existing) {
-        console.log('[ARAY] events.create DEDUP — returning existing event:', existing.id)
-        return { success: true, data: existing }
+      // v4.7.19: Synchronous lock — block immediately jika sedang creating
+      if (_createEventLock) {
+        console.log('[ARAY] events.create BLOCKED — another create in progress')
+        // Wait sampai lock release, lalu return existing event
+        await new Promise(resolve => setTimeout(resolve, 500))
+        const db = await loadDB()
+        const existing = db.events.find((e:any) =>
+          e.name === input.name && e.event_date === (input.event_date||null)
+        )
+        if (existing) return { success: true, data: existing }
       }
-      const ev = { id: crypto.randomUUID(),
-        code: `ARAY_EVENT_${new Date().getFullYear()}_${String(db.events.length+1).padStart(4,'0')}`,
-        name: input.name, client: input.client||null, venue: input.venue||null,
-        event_date: input.event_date||null, operator: input.operator||null,
-        template_id: input.template_id||null, storage_path: '',
-        google_drive_folder_id: null, sync_status: 'LOCAL_ONLY', status: 'active',
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+      _createEventLock = true  // LOCK — synchronous, immediate
+
+      try {
+        const db = await loadDB()
+        // Dedup check — cek event dengan nama + date yang sama
+        const now = Date.now()
+        const existing = db.events.find((e:any) =>
+          e.name === input.name &&
+          e.event_date === (input.event_date||null) &&
+          (now - new Date(e.created_at).getTime()) < 10000
+        )
+        if (existing) {
+          console.log('[ARAY] events.create DEDUP — returning existing:', existing.id)
+          return { success: true, data: existing }
+        }
+        const ev = { id: crypto.randomUUID(),
+          code: `ARAY_EVENT_${new Date().getFullYear()}_${String(db.events.length+1).padStart(4,'0')}`,
+          name: input.name, client: input.client||null, venue: input.venue||null,
+          event_date: input.event_date||null, operator: input.operator||null,
+          template_id: input.template_id||null, storage_path: '',
+          google_drive_folder_id: null, sync_status: 'LOCAL_ONLY', status: 'active',
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString()
+        }
+        db.events.unshift(ev)
+        // v4.7.19: Force immediate save (tidak debounce) supaya lock release aman
+        await Preferences.set({ key: DB_KEY, value: JSON.stringify(db) })
+        _dbCache = db
+        _dbCacheDirty = false
+        console.log('[ARAY] events.create OK:', ev.name, ev.id)
+        return { success: true, data: ev }
+      } finally {
+        _createEventLock = false  // UNLOCK
       }
-      db.events.unshift(ev); await saveDB(db)
-      console.log('[ARAY] events.create OK:', ev.name, ev.id)
-      return { success: true, data: ev }
     },
     list: async () => { const db = await loadDB(); return { success: true, data: db.events }},
     get: async (id: string) => { const db = await loadDB(); return { success: true, data: db.events.find((e:any)=>e.id===id)||null }},
