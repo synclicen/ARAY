@@ -1143,13 +1143,7 @@ export function BoothPage() {
       {/* Phases */}
       <AnimatePresence mode="wait">
         {phase === 'greeting' && (
-          <motion.div
-            key="greeting"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.96 }}
-            className="absolute inset-0 z-10 flex flex-col items-center justify-center"
-          >
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
             {/* v4.7.13: Simplified overlay — lighter for Android WebView performance */}
             <div className="absolute inset-0 bg-surface-base/70" />
             <div className="relative z-10 text-center">
@@ -1204,17 +1198,11 @@ export function BoothPage() {
                 LET'S YAP!
               </ArayButton>
             </div>
-          </motion.div>
-        )}
+        </div>
+      )}
 
-        {phase === 'preview' && (
-          <motion.div
-            key="preview"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-10 flex flex-col items-center justify-end pb-12"
-          >
+      {phase === 'preview' && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-end pb-12">
             {/* Shot progress (photo mode only) — hidden saat fullscreen booth saja.
                 Kiosk mode tetap tampilkan (user perlu tahu progress). */}
             {mode === 'photo' && !fullscreenBooth && (
@@ -1390,70 +1378,31 @@ export function BoothPage() {
                 </button>
               )
             ) : null}
-          </motion.div>
-        )}
+        </div>
+      )}
 
-        {phase === 'countdown' && (
-          <motion.div
-            key="countdown"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
-          >
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={countdown}
-                initial={{ scale: 0.3, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 1.6, opacity: 0 }}
-                transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                className="text-[200px] font-extrabold aray-gradient-text"
-                style={{ textShadow: '0 0 60px rgba(123, 97, 168, 0.6)' }}
-              >
-                {countdown}
-              </motion.div>
-            </AnimatePresence>
-          </motion.div>
-        )}
+      {phase === 'countdown' && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+            <div className="text-[200px] font-extrabold aray-gradient-text" style={{ textShadow: '0 0 60px rgba(123, 97, 168, 0.6)' }}>
+              {countdown}
+            </div>
+        </div>
+      )}
 
-        {phase === 'flash' && (
-          <motion.div
-            key="flash"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none"
-          >
-            <motion.div
-              initial={{ scale: 0.5, opacity: 0 }}
-              animate={{ scale: 1.2, opacity: 1 }}
-              transition={{ duration: 0.3 }}
-              className="text-7xl font-extrabold aray-gradient-text"
-              style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.8)' }}
-            >
+      {phase === 'flash' && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+            <div className="text-7xl font-extrabold aray-gradient-text" style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.8)' }}>
               YAP!
-            </motion.div>
-          </motion.div>
-        )}
+            </div>
+        </div>
+      )}
 
-        {phase === 'result' && (
-          <motion.div
-            key="result"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-8 overflow-auto"
-          >
+      {phase === 'result' && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-8 overflow-auto">
             <div className="text-center mb-6">
-              <motion.h1
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ type: 'spring', stiffness: 200, damping: 12 }}
-                className="text-3xl xs:text-4xl sm:text-5xl font-extrabold mb-2 aray-gradient-text"
-              >
+              <h1 className="text-3xl xs:text-4xl sm:text-5xl font-extrabold mb-2 aray-gradient-text">
                 LOOK AT YOU!
-              </motion.h1>
+              </h1>
               <p className="text-silver-300 text-lg italic">Your memories are ready.</p>
             </div>
 
@@ -1592,8 +1541,8 @@ export function BoothPage() {
                 Done
               </ArayButton>
             </div>
-          </motion.div>
-        )}
+        </div>
+      )}
 
         {phase === 'error' && (
           <motion.div

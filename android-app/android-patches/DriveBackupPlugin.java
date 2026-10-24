@@ -40,6 +40,10 @@ public class DriveBackupPlugin extends Plugin {
     private static final String MIME_VIDEO = "video/webm";
     private static final String MIME_DIR = DocumentsContract.Document.MIME_TYPE_DIR;
 
+    // v4.7.23: Cache folder URIs — prevent duplicate folder creation.
+    // Key = "treeUri|Events/EventName/Photos", Value = document URI
+    private java.util.Map<String, Uri> folderCache = new java.util.concurrent.ConcurrentHashMap<>();
+
     // ════════════════════════════════════════════════════════════════════════
     // SAF helper — normalize tree URI to document URI (CRITICAL!)
     // Port dari Saatiril-Andro PhotoSaver.normalizeToDocumentUri
@@ -73,14 +77,28 @@ public class DriveBackupPlugin extends Plugin {
      * Google Drive allows 2 folders with same name. If createDocument returns
      * a folder with " (1)" suffix, we find and return the original.
      */
+    /**
+     * v4.7.23: Create subfolder dengan CACHE — prevent duplicate folder creation.
+     * Google Drive allows duplicate folder names → query mungkin tidak find existing
+     * karena eventual consistency. Cache memastikan folder hanya dibuat SEKALI.
+     */
     private Uri createSubfolder(Uri treeUri, String folderName) {
+        String cacheKey = treeUri.toString() + "|" + folderName;
+        
+        // Cek cache dulu — jika sudah pernah dibuat, return cached URI
+        Uri cached = folderCache.get(cacheKey);
+        if (cached != null) {
+            Log.i(TAG, "createSubfolder CACHE HIT: " + folderName);
+            return cached;
+        }
+        
         Log.i(TAG, "createSubfolder: name=" + folderName);
         try {
             Uri parentDocUri = normalizeToDocumentUri(treeUri);
-
-            // Check if folder already exists — query children
             String parentDocId = DocumentsContract.getDocumentId(parentDocUri);
             Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(parentDocUri, parentDocId);
+            
+            // Query children untuk find existing folder
             android.database.Cursor cursor = getContext().getContentResolver().query(
                     childrenUri,
                     new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -95,7 +113,8 @@ public class DriveBackupPlugin extends Plugin {
                         String docId = cursor.getString(0);
                         Uri existingUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
                         cursor.close();
-                        Log.i(TAG, "createSubfolder: existing folder found → " + existingUri);
+                        folderCache.put(cacheKey, existingUri);
+                        Log.i(TAG, "createSubfolder: existing found → " + existingUri);
                         return existingUri;
                     }
                 }
@@ -112,37 +131,10 @@ public class DriveBackupPlugin extends Plugin {
                 Log.e(TAG, "createSubfolder FAILED: createDocument returned null");
                 return null;
             }
-
-            // v4.7.22: Check if Google Drive added " (1)" suffix (duplicate name).
-            // If so, query again for the original name and return that instead.
-            String createdName = docUri.getLastPathSegment();
-            if (createdName != null && createdName.contains("%20(1)")) {
-                Log.w(TAG, "createSubfolder: duplicate detected (" + createdName + ") — finding original");
-                cursor = getContext().getContentResolver().query(
-                        childrenUri,
-                        new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-                                     DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-                                     DocumentsContract.Document.COLUMN_MIME_TYPE},
-                        null, null, null);
-                if (cursor != null) {
-                    while (cursor.moveToNext()) {
-                        String name = cursor.getString(1);
-                        String mime = cursor.getString(2);
-                        if (folderName.equals(name) && MIME_DIR.equals(mime)) {
-                            String docId = cursor.getString(0);
-                            Uri existingUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId);
-                            cursor.close();
-                            // Delete the duplicate we just created
-                            try { DocumentsContract.deleteDocument(getContext().getContentResolver(), docUri); } catch (Exception _e) {}
-                            Log.i(TAG, "createSubfolder: returning original, deleted duplicate");
-                            return existingUri;
-                        }
-                    }
-                    cursor.close();
-                }
-            }
-
-            Log.i(TAG, "createSubfolder SUCCESS: " + folderName + " → " + docUri);
+            
+            // Cache the new folder
+            folderCache.put(cacheKey, docUri);
+            Log.i(TAG, "createSubfolder CREATED + CACHED: " + folderName + " → " + docUri);
             return docUri;
         } catch (Exception e) {
             Log.e(TAG, "createSubfolder FAILED: " + e.getMessage(), e);
@@ -216,6 +208,7 @@ public class DriveBackupPlugin extends Plugin {
         }
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         prefs.edit().putString(KEY_LOCAL_URI, treeUri.toString()).apply();
+        clearFolderCache();
         Log.i(TAG, "Local folder set: " + treeUri);
 
         JSObject ret = new JSObject();
@@ -426,6 +419,12 @@ public class DriveBackupPlugin extends Plugin {
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
         startActivityForResult(call, intent, "handleFolderPick");
+    }
+
+    // Clear folder cache when new folder picked
+    private void clearFolderCache() {
+        folderCache.clear();
+        Log.i(TAG, "Folder cache cleared");
     }
 
     @ActivityCallback
