@@ -422,7 +422,28 @@ const arayAPI = {
         _createEventLock = false  // UNLOCK
       }
     },
-    list: async () => { const db = await loadDB(); return { success: true, data: db.events }},
+    list: async () => {
+      const db = await loadDB()
+      // v4.7.20: Dedup saat list — hapus event duplikat dengan code sama.
+      // Keep yang pertama (paling lama), hapus sisanya.
+      const seen = new Set<string>()
+      const deduped = []
+      for (const e of db.events) {
+        if (e.code && seen.has(e.code)) {
+          console.log('[ARAY] events.list DEDUP — removing duplicate:', e.code, e.id)
+          continue
+        }
+        seen.add(e.code)
+        deduped.push(e)
+      }
+      if (deduped.length !== db.events.length) {
+        db.events = deduped
+        await Preferences.set({ key: DB_KEY, value: JSON.stringify(db) })
+        _dbCache = db
+        _dbCacheDirty = false
+      }
+      return { success: true, data: db.events }
+    },
     get: async (id: string) => { const db = await loadDB(); return { success: true, data: db.events.find((e:any)=>e.id===id)||null }},
     update: async (input: any) => {
       const db = await loadDB()

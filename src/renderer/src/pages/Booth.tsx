@@ -910,8 +910,11 @@ export function BoothPage() {
             aspectRatio: currentAspectRatio.replace(':', ' / '),
             maxHeight: '100dvh',
             maxWidth: '100%',
-            width: currentAspectRatio === '16:9' ? '100%' : 'auto',
-            height: currentAspectRatio === '16:9' ? '100%' : '100dvh'
+            // v4.7.20: Untuk rasio landscape (16:9, 4:3) di screen portrait,
+            // width harus 100% dan height auto — supaya aspectRatio berlaku.
+            // Untuk rasio portrait (9:16) dan square (1:1), height 100dvh dan width auto.
+            width: (currentAspectRatio === '16:9' || currentAspectRatio === '4:3') ? '100%' : 'auto',
+            height: (currentAspectRatio === '16:9' || currentAspectRatio === '4:3') ? 'auto' : '100dvh'
           }}
         />
       </div>
