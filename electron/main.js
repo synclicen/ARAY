@@ -755,38 +755,52 @@ function generateEventCode() {
   const count = db.events.filter((e) => e.code?.startsWith(`ARAY_EVENT_${year}_`)).length;
   return `ARAY_EVENT_${year}_${String(count + 1).padStart(4, "0")}`;
 }
+var _createEventLock = false;
 function createEvent(input) {
-  const db = loadDB();
-  const now = Date.now();
-  const existing = db.events.find(
-    (e) => e.name === input.name && e.event_date === (input.event_date || null) && now - new Date(e.created_at).getTime() < 5e3
-  );
-  if (existing) {
-    console.log("[ARAY] createEvent DEDUP \u2014 returning existing:", existing.id);
-    return existing;
+  if (_createEventLock) {
+    console.log("[ARAY] createEvent BLOCKED \u2014 another create in progress");
+    const db = loadDB();
+    const existing = db.events.find(
+      (e) => e.name === input.name && e.event_date === (input.event_date || null)
+    );
+    if (existing) return existing;
   }
-  const isoNow = (/* @__PURE__ */ new Date()).toISOString();
-  const event = {
-    id: crypto2.randomUUID(),
-    code: generateEventCode(),
-    name: input.name,
-    client: input.client || null,
-    venue: input.venue || null,
-    event_date: input.event_date || null,
-    operator: input.operator || null,
-    template_id: input.template_id || null,
-    storage_path: "",
-    google_drive_folder_id: null,
-    sync_status: "LOCAL_ONLY",
-    status: "active",
-    created_at: isoNow,
-    updated_at: isoNow
-  };
-  db.events.unshift(event);
-  saveDB(db);
-  ensureEventStorage(event);
-  saveDB(loadDB());
-  return event;
+  _createEventLock = true;
+  try {
+    const db = loadDB();
+    const now = Date.now();
+    const existing = db.events.find(
+      (e) => e.name === input.name && e.event_date === (input.event_date || null) && now - new Date(e.created_at).getTime() < 1e4
+    );
+    if (existing) {
+      console.log("[ARAY] createEvent DEDUP \u2014 returning existing:", existing.id);
+      return existing;
+    }
+    const isoNow = (/* @__PURE__ */ new Date()).toISOString();
+    const event = {
+      id: crypto2.randomUUID(),
+      code: generateEventCode(),
+      name: input.name,
+      client: input.client || null,
+      venue: input.venue || null,
+      event_date: input.event_date || null,
+      operator: input.operator || null,
+      template_id: input.template_id || null,
+      storage_path: "",
+      google_drive_folder_id: null,
+      sync_status: "LOCAL_ONLY",
+      status: "active",
+      created_at: isoNow,
+      updated_at: isoNow
+    };
+    db.events.unshift(event);
+    saveDB(db);
+    ensureEventStorage(event);
+    saveDB(loadDB());
+    return event;
+  } finally {
+    _createEventLock = false;
+  }
 }
 function listEvents(includeArchived = false) {
   const db = loadDB();
