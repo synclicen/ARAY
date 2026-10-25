@@ -141,6 +141,7 @@ export function BoothPage() {
   const [compositing, setCompositing] = useState(false)
   const [compositeMediaId, setCompositeMediaId] = useState<string | null>(null)
   const [queueNumber, setQueueNumber] = useState<string>('...')  // v4.7.30: nomor antrean foto
+  const [hidePalmTrigger, setHidePalmTrigger] = useState(false)  // v4.7.34: block palm UI saat video countdown
   const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
   const [palmTriggerActive, setPalmTriggerActive] = useState(false)
   const [palmState, setPalmState] = useState<'none' | 'searching' | 'hand_detected' | 'confirmed' | 'triggered'>('none')
@@ -1267,6 +1268,7 @@ export function BoothPage() {
                   setCompositeUrl(null)
                   setCompositeMediaId(null)
                   ;(window as any).__aray_current_session_id = undefined
+                  setHidePalmTrigger(false)
                   setPhase('preview')
                 }}
                 className="text-lg px-12 py-4"
@@ -1302,7 +1304,7 @@ export function BoothPage() {
             {/* ═══ PALM TRIGGER OVERLAY (minimal — hanya hand outline di tengah) ═══ */}
 
             {/* Loading state — kecil di pojok, tidak mengganggu */}
-            {phase === 'preview' && !isRecording && palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
+            {phase === 'preview' && !isRecording && !hidePalmTrigger && palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
               <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-black/60 rounded-full px-3 py-1.5">
                 <RefreshCw className="w-3 h-3 animate-spin text-purple-haze-200" />
                 <span className="text-purple-haze-100 text-xs">
@@ -1312,7 +1314,7 @@ export function BoothPage() {
             )}
 
             {/* Error state — kecil di pojok */}
-            {phase === 'preview' && !isRecording && palmTriggerActive && palmStatus === 'error' && (
+            {phase === 'preview' && !isRecording && !hidePalmTrigger && palmTriggerActive && palmStatus === 'error' && (
               <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-3 py-1.5">
                 <AlertTriangle className="w-3 h-3 text-red-300" />
                 <span className="text-red-100 text-xs">Palm error</span>
@@ -1320,7 +1322,7 @@ export function BoothPage() {
             )}
 
             {/* CONFIRMED state: big "SIAP" overlay — pull hand away to trigger */}
-            {phase === 'preview' && !isRecording && palmTriggerActive && palmState === 'confirmed' && (
+            {phase === 'preview' && !isRecording && !hidePalmTrigger && palmTriggerActive && palmState === 'confirmed' && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1346,7 +1348,7 @@ export function BoothPage() {
             {/* HAND GUIDE OVERLAY — tampil di none/searching/hand_detected.
                 HANYA ini yang muncul di tengah. Tidak ada teks bahasa ganda.
                 Outline ungu (cari) → hijau (hand_detected). */}
-            {phase === 'preview' && !isRecording && palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
+            {phase === 'preview' && !isRecording && !hidePalmTrigger && palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
              palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                 <div className="text-center">
@@ -1445,7 +1447,8 @@ export function BoothPage() {
               ) : (
                 <button
                   onClick={() => {
-                    // v4.7.29: Stop palm trigger BEFORE countdown — prevent glitch
+                    // v4.7.34: Set hidePalmTrigger SEBELUM countdown — prevent glitch
+                    setHidePalmTrigger(true)
                     if (palmTriggerRef.current) {
                       palmTriggerRef.current.dispose?.()
                       palmTriggerRef.current = null
@@ -1619,6 +1622,7 @@ export function BoothPage() {
                   setCompositeUrl(null)
                   setCompositeMediaId(null)
                   ;(window as any).__aray_current_session_id = undefined
+                  setHidePalmTrigger(false)
                   setPhase('greeting')
                 }}
               >
@@ -1671,7 +1675,8 @@ export function BoothPage() {
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
           <button
             onClick={() => {
-              // v4.7.29: Stop palm trigger BEFORE countdown — prevent glitch
+              // v4.7.34: Set hidePalmTrigger SEBELUM countdown
+              setHidePalmTrigger(true)
               if (palmTriggerRef.current) {
                 palmTriggerRef.current.dispose?.()
                 palmTriggerRef.current = null
