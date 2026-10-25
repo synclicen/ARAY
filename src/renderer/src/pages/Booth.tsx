@@ -1431,9 +1431,16 @@ export function BoothPage() {
 
       {phase === 'flash' && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-            <div className="text-7xl font-extrabold aray-gradient-text" style={{ textShadow: '0 0 80px rgba(212, 175, 55, 0.8)' }}>
-              YAP!
-            </div>
+          {/* v4.7.28: YAP! dengan animasi zoom — CSS animation, tidak pakai framer-motion */}
+          <div
+            className="text-7xl xs:text-8xl font-extrabold aray-gradient-text"
+            style={{
+              textShadow: '0 0 80px rgba(212, 175, 55, 0.8)',
+              animation: 'yapZoom 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards'
+            }}
+          >
+            YAP!
+          </div>
         </div>
       )}
 
