@@ -711,11 +711,7 @@ export function BoothPage() {
       setCountdown(i)
       await sleep(1000)
     }
-    // v4.7.25: Capture frame DULU (synchronous), LALU flash + YAP! bersamaan.
-    // Sebelumnya: setPhase('flash') + setLastFlash(true) adalah React state updates
-    // yang batched — belum render saat performCapture() capture frame.
-    // Akibatnya: flash muncul SETELAH capture, bukan bersamaan.
-    // Fix: captureFrame() synchronous di sini, lalu flash + YAP! + save bersamaan.
+    // v4.7.26: Capture frame DULU (synchronous), LALU flash + YAP! bersamaan.
     
     // 1. Capture frame dari video (synchronous, instant)
     const frames = captureFrame()
@@ -729,7 +725,10 @@ export function BoothPage() {
     setPhase('flash')
     setLastFlash(true)
     
-    // 3. Save ke disk (async, di background — flash tetap tampil selama save)
+    // 3. Simpan frame ke MEMORY saja (tidak save ke disk).
+    // Composite (dengan template) akan di-save ke disk di result phase.
+    // v4.7.26: JANGAN saveCapturedFrame — itu bikin 2 foto (raw + composite).
+    // Hanya composite yang disimpan ke disk.
     try {
       let sessionId = (window as any).__aray_current_session_id as string | undefined
       if (!sessionId) {
@@ -747,20 +746,8 @@ export function BoothPage() {
         }
         return [...prev, { shotNumber: shotNum, mediaId: '', dataUrl: frames.full }]
       })
-
-      const saveResult = await window.aray.media.saveCapturedFrame({
-        event_id: activeEvent.id,
-        session_id: sessionId,
-        frame_base64: frames.full.split(',')[1]
-      })
-
-      if (saveResult.success) {
-        const media = saveResult.data as ArayMedia
-        setCapturedShots((prev) => prev.map((s) => s.shotNumber === shotNum ? { ...s, mediaId: media.id } : s))
-        addMedia(media)
-      }
     } catch (e: any) {
-      console.error('[Booth] Capture save failed:', e)
+      console.error('[Booth] Capture failed:', e)
     }
     
     // 4. Flash off + tunggu sebentar sebelum next phase
