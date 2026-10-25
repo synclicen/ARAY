@@ -864,7 +864,17 @@ export function BoothPage() {
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
   useEffect(() => {
     // v4.5.4: Don't activate palm trigger during recording — prevent re-trigger
-    if (phase !== 'preview' || !settings?.palm_trigger || isRecording) return
+    // v4.7.29: Return early if not preview — but cleanup runs for ALL phase changes
+    if (phase !== 'preview' || !settings?.palm_trigger || isRecording) {
+      // v4.7.29: Force cleanup if palm trigger still active when leaving preview
+      if (palmTriggerRef.current) {
+        palmTriggerRef.current.dispose?.()
+        palmTriggerRef.current = null
+      }
+      setPalmTriggerActive(false)
+      setPalmState('none')
+      return
+    }
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1409,6 +1419,13 @@ export function BoothPage() {
               ) : (
                 <button
                   onClick={() => {
+                    // v4.7.29: Stop palm trigger BEFORE countdown — prevent glitch
+                    if (palmTriggerRef.current) {
+                      palmTriggerRef.current.dispose?.()
+                      palmTriggerRef.current = null
+                    }
+                    setPalmTriggerActive(false)
+                    setPalmState('none')
                     setPhase('countdown')
                     runCountdown()
                   }}
@@ -1634,6 +1651,13 @@ export function BoothPage() {
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-30">
           <button
             onClick={() => {
+              // v4.7.29: Stop palm trigger BEFORE countdown — prevent glitch
+              if (palmTriggerRef.current) {
+                palmTriggerRef.current.dispose?.()
+                palmTriggerRef.current = null
+              }
+              setPalmTriggerActive(false)
+              setPalmState('none')
               setPhase('countdown')
               runCountdown()
             }}
