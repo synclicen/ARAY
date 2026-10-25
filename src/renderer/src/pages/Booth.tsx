@@ -711,15 +711,12 @@ export function BoothPage() {
       setCountdown(i)
       await sleep(1000)
     }
-    setCountdown(0)
-    // v4.7.15: Tunggu 100ms supaya countdown "1" benar-benar hilang dari layar
-    // sebelum flash + YAP! muncul. Sebelumnya countdown "1" masih terlihat
-    // karena React belum re-render saat setPhase('flash') dipanggil.
-    await sleep(100)
+    // v4.7.24: JANGAN setCountdown(0) — itu menampilkan "0" di layar.
+    // Langsung set phase=flash + YAP! + flash bersamaan.
     setPhase('flash')
     setLastFlash(true)
-    setTimeout(() => setLastFlash(false), 200)
     await performCapture(shotToCapture)
+    setLastFlash(false)
     await sleep(300)
 
     // v4.6.2: If retaking, go back to result. Otherwise continue sequence.
