@@ -546,7 +546,10 @@ export function BoothPage() {
             })
             console.log('[Booth] Save result:', saveResult.success)
             if (saveResult.success) {
-              addMedia(saveResult.data as ArayMedia)
+              const videoMedia = saveResult.data as ArayMedia
+              addMedia(videoMedia)
+              // v4.7.31: Set compositeMediaId untuk video juga — supaya queueNumber tampil
+              setCompositeMediaId(videoMedia.id)
               console.log('[Booth] Video saved successfully!')
             } else {
               console.error('[Booth] Save failed:', (saveResult as any).error)
@@ -721,9 +724,13 @@ export function BoothPage() {
         await sleep(1000)
       }
       setCountdown(0)
-      setPhase('preview')
+      // v4.7.31: JANGAN setPhase('preview') — itu re-activate palm trigger.
+      // Pakai phase 'flash' sebagai transitional sebelum recording.
+      setPhase('flash')
+      setLastFlash(true)
       await sleep(200)
-      startRecording()
+      setLastFlash(false)
+      startRecording()  // startRecording akan set isRecording=true
       return
     }
 
@@ -1591,11 +1598,12 @@ export function BoothPage() {
                 </ArayButton>
               )}
               {/* v4.7.30: Hapus tombol Retake — user bisa retake via klik foto di atas.
-                  Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive. */}
-              <div className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-purple-haze-500/15 border border-purple-haze-500/30">
-                <KeyRound className="w-4 h-4 text-gold-400" />
-                <span className="text-sm text-silver-200">
-                  Antrean ke: <span className="text-gold-300 font-bold text-base">{queueNumber}</span>
+                  Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive.
+                  v4.7.31: Perkecil badge supaya muat di semua rasio (16:9, 4:3, dll). */}
+              <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-haze-500/15 border border-purple-haze-500/30">
+                <KeyRound className="w-3.5 h-3.5 text-gold-400 shrink-0" />
+                <span className="text-xs text-silver-200 whitespace-nowrap">
+                  Antrean ke: <span className="text-gold-300 font-bold text-sm">{queueNumber}</span>
                 </span>
               </div>
               <ArayButton
