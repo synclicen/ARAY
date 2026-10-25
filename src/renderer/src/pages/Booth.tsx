@@ -17,7 +17,8 @@ import {
   LayoutTemplate,
   Maximize2,
   SwitchCamera,
-  FlipHorizontal
+  FlipHorizontal,
+  KeyRound
 } from 'lucide-react'
 import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
 import { useEventStore } from '../stores/events'
