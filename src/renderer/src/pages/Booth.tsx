@@ -711,11 +711,59 @@ export function BoothPage() {
       setCountdown(i)
       await sleep(1000)
     }
-    // v4.7.24: JANGAN setCountdown(0) — itu menampilkan "0" di layar.
-    // Langsung set phase=flash + YAP! + flash bersamaan.
+    // v4.7.25: Capture frame DULU (synchronous), LALU flash + YAP! bersamaan.
+    // Sebelumnya: setPhase('flash') + setLastFlash(true) adalah React state updates
+    // yang batched — belum render saat performCapture() capture frame.
+    // Akibatnya: flash muncul SETELAH capture, bukan bersamaan.
+    // Fix: captureFrame() synchronous di sini, lalu flash + YAP! + save bersamaan.
+    
+    // 1. Capture frame dari video (synchronous, instant)
+    const frames = captureFrame()
+    if (!frames) {
+      setError('Failed to capture frame. Camera may not be ready.')
+      setPhase('error')
+      return
+    }
+    
+    // 2. Flash + YAP! muncul BERSAMAAN dengan moment capture
     setPhase('flash')
     setLastFlash(true)
-    await performCapture(shotToCapture)
+    
+    // 3. Save ke disk (async, di background — flash tetap tampil selama save)
+    try {
+      let sessionId = (window as any).__aray_current_session_id as string | undefined
+      if (!sessionId) {
+        const sessionResult = await window.aray.sessions.create(activeEvent.id, 'photo', totalShots)
+        if (!sessionResult.success) throw new Error('Failed to create session')
+        sessionId = (sessionResult.data as any).id
+        ;(window as any).__aray_current_session_id = sessionId
+      }
+
+      const shotNum = retakeShotNumber ?? currentShot
+      setCapturedShots((prev) => {
+        const existing = prev.find((s) => s.shotNumber === shotNum)
+        if (existing) {
+          return prev.map((s) => s.shotNumber === shotNum ? { ...s, dataUrl: frames.full, mediaId: '' } : s)
+        }
+        return [...prev, { shotNumber: shotNum, mediaId: '', dataUrl: frames.full }]
+      })
+
+      const saveResult = await window.aray.media.saveCapturedFrame({
+        event_id: activeEvent.id,
+        session_id: sessionId,
+        frame_base64: frames.full.split(',')[1]
+      })
+
+      if (saveResult.success) {
+        const media = saveResult.data as ArayMedia
+        setCapturedShots((prev) => prev.map((s) => s.shotNumber === shotNum ? { ...s, mediaId: media.id } : s))
+        addMedia(media)
+      }
+    } catch (e: any) {
+      console.error('[Booth] Capture save failed:', e)
+    }
+    
+    // 4. Flash off + tunggu sebentar sebelum next phase
     setLastFlash(false)
     await sleep(300)
 
