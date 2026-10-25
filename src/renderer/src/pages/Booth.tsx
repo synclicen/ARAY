@@ -1302,7 +1302,7 @@ export function BoothPage() {
             {/* ═══ PALM TRIGGER OVERLAY (minimal — hanya hand outline di tengah) ═══ */}
 
             {/* Loading state — kecil di pojok, tidak mengganggu */}
-            {palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
+            {phase === 'preview' && !isRecording && palmTriggerActive && (palmStatus === 'loading_scripts' || palmStatus === 'loading_model') && (
               <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-black/60 rounded-full px-3 py-1.5">
                 <RefreshCw className="w-3 h-3 animate-spin text-purple-haze-200" />
                 <span className="text-purple-haze-100 text-xs">
@@ -1312,7 +1312,7 @@ export function BoothPage() {
             )}
 
             {/* Error state — kecil di pojok */}
-            {palmTriggerActive && palmStatus === 'error' && (
+            {phase === 'preview' && !isRecording && palmTriggerActive && palmStatus === 'error' && (
               <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2 bg-red-500/20 border border-red-500/40 rounded-full px-3 py-1.5">
                 <AlertTriangle className="w-3 h-3 text-red-300" />
                 <span className="text-red-100 text-xs">Palm error</span>
@@ -1320,7 +1320,7 @@ export function BoothPage() {
             )}
 
             {/* CONFIRMED state: big "SIAP" overlay — pull hand away to trigger */}
-            {palmTriggerActive && palmState === 'confirmed' && (
+            {phase === 'preview' && !isRecording && palmTriggerActive && palmState === 'confirmed' && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1346,7 +1346,7 @@ export function BoothPage() {
             {/* HAND GUIDE OVERLAY — tampil di none/searching/hand_detected.
                 HANYA ini yang muncul di tengah. Tidak ada teks bahasa ganda.
                 Outline ungu (cari) → hijau (hand_detected). */}
-            {palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
+            {phase === 'preview' && !isRecording && palmTriggerActive && (palmState === 'none' || palmState === 'searching' || palmState === 'hand_detected') &&
              palmStatus !== 'loading_scripts' && palmStatus !== 'loading_model' && palmStatus !== 'error' && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                 <div className="text-center">
