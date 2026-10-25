@@ -597,7 +597,13 @@ export function BoothPage() {
   }, [activeEvent, addMedia, selectedVideoTemplate, currentAspectRatio, cleanupAllRecording])
 
   // ─── AUTO-COMPOSITE (template) ─────────────────────────────────
+  const compositingRef = useRef(false)  // v4.7.27: prevent double-composite
   const runComposite = useCallback(async () => {
+    if (compositingRef.current) {
+      console.log('[Booth] runComposite BLOCKED — already compositing')
+      return
+    }
+    compositingRef.current = true
     const templateId = settings?.selected_template_id || 'classic-strip-4'
 
     // Check built-in templates first
@@ -665,15 +671,17 @@ export function BoothPage() {
       setPhase('error')
     } finally {
       setCompositing(false)
+      compositingRef.current = false
     }
   }, [capturedShots, settings?.selected_template_id, activeEvent, addMedia])
 
   // Auto-composite when entering result phase (photo mode only)
+  // v4.7.27: Check compositing + compositingRef to prevent double-execution
   useEffect(() => {
-    if (phase === 'result' && mode === 'photo' && capturedShots.length > 0 && !compositeUrl) {
+    if (phase === 'result' && mode === 'photo' && capturedShots.length > 0 && !compositeUrl && !compositing && !compositingRef.current) {
       runComposite()
     }
-  }, [phase, mode, capturedShots, compositeUrl, runComposite])
+  }, [phase, mode, capturedShots, compositeUrl, compositing, runComposite])
 
   // v4.6.2: Retake individual shot — user klik foto hasil di result screen,
   // hanya foto itu yang di-retake, bukan dari awal.

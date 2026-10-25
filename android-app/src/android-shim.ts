@@ -796,7 +796,7 @@ const arayAPI = {
           return { success: true, data: { started: true, backed: 0, skipped: 0, failed: 0 } }
         }
         const toUpload = db.media.filter((m:any) =>
-          (m.sync_status === 'LOCAL_ONLY' || m.sync_status === 'FAILED' || m.sync_status === 'PENDING') &&
+          (m.sync_status === 'LOCAL_ONLY' || m.sync_status === 'FAILED') &&
           m.original_path && !m.original_path.startsWith('data:')
         )
         console.log('[ARAY] Sync Now — retrying', toUpload.length, 'items')
@@ -891,9 +891,12 @@ async function startRetryProcessor() {
       const autoBackup = db.settings?.auto_backup ?? false
       const backupFolder = db.settings?.backup_folder
       if (autoBackup && backupFolder) {
+        const now = Date.now()
         const toRetry = db.media.filter((m:any) =>
-          (m.sync_status === 'LOCAL_ONLY' || m.sync_status === 'FAILED' || m.sync_status === 'PENDING') &&
-          m.original_path && !m.original_path.startsWith('data:')
+          (m.sync_status === 'LOCAL_ONLY' || m.sync_status === 'FAILED') &&
+          m.original_path && !m.original_path.startsWith('data:') &&
+          // v4.7.27: Only retry media older than 10s — give autoUploadToDrive time to finish
+          (now - new Date(m.created_at).getTime()) > 10000
         ).slice(0, 3)  // max 3 per tick
 
         for (const m of toRetry) {
