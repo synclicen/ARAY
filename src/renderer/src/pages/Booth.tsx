@@ -724,12 +724,10 @@ export function BoothPage() {
         await sleep(1000)
       }
       setCountdown(0)
-      // v4.7.31: JANGAN setPhase('preview') — itu re-activate palm trigger.
-      // Pakai phase 'flash' sebagai transitional sebelum recording.
-      setPhase('flash')
-      setLastFlash(true)
-      await sleep(200)
-      setLastFlash(false)
+      // v4.7.32: Kembali ke setPhase('preview') — TIDAK pakai flash untuk video.
+      // Palm trigger glitch di-fix dengan isRecording check di palm trigger effect.
+      setPhase('preview')
+      await sleep(100)
       startRecording()  // startRecording akan set isRecording=true
       return
     }
@@ -904,6 +902,8 @@ export function BoothPage() {
 
     const startPalmTrigger = async () => {
       if (cancelled) return
+      // v4.7.32: Cek isRecording lagi — mungkin berubah selama await
+      if (isRecording) return
       const video = videoRef.current
       if (!video) {
         retryTimer = setTimeout(startPalmTrigger, 200)
@@ -913,6 +913,9 @@ export function BoothPage() {
         retryTimer = setTimeout(startPalmTrigger, 200)
         return
       }
+
+      // v4.7.32: Cek isRecording sekali lagi sebelum buat PalmTrigger
+      if (isRecording || cancelled) return
 
       if (!palmTriggerRef.current) {
         palmTriggerRef.current = new PalmTrigger()
