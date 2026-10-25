@@ -139,6 +139,7 @@ export function BoothPage() {
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null)
   const [compositing, setCompositing] = useState(false)
   const [compositeMediaId, setCompositeMediaId] = useState<string | null>(null)
+  const [queueNumber, setQueueNumber] = useState<string>('...')  // v4.7.30: nomor antrean foto
   const [palmProgress, setPalmProgress] = useState(0)  // 0.0-1.0 palm hold progress
   const [palmTriggerActive, setPalmTriggerActive] = useState(false)
   const [palmState, setPalmState] = useState<'none' | 'searching' | 'hand_detected' | 'confirmed' | 'triggered'>('none')
@@ -682,6 +683,20 @@ export function BoothPage() {
       runComposite()
     }
   }, [phase, mode, capturedShots, compositeUrl, compositing, runComposite])
+
+  // v4.7.30: Fetch queue number saat composite berhasil disimpan
+  useEffect(() => {
+    if (compositeMediaId && activeEvent) {
+      window.aray.media.stats(activeEvent.id).then((result: any) => {
+        if (result?.success) {
+          const total = (result.data as any).total || 0
+          setQueueNumber(String(total).padStart(3, '0'))
+        }
+      })
+    } else {
+      setQueueNumber('...')
+    }
+  }, [compositeMediaId, activeEvent])
 
   // v4.6.2: Retake individual shot — user klik foto hasil di result screen,
   // hanya foto itu yang di-retake, bukan dari awal.
@@ -1574,21 +1589,14 @@ export function BoothPage() {
                   Share
                 </ArayButton>
               )}
-              <ArayButton
-                variant="ghost"
-                icon={<RotateCcw className="w-4 h-4" />}
-                onClick={() => {
-                  cleanupAllRecording()  // v4.5.0: clear all recording state
-                  setCapturedShots([])
-                  setCurrentShot(1)
-                  setCompositeUrl(null)
-                  setCompositeMediaId(null)
-                  ;(window as any).__aray_current_session_id = undefined
-                  setPhase('preview')
-                }}
-              >
-                Retake
-              </ArayButton>
+              {/* v4.7.30: Hapus tombol Retake — user bisa retake via klik foto di atas.
+                  Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive. */}
+              <div className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-purple-haze-500/15 border border-purple-haze-500/30">
+                <KeyRound className="w-4 h-4 text-gold-400" />
+                <span className="text-sm text-silver-200">
+                  Antrean ke: <span className="text-gold-300 font-bold text-base">{queueNumber}</span>
+                </span>
+              </div>
               <ArayButton
                 variant="gold"
                 icon={<Sparkles className="w-4 h-4" />}
