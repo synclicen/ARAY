@@ -206,9 +206,10 @@ export function BoothPage() {
       streamRef.current.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
-    // v4.7.22: Clear video srcObject supaya tidak stuck di stream mati
+    // v4.7.37 P1: Clear video srcObject + onloadedmetadata handler
     if (videoRef.current) {
       videoRef.current.srcObject = null
+      videoRef.current.onloadedmetadata = null
     }
   }, [])
 
@@ -249,7 +250,18 @@ export function BoothPage() {
       return true
     } catch (e: any) {
       console.error('[Booth] Camera error:', e)
-      setError(e?.message ?? 'Camera failed to start')
+      // v4.7.37 P1: Specific error messages
+      if (e?.name === 'NotAllowedError') {
+        setError('Izin kamera ditolak. Buka Settings → Apps → ARAY → Permissions → Camera → Allow.')
+      } else if (e?.name === 'NotReadableError') {
+        setError('Kamera sedang dipakai app lain. Tutup app lain dan retry.')
+      } else if (e?.name === 'NotFoundError') {
+        setError('Kamera tidak ditemukan. Pastikan kamera terhubung.')
+      } else if (e?.name === 'OverconstrainedError') {
+        setError('Constraint kamera tidak match. Coba ganti kamera di Settings.')
+      } else {
+        setError(e?.message ?? 'Camera failed to start')
+      }
       setPhase('error')
       return false
     }
@@ -467,6 +479,14 @@ export function BoothPage() {
 
       // Draw loop with motion effect — ALL effects applied HERE, in real-time
       const drawFrame = () => {
+        // v4.7.37 P1: Cek stream masih active — stop recording jika camera mati
+        if (!streamRef.current || !streamRef.current.active) {
+          console.warn('[Booth] Camera stream died during recording — stopping')
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop()
+          }
+          return
+        }
         if (video.videoWidth > 0) {
           const elapsed = (Date.now() - startTime) / 1000
           drawMotionFrame(ctx, video, w, h, template.motionType, elapsed, duration, mir, combinedFilter)
@@ -489,6 +509,12 @@ export function BoothPage() {
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) recordedChunksRef.current.push(e.data)
+      }
+      // v4.7.37 P1: Handle recorder errors
+      recorder.onerror = (e: any) => {
+        console.error('[Booth] MediaRecorder error:', e)
+        setError('Video recorder error. Silakan retry.')
+        setPhase('error')
       }
 
       recorder.onstop = async () => {
@@ -821,15 +847,31 @@ export function BoothPage() {
   // v4.6.4: Determine if mode selector should be shown in greeting
   const showModeSelector = boothModeSetting === 'combined'
 
-  // v4.7.22: Cleanup camera on unmount — prevent zombie stream + black screen
+  // v4.7.37 P0: Comprehensive cleanup on unmount — camera + recording + palm trigger
   useEffect(() => {
     return () => {
+      // Stop camera
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
       }
       if (videoRef.current) {
         videoRef.current.srcObject = null
+        videoRef.current.onloadedmetadata = null
+      }
+      // Stop recording (prevent leak: MediaRecorder + timer + raf + canvas)
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop()
+      }
+      mediaRecorderRef.current = null
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+      if (recordTimeoutRef.current) clearTimeout(recordTimeoutRef.current)
+      if (rafRecordRef.current) cancelAnimationFrame(rafRecordRef.current)
+      canvasRecordRef.current = null
+      // Stop palm trigger
+      if (palmTriggerRef.current) {
+        palmTriggerRef.current.dispose?.()
+        palmTriggerRef.current = null
       }
     }
   }, [])
@@ -867,6 +909,17 @@ export function BoothPage() {
           const tracks = streamRef.current.getTracks()
           const live = tracks.length > 0 && tracks.every(t => t.readyState === 'live')
           if (!live) {
+            // v4.7.37 P1: Jika sedang recording, stop recording dulu
+            if (isRecording) {
+              console.warn('[Booth] Camera died during recording — stopping recording')
+              if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+                mediaRecorderRef.current.stop()
+              }
+              setIsRecording(false)
+              setError('Kamera terputus saat merekam. Silakan retry.')
+              setPhase('error')
+              return
+            }
             console.log('[Booth] Camera stream dead after resume — restarting')
             stopCamera()
             setTimeout(() => { startCamera() }, 200)
@@ -1623,13 +1676,27 @@ export function BoothPage() {
                 variant="gold"
                 icon={<Sparkles className="w-4 h-4" />}
                 onClick={() => {
-                  cleanupAllRecording()  // v4.5.0: clear all recording state
+                  // v4.7.37 P1: Reset ALL state — prevent artifact di sesi baru
+                  cleanupAllRecording()
                   setCapturedShots([])
                   setCurrentShot(1)
                   setCompositeUrl(null)
                   setCompositeMediaId(null)
-                  ;(window as any).__aray_current_session_id = undefined
+                  setRetakeShotNumber(null)
+                  setCountdown(0)
+                  setLastFlash(false)
+                  setError(null)
+                  setPalmState('none')
+                  setPalmStatus('unloaded')
+                  setPalmError(null)
+                  setPalmProgress(0)
+                  setQrDataUrl(null)
+                  setShowQrModal(false)
+                  setShowPasswordModal(false)
+                  setPasswordInput('')
+                  setPasswordError(false)
                   setHidePalmTrigger(false)
+                  ;(window as any).__aray_current_session_id = undefined
                   setPhase('greeting')
                 }}
               >
