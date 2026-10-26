@@ -1,6 +1,6 @@
 {
   "name": "aray",
-  "version": "4.7.35",
+  "version": "4.7.36",
   "description": "ARAY — Are you Ready? and....Yapping! Premium Windows Photo Booth & Event Experience Platform",
   "main": "electron/main.js",
   "author": "ARAY",

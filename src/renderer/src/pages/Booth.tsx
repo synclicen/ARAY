@@ -932,9 +932,16 @@ export function BoothPage() {
         onPalmLeft: () => {
           // Confirmed hand left frame → START TIMER/RECORDING!
           // v4.5.3: Video mode JUGA pakai countdown (3 detik) sebelum recording.
-          // Sebelumnya langsung start — tangan yang baru dilepas masuk rekaman.
+          // v4.7.36: Set hidePalmTrigger=true — prevent palm trigger re-activate
+          // setelah countdown selesai (glitch sebelum recording dimulai)
+          setHidePalmTrigger(true)
           setPalmState('triggered')
           setPalmTriggerActive(false)
+          // Dispose palm trigger NOW — stop detection immediately
+          if (palmTriggerRef.current) {
+            palmTriggerRef.current.dispose?.()
+            palmTriggerRef.current = null
+          }
           // Both modes: countdown first, then capture/record
           setPhase('countdown')
           runCountdownRef.current()
