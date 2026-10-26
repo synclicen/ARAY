@@ -816,6 +816,8 @@ export function BoothPage() {
       setPhase('result')
     } else if (currentShot < totalShots) {
       setCurrentShot((n) => n + 1)
+      // v4.7.38: Reset hidePalmTrigger untuk foto kedua — palm trigger UI harus muncul lagi
+      setHidePalmTrigger(false)
       setPhase('preview')
     } else {
       setPhase('result')
