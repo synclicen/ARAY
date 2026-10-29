@@ -184,42 +184,54 @@ export function SettingsPage() {
               <option value="user">Front Camera (selfie)</option>
               <option value="environment">Back Camera</option>
             </select>
+          </SettingRow>
+
+          {/* v4.7.49: USB Camera — SettingRow terpisah, jelas terlihat */}
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="USB Capture Card"
+            hint="Untuk DSLR via capture card (USB OTG)"
+          >
             <button
               onClick={async () => {
                 const cap = (window as any).Capacitor
-                if (cap?.Plugins?.UVCCameraNative) {
-                  try {
-                    await cap.Plugins.UVCCameraNative.initCamera({})
-                    await new Promise(r => setTimeout(r, 1500))
-                    const result = await cap.Plugins.UVCCameraNative.enumerateCameras()
-                    const cams = result.cameras || []
-                    console.log('[Settings] UVC cameras:', cams.length)
-                    if (cams.length > 0) {
-                      const select = document.querySelector('select[class*="aray-input"]') as HTMLSelectElement
-                      if (select) {
-                        Array.from(select.options).forEach(opt => {
-                          if (opt.value !== 'user' && opt.value !== 'environment') select.removeChild(opt)
+                if (!cap?.Plugins?.UVCCameraNative) {
+                  alert('UVC plugin tidak tersedia di perangkat ini.')
+                  return
+                }
+                try {
+                  alert('Scanning USB camera... Pastikan capture card terhubung via OTG.')
+                  await cap.Plugins.UVCCameraNative.initCamera({})
+                  await new Promise(r => setTimeout(r, 2000))
+                  const result = await cap.Plugins.UVCCameraNative.enumerateCameras()
+                  const cams = result.cameras || []
+                  console.log('[Settings] UVC cameras found:', cams.length, cams)
+                  if (cams.length > 0) {
+                    const labels = cams.map((c: any, i: number) => `${i + 1}. ${c.label}`).join('\n')
+                    const choice = prompt(`Ditemukan ${cams.length} USB camera:\n\n${labels}\n\nKetik nomor (1-${cams.length}):`)
+                    if (choice) {
+                      const idx = parseInt(choice) - 1
+                      if (idx >= 0 && idx < cams.length) {
+                        const cam = cams[idx]
+                        await updateSettings({
+                          camera_device_id: cam.id,
+                          camera_facing: 'environment',
+                          camera_mirror: false
                         })
-                        cams.forEach((c: any) => {
-                          const opt = document.createElement('option')
-                          opt.value = c.id
-                          opt.text = c.label
-                          select.appendChild(opt)
-                        })
+                        await cap.Plugins.UVCCameraNative.openCamera({ deviceName: cam.id })
+                        alert(`USB camera dipilih: ${cam.label}\n\nBuka Booth untuk mulai menggunakan kamera ini.`)
                       }
-                    } else {
-                      alert('Tidak ada USB camera ditemukan. Pastikan capture card terhubung via OTG.')
                     }
-                  } catch (e: any) {
-                    alert('Gagal scan USB: ' + (e?.message || e))
+                  } else {
+                    alert('Tidak ada USB camera ditemukan.\n\nPastikan:\n1. Capture card terhubung via OTG\n2. Kamera DSLR menyala\n3. Capture card terdeteksi Android')
                   }
-                } else {
-                  alert('UVC plugin tidak tersedia.')
+                } catch (e: any) {
+                  alert('Error: ' + (e?.message || e))
                 }
               }}
-              className="text-xs text-purple-haze-300 hover:text-purple-haze-100 mt-1"
+              className="aray-btn-gold w-full text-sm"
             >
-              Scan Kamera USB
+              Scan & Pilih USB Camera
             </button>
           </SettingRow>
 
