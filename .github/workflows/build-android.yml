@@ -111,6 +111,11 @@ jobs:
           cp android-patches/DriveBackupPlugin.java "$DRIVE_PLUGIN"
           echo "OK Copied DriveBackupPlugin.java (SAF Google Drive plugin)"
 
+          # v4.7.42: Copy Camera2NativePlugin.java (native Camera2 API for USB capture card)
+          CAMERA2_PLUGIN="android/app/src/main/java/com/aray/booth/Camera2NativePlugin.java"
+          cp android-patches/Camera2NativePlugin.java "$CAMERA2_PLUGIN"
+          echo "OK Copied Camera2NativePlugin.java (Camera2 API plugin)"
+
           # Ensure androidx.core dependency in app/build.gradle (Capacitor 6 usually includes it transitively)
           if ! grep -q "androidx.core:core" android/app/build.gradle; then
             echo "  -> Adding androidx.core dependency"

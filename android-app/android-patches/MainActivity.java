@@ -18,6 +18,8 @@ public class MainActivity extends BridgeActivity {
         // Plugin uses Android Storage Access Framework (SAF) for Google Drive
         // auto-upload — same approach as Saatiril-Andro
         registerPlugin(DriveBackupPlugin.class);
+        // v4.7.42: Register native Camera2 plugin for USB capture card support
+        registerPlugin(Camera2NativePlugin.class);
 
         super.onCreate(savedInstanceState);
 

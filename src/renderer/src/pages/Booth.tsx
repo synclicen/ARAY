@@ -213,13 +213,37 @@ export function BoothPage() {
     }
   }, [])
 
-  // v4.7.41: Enumerate available camera devices
+  // v4.7.42: Enumerate cameras — pakai Camera2Native jika Android (support USB)
+  const [nativeCameras, setNativeCameras] = useState<any[]>([])
+  const [useNativeCamera2, setUseNativeCamera2] = useState(false)
+
   const enumerateCameras = useCallback(async () => {
+    // v4.7.42: Coba Camera2Native dulu (support USB capture card)
+    const Camera2Native = await getCamera2Native();
+    if (Camera2Native) {
+      try {
+        const result = await Camera2Native.enumerateCameras()
+        const cameras = result.cameras || []
+        setNativeCameras(cameras)
+        console.log('[ARAY] Camera2Native cameras:', cameras.length, cameras.map((c:any) => c.label))
+        // Jika ada USB/external camera, tampilkan juga di videoDevices
+        const mapped = cameras.map((c:any) => ({
+          deviceId: c.id,
+          label: c.label,
+          kind: 'videoinput' as MediaDeviceKind
+        }))
+        setVideoDevices(mapped)
+        return mapped
+      } catch (e) {
+        console.warn('[ARAY] Camera2Native enumerate failed, fallback to getUserMedia:', e)
+      }
+    }
+    // Fallback: getUserMedia enumerate
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const videoInputs = devices.filter(d => d.kind === 'videoinput')
       setVideoDevices(videoInputs)
-      console.log('[ARAY] Camera devices found:', videoInputs.length, videoInputs.map(d => d.label || d.deviceId.substring(0, 8)))
+      console.log('[ARAY] getUserMedia cameras:', videoInputs.length)
       return videoInputs
     } catch (e) {
       console.error('[ARAY] enumerateDevices failed:', e)
@@ -1197,26 +1221,48 @@ export function BoothPage() {
           {videoDevices.length === 0 ? (
             <div className="text-xs text-silver-400 px-2 py-2">Tidak ada kamera ditemukan</div>
           ) : (
-            videoDevices.map((device, idx) => (
-              <button
-                key={device.deviceId || idx}
-                onClick={async () => {
-                  setSelectedDeviceId(device.deviceId)
-                  await updateSettings({ camera_device_id: device.deviceId })
-                  setShowCameraSelector(false)
-                  stopCamera()
-                  await new Promise(r => setTimeout(r, 200))
-                  await startCamera()
-                }}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all ${
-                  selectedDeviceId === device.deviceId || settings?.camera_device_id === device.deviceId
-                    ? 'bg-purple-haze-500/20 text-purple-haze-100'
-                    : 'text-silver-300 hover:bg-silver-200/5'
-                }`}
-              >
-                {device.label || `Kamera ${idx + 1}`}
-              </button>
-            ))
+            videoDevices.map((device, idx) => {
+              // v4.7.42: Cek apakah kamera ini adalah USB/external (dari Camera2Native)
+              const nativeCam = nativeCameras.find((c:any) => c.id === device.deviceId)
+              const isUSB = nativeCam?.isExternal
+              return (
+                <button
+                  key={device.deviceId || idx}
+                  onClick={async () => {
+                    // v4.7.42: Jika USB camera, pakai Camera2Native
+                    const cam2 = await getCamera2Native();
+                    if (isUSB && cam2) {
+                      setUseNativeCamera2(true)
+                      // Stop getUserMedia camera
+                      stopCamera()
+                      await new Promise(r => setTimeout(r, 200))
+                      // Open via Camera2Native
+                      await cam2.openCamera({ cameraId: device.deviceId })
+                      console.log('[ARAY] Opened USB camera via Camera2Native:', device.label)
+                    } else {
+                      // Built-in camera: pakai getUserMedia
+                      setUseNativeCamera2(false)
+                      const cam2b = await getCamera2Native();
+                      if (cam2b) { try { await cam2b.closeCamera() } catch(e) {} }
+                      setSelectedDeviceId(device.deviceId)
+                      await updateSettings({ camera_device_id: device.deviceId })
+                      stopCamera()
+                      await new Promise(r => setTimeout(r, 200))
+                      await startCamera()
+                    }
+                    setShowCameraSelector(false)
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all ${
+                    selectedDeviceId === device.deviceId || settings?.camera_device_id === device.deviceId
+                      ? 'bg-purple-haze-500/20 text-purple-haze-100'
+                      : 'text-silver-300 hover:bg-silver-200/5'
+                  }`}
+                >
+                  {device.label || `Kamera ${idx + 1}`}
+                  {isUSB && <span className="text-gold-400 ml-1">USB</span>}
+                </button>
+              )
+            })
           )}
           <button
             onClick={async () => {
