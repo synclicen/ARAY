@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   Folder,
   Save,
@@ -132,38 +132,66 @@ export function SettingsPage() {
           <h3 className="font-semibold">Photo Booth Settings</h3>
         </div>
         <div className="space-y-4">
-          {/* v4.7.45: Camera device selector — pakai Camera2Native untuk USB support */}
+          {/* v4.7.46: Camera selector — Front, Back, + USB cameras via Camera2Native */}
           <SettingRow
             icon={<SwitchCamera className="w-4 h-4" />}
-            label="Kamera"
-            hint="Pilih kamera (termasuk USB capture card / DSLR)"
+            label="Camera"
+            hint="Front, back, atau USB capture card"
           >
-            <CameraDeviceSelector
-              currentDeviceId={settings.camera_device_id ?? null}
-              currentFacing={settings.camera_facing ?? 'user'}
-              onChange={async (deviceId, isExternal) => {
-                if (isExternal && deviceId) {
-                  // USB/External camera — pakai Camera2Native
+            <select
+              className="aray-input w-full sm:w-auto sm:max-w-[240px]"
+              value={settings.camera_device_id || settings.camera_facing || 'user'}
+              onChange={async (e) => {
+                const val = e.target.value
+                if (val === 'user' || val === 'environment') {
+                  // Built-in camera
                   await updateSettings({
-                    camera_device_id: deviceId,
+                    camera_device_id: null,
+                    camera_facing: val,
+                    camera_mirror: val === 'user'
+                  })
+                  // Close Camera2Native jika sedang open
+                  const cap = (window as any).Capacitor
+                  if (cap?.Plugins?.Camera2Native) {
+                    try { await cap.Plugins.Camera2Native.closeCamera() } catch(e) {}
+                  }
+                } else {
+                  // USB/External camera — simpan device_id
+                  await updateSettings({
+                    camera_device_id: val,
                     camera_facing: 'environment',
                     camera_mirror: false
                   })
-                } else if (deviceId) {
-                  // Built-in camera spesifik
-                  await updateSettings({
-                    camera_device_id: deviceId
-                  })
-                } else {
-                  // Auto (Front/Back)
-                  await updateSettings({
-                    camera_device_id: null,
-                    camera_facing: 'user',
-                    camera_mirror: true
-                  })
                 }
               }}
-            />
+            >
+              <option value="user">Front Camera (selfie)</option>
+              <option value="environment">Back Camera</option>
+              {/* v4.7.46: USB cameras dari Camera2Native */}
+              {(() => {
+                const cap = (window as any).Capacitor
+                if (cap?.Plugins?.Camera2Native) {
+                  // Trigger enumerate (async, tapi options akan update on re-render)
+                  cap.Plugins.Camera2Native.enumerateCameras().then((result: any) => {
+                    const cams = result.cameras || []
+                    const usbCams = cams.filter((c: any) => c.isExternal)
+                    if (usbCams.length > 0 && !document.getElementById('usb-cam-options')) {
+                      const select = document.querySelector('select[class*="aray-input"]')
+                      if (select) {
+                        usbCams.forEach((c: any) => {
+                          const opt = document.createElement('option')
+                          opt.value = c.id
+                          opt.text = c.label + ' (USB)'
+                          opt.id = 'usb-cam-options'
+                          select.appendChild(opt)
+                        })
+                      }
+                    }
+                  }).catch(() => {})
+                }
+                return null
+              })()}
+            </select>
           </SettingRow>
 
           <SettingRow
@@ -664,97 +692,4 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
-}
-
-// v4.7.45: CameraDeviceSelector — pakai Camera2Native untuk list semua kamera
-function CameraDeviceSelector({ currentDeviceId, currentFacing, onChange }: {
-  currentDeviceId: string | null
-  currentFacing: string
-  onChange: (deviceId: string | null, isExternal: boolean) => void
-}) {
-  const [cameras, setCameras] = useState<{id: string; label: string; isExternal: boolean}[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const refreshCameras = async () => {
-    setLoading(true)
-    try {
-      // Coba Camera2Native dulu (support USB)
-      const cap = (window as any).Capacitor
-      if (cap?.Plugins?.Camera2Native) {
-        try {
-          const result = await cap.Plugins.Camera2Native.enumerateCameras()
-          const cams = result.cameras || []
-          setCameras(cams)
-          console.log('[Settings] Camera2Native cameras:', cams.length)
-          setLoading(false)
-          return
-        } catch (e) {
-          console.warn('[Settings] Camera2Native failed:', e)
-        }
-      }
-      // Fallback: getUserMedia
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const videoInputs = devices.filter(d => d.kind === 'videoinput')
-      setCameras(videoInputs.map(d => ({
-        id: d.deviceId,
-        label: d.label || 'Kamera',
-        isExternal: false
-      })))
-      console.log('[Settings] getUserMedia cameras:', videoInputs.length)
-    } catch (e) {
-      console.error('[Settings] enumerateCameras failed:', e)
-    }
-    setLoading(false)
-  }
-
-  useEffect(() => {
-    refreshCameras()
-  }, [])
-
-  return (
-    <div className="flex flex-col gap-2 w-full sm:w-auto sm:min-w-[240px]">
-      <select
-        className="aray-input w-full"
-        value={currentDeviceId || (currentFacing === 'environment' ? 'environment' : 'user')}
-        onChange={async (e) => {
-          const val = e.target.value
-          if (val === 'user' || val === 'environment') {
-            onChange(null, false)
-            // Also set facing
-            const isAndroid = (window as any).aray?.isAndroid
-            if (isAndroid) {
-              const cap = (window as any).Capacitor
-              if (cap?.Plugins?.Camera2Native) {
-                // Close Camera2 if open
-                try { await cap.Plugins.Camera2Native.closeCamera() } catch(e) {}
-              }
-            }
-          } else {
-            const cam = cameras.find(c => c.id === val)
-            onChange(val, cam?.isExternal || false)
-          }
-        }}
-      >
-        <option value="user">Front Camera (selfie)</option>
-        <option value="environment">Back Camera</option>
-        {cameras.filter(c => c.isExternal).map(cam => (
-          <option key={cam.id} value={cam.id}>
-            {cam.label} (USB)
-          </option>
-        ))}
-        {cameras.filter(c => !c.isExternal && c.id !== '0' && c.id !== '1').map(cam => (
-          <option key={cam.id} value={cam.id}>
-            {cam.label}
-          </option>
-        ))}
-      </select>
-      <button
-        onClick={refreshCameras}
-        disabled={loading}
-        className="text-xs text-silver-500 hover:text-silver-300 text-left"
-      >
-        {loading ? 'Mencari kamera...' : '↻ Rescan kamera USB'}
-      </button>
-    </div>
-  )
 }
