@@ -861,6 +861,20 @@ const arayAPI = {
   _flush: flushDB
 }
 
+// v4.7.48: Init UVC camera plugin saat app start — USBMonitor harus register
+// sebelum enumerateCameras() bisa menemukan device
+if (typeof window !== 'undefined') {
+  const cap = (window as any).Capacitor
+  if (cap?.Plugins?.UVCCameraNative) {
+    console.log('[ARAY] Initializing UVCCameraNative plugin...')
+    cap.Plugins.UVCCameraNative.initCamera({}).then(() => {
+      console.log('[ARAY] UVCCameraNative initialized — USBMonitor registered')
+    }).catch((e: any) => {
+      console.warn('[ARAY] UVCCameraNative init failed:', e)
+    })
+  }
+}
+
 ;(window as any).aray = arayAPI
 
 // v4.6.8: Auto-flush saat app pause/background (visibilitychange)
