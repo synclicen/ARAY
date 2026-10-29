@@ -484,15 +484,40 @@ public class UVCCameraNativePlugin extends Plugin {
             return;
         }
 
+        // v4.7.52: Permission flow — request if needed, then trigger onConnect async.
+        // The JS side gets success immediately; the actual camera opening happens
+        // asynchronously via onConnect → openUVCCamera() and is announced via the
+        // "uvc:opened" event.
+        //
+        // Previously this rejected with "Requesting USB permission" which caused
+        // the JS layer to fall through to getUserMedia (which can't see UVC devices
+        // → OverconstrainedError).
         if (!usbManager.hasPermission(device)) {
+            Log.i(TAG, "openCamera: requesting USB permission for " + deviceName);
             requestUsbPermission(device);
-            call.reject("Requesting USB permission. Try again after granting.");
+            // Resolve now — onConnect will fire after user grants permission.
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("deviceName", deviceName);
+            ret.put("permissionRequested", true);
+            call.resolve(ret);
             return;
         }
 
-        // Open via USBMonitor
+        // Already have permission — trigger onConnect by calling requestPermission
+        // (USBMonitor will immediately fire onConnect if device is already permitted).
         if (usbMonitor != null) {
-            usbMonitor.requestPermission(device);
+            Log.i(TAG, "openCamera: already permitted, triggering onConnect for " + deviceName);
+            try {
+                usbMonitor.requestPermission(device);
+            } catch (Exception e) {
+                Log.w(TAG, "usbMonitor.requestPermission failed (already permitted): " + e.getMessage());
+                // Fallback: try opening directly
+                tryOpenUVCCameraDirect(device);
+            }
+        } else {
+            Log.w(TAG, "openCamera: usbMonitor is null, trying direct open");
+            tryOpenUVCCameraDirect(device);
         }
 
         JSObject ret = new JSObject();

@@ -300,54 +300,95 @@ export function BoothPage() {
       uvcActiveRef.current = false
 
       // ─────────────────────────────────────────────────────────────
-      // v4.7.51: UVC camera detection — PRIORITAS PERTAMA.
+      // v4.7.52: UVC camera detection — PRIORITAS PERTAMA.
       // Jika settings.camera_device_id cocok dengan UVC device (dari UVCCameraNative.enumerateCameras),
-      // pakai UVCCameraNative.openCamera(). JANGAN jatuh ke getUserMedia — itu akan throw
+      // pakai UVCCameraNative.openCamera(). JANGAN pernah jatuh ke getUserMedia — itu akan throw
       // OverconstrainedError karena WebView tidak bisa lihat UVC device.
+      //
+      // CRITICAL FIX (v1.0.74): Kalau UVC detection/open gagal sama sekali, TETAP jangan jatuh ke
+      // getUserMedia — kasih error jelas. User sudah pilih UVC, getUserMedia pasti fail.
       // ─────────────────────────────────────────────────────────────
       const uvcPlugin = getUVCCameraNative()
       if (uvcPlugin && settings?.camera_device_id) {
-        try {
-          // Pastikan USBMonitor ter-register
-          try { await uvcPlugin.initCamera({}) } catch (e) {
-            console.warn('[ARAY] UVC initCamera failed (might already be init):', e)
-          }
-          // Beri waktu USB stack untuk enumerate device yang baru dicolok
-          await new Promise(r => setTimeout(r, 500))
-          const enumResult = await uvcPlugin.enumerateCameras()
-          const uvcCams: Array<{ id: string; label: string }> = (enumResult.cameras || []).map((c: any) => ({
-            id: String(c.id ?? c.deviceName ?? ''),
-            label: String(c.label ?? c.id ?? 'USB Camera')
-          }))
-          console.log('[ARAY] UVC enumerated cameras:', uvcCams.length, uvcCams)
-          const targetUvc = uvcCams.find((c) => c.id === settings.camera_device_id)
-          if (targetUvc) {
-            console.log('[ARAY] Opening UVC camera:', targetUvc.label, '→', targetUvc.id)
-            // Close getUserMedia stream dulu (kalau ada yang masih hidup)
-            const oldStream = streamRef.current as MediaStream | null
-            if (oldStream) {
-              oldStream.getTracks().forEach((t: MediaStreamTrack) => t.stop())
-              streamRef.current = null
-            }
-            if (videoRef.current) videoRef.current.srcObject = null
-            // Open UVC device via native plugin
-            await uvcPlugin.openCamera({ deviceName: targetUvc.id })
-            uvcActiveRef.current = true
-            // TextureView (native, di belakang WebView) sekarang menampilkan preview.
-            // Pastikan body punya class 'aray-uvc-active' supaya background transparent.
-            document.body.classList.add('aray-uvc-active')
-            // Show native preview (defensive — openCamera juga sudah showTextureView)
-            try { await uvcPlugin.showPreview({}) } catch (e) {
-              console.warn('[ARAY] UVC showPreview failed (might not be implemented):', e)
-            }
-            console.log('[ARAY] UVC camera opened — preview should be visible behind WebView')
-            return true
-          } else {
-            console.warn('[ARAY] camera_device_id tidak match UVC list:', settings.camera_device_id, '→ available:', uvcCams.map(c => c.id))
-          }
-        } catch (e) {
-          console.warn('[ARAY] UVC enumerate/open failed, falling through to Camera2/getUserMedia:', e)
+        console.log('[ARAY] UVC camera_device_id set:', settings.camera_device_id, '→ using UVC path')
+        // Pastikan USBMonitor ter-register (no-op if already registered)
+        try { await uvcPlugin.initCamera({}) } catch (e) {
+          console.warn('[ARAY] UVC initCamera failed (might already be init):', e)
         }
+
+        // v4.7.52: Retry enumerate up to 3x dengan 1s delay — USB stack butuh waktu
+        let uvcCams: Array<{ id: string; label: string }> = []
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const enumResult = await uvcPlugin.enumerateCameras()
+            uvcCams = (enumResult.cameras || []).map((c: any) => ({
+              id: String(c.id ?? c.deviceName ?? ''),
+              label: String(c.label ?? c.id ?? 'USB Camera')
+            }))
+            console.log(`[ARAY] UVC enumerate attempt ${attempt}:`, uvcCams.length, uvcCams)
+            if (uvcCams.length > 0) break
+          } catch (e) {
+            console.warn(`[ARAY] UVC enumerate attempt ${attempt} failed:`, e)
+          }
+          await new Promise(r => setTimeout(r, 1000))
+        }
+
+        if (uvcCams.length === 0) {
+          // UVC camera_device_id diset tapi enumerate return 0 — device dicabut atau
+          // USBMonitor gagal register. JANGAN jatuh ke getUserMedia (pasti fail).
+          setError(
+            `Kamera USB (${settings.camera_device_id}) tidak terdeteksi.\n\n` +
+            `Kemungkinan:\n` +
+            `1. Capture card dicabut — colok kembali lalu retry.\n` +
+            `2. Kamera DSLR menyala tapi capture card belum dapat power — cek kabel OTG.\n` +
+            `3. Permission USB belum diberikan — buka Settings → Scan & Pilih USB Camera lagi.\n\n` +
+            `Tip: Setelah retry, jika tetap gagal, cabut-colok capture card dan scan ulang di Settings.`
+          )
+          setPhase('error')
+          return false
+        }
+
+        const targetUvc = uvcCams.find((c) => c.id === settings.camera_device_id)
+        if (!targetUvc) {
+          // Device id tidak match list — mungkin device dicabut dan device lain dicolok
+          setError(
+            `Device ID tidak match.\n\n` +
+            `Tersimpan: ${settings.camera_device_id}\n` +
+            `Tersedia: ${uvcCams.map(c => c.id).join(', ')}\n\n` +
+            `Buka Settings → pilih ulang kamera USB dari dropdown.`
+          )
+          setPhase('error')
+          return false
+        }
+
+        console.log('[ARAY] Opening UVC camera:', targetUvc.label, '→', targetUvc.id)
+        // Close getUserMedia stream dulu (kalau ada yang masih hidup)
+        const oldStream = streamRef.current as MediaStream | null
+        if (oldStream) {
+          oldStream.getTracks().forEach((t: MediaStreamTrack) => t.stop())
+          streamRef.current = null
+        }
+        if (videoRef.current) videoRef.current.srcObject = null
+
+        // Open UVC device via native plugin.
+        // Plugin akan: requestPermission() → onConnect → openUVCCamera() async.
+        // Call resolve tidak menunggu camera benar-benar terbuka — preview akan
+        // muncul beberapa ratus ms kemudian via TextureView.
+        try {
+          await uvcPlugin.openCamera({ deviceName: targetUvc.id })
+        } catch (e: any) {
+          console.warn('[ARAY] UVC openCamera rejected (permission flow async):', e)
+          // v4.7.52: TETAP set uvcActiveRef=true — permission dialog mungkin muncul,
+          // dan setelah user grant, onConnect akan fire dan camera terbuka async.
+          // Jangan throw — kasih user kesempatan untuk retry.
+        }
+        uvcActiveRef.current = true
+        document.body.classList.add('aray-uvc-active')
+        try { await uvcPlugin.showPreview({}) } catch (e) {
+          console.warn('[ARAY] UVC showPreview failed (might not be implemented):', e)
+        }
+        console.log('[ARAY] UVC camera open requested — preview should appear within ~1s')
+        return true
       }
 
       // v4.7.45: Cek jika camera_device_id adalah external/USB — pakai Camera2Native
