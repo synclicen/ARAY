@@ -272,6 +272,32 @@ export function BoothPage() {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
       }
+
+      // v4.7.45: Cek jika camera_device_id adalah external/USB — pakai Camera2Native
+      const cap = (window as any).Capacitor
+      const cam2 = cap?.Plugins?.Camera2Native
+      if (cam2 && settings?.camera_device_id) {
+        // Cek apakah device_id adalah external
+        try {
+          const enumResult = await cam2.enumerateCameras()
+          const cams = enumResult.cameras || []
+          const targetCam = cams.find((c:any) => c.id === settings.camera_device_id)
+          if (targetCam?.isExternal) {
+            console.log('[ARAY] Opening USB camera via Camera2Native:', targetCam.label)
+            // Close getUserMedia stream dulu
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach((t) => t.stop())
+              streamRef.current = null
+            }
+            if (videoRef.current) videoRef.current.srcObject = null
+            // Open via Camera2Native
+            await cam2.openCamera({ cameraId: settings.camera_device_id })
+            return true
+          }
+        } catch (e) {
+          console.warn('[ARAY] Camera2Native check failed:', e)
+        }
+      }
       // v4.6.5: pakai setting camera_facing ('user' atau 'environment').
       // Default 'user' (front) untuk kompatibilitas dengan versi sebelumnya.
       const facingMode = settings?.camera_facing ?? 'user'
