@@ -25,8 +25,9 @@ import {
 async function getCamera2Native(): Promise<any> {
   if (typeof window === 'undefined' || !(window as any).aray?.isAndroid) return null
   try {
-    const { registerPlugin } = await import('@capacitor/core')
-    return registerPlugin('Camera2Native')
+    // Dynamic import — @capacitor/core only available in Android build
+    const mod = await (Function('return import("@capacitor/core")')() as Promise<any>)
+    return mod.registerPlugin('Camera2Native')
   } catch { return null }
 }
 
