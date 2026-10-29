@@ -16,6 +16,10 @@ import android.os.HandlerThread;
 import android.util.Base64;
 import android.util.Log;
 import android.view.Surface;
+import android.view.TextureView;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -62,6 +66,9 @@ public class Camera2NativePlugin extends Plugin {
     private boolean closeRequested = false;
     private String currentCameraId = "";
     private PluginCall pendingPhotoCallback = null;
+    // v4.7.44: TextureView untuk native camera preview (overlay di atas WebView)
+    private TextureView textureView;
+    private FrameLayout textureContainer;
 
     @Override
     public void load() {
@@ -217,6 +224,7 @@ public class Camera2NativePlugin extends Plugin {
                     cameraDevice = camera;
                     currentCameraId = finalCameraId;
                     Log.i(TAG, "Camera opened: " + finalCameraId);
+                    showTextureView();
                     startPreviewInternal();
 
                     JSObject ret = new JSObject();
@@ -265,13 +273,14 @@ public class Camera2NativePlugin extends Plugin {
     }
 
     /**
-     * Start preview — stream frames as base64 via "camera2:frame" events.
+     * v4.7.44: Start preview menggunakan TextureView overlay.
+     * TextureView di-render DI ATAS WebView — sama seperti Saatiril-Andro.
+     * Camera2 preview langsung ke Surface (tidak stream base64).
      */
     private void startPreviewInternal() {
         if (cameraDevice == null) return;
 
         try {
-            // Close existing session + readers
             if (captureSession != null) {
                 captureSession.close();
                 captureSession = null;
@@ -281,36 +290,54 @@ public class Camera2NativePlugin extends Plugin {
                 previewReader = null;
             }
 
-            // Create preview ImageReader (low res for streaming)
-            previewReader = ImageReader.newInstance(PREVIEW_WIDTH, PREVIEW_HEIGHT, ImageFormat.JPEG, 2);
-            previewReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
-                @Override
-                public void onImageAvailable(ImageReader reader) {
-                    Image image = reader.acquireLatestImage();
-                    if (image == null) return;
+            // v4.7.44: Buat TextureView overlay di atas WebView
+            ensureTextureView();
 
-                    try {
-                        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                        byte[] bytes = new byte[buffer.remaining()];
-                        buffer.get(bytes);
-                        String base64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+            if (textureView == null) {
+                Log.e(TAG, "TextureView not available — cannot start preview");
+                return;
+            }
 
-                        JSObject frame = new JSObject();
-                        frame.put("data", base64);
-                        frame.put("width", PREVIEW_WIDTH);
-                        frame.put("height", PREVIEW_HEIGHT);
-                        notifyListeners("camera2:frame", frame);
-                    } catch (Exception e) {
-                        Log.w(TAG, "Frame processing error: " + e.getMessage());
-                    } finally {
-                        image.close();
+            // Tunggu SurfaceTexture ready
+            if (!textureView.isAvailable()) {
+                textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+                    @Override
+                    public void onSurfaceTextureAvailable(android.graphics.SurfaceTexture surface, int width, int height) {
+                        startPreviewWithSurface(surface);
                     }
-                }
-            }, backgroundHandler);
+                    @Override
+                    public void onSurfaceTextureSizeChanged(android.graphics.SurfaceTexture surface, int width, int height) {}
+                    @Override
+                    public boolean onSurfaceTextureDestroyed(android.graphics.SurfaceTexture surface) { return true; }
+                    @Override
+                    public void onSurfaceTextureUpdated(android.graphics.SurfaceTexture surface) {}
+                });
+            } else {
+                startPreviewWithSurface(textureView.getSurfaceTexture());
+            }
 
-            // Create capture session
+        } catch (Exception e) {
+            Log.e(TAG, "startPreview failed: " + e.getMessage());
+        }
+    }
+
+    private void startPreviewWithSurface(android.graphics.SurfaceTexture surfaceTexture) {
+        if (cameraDevice == null || surfaceTexture == null) return;
+
+        try {
+            surfaceTexture.setDefaultBufferSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+            Surface surface = new Surface(surfaceTexture);
+
+            // Create photo reader for still capture
+            if (photoReader != null) photoReader.close();
+            int readerW = Math.max(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+            int readerH = Math.min(PREVIEW_WIDTH, PREVIEW_HEIGHT);
+            photoReader = ImageReader.newInstance(readerW, readerH, ImageFormat.JPEG, 2);
+            photoReader.setOnImageAvailableListener(photoAvailableListener, backgroundHandler);
+
             List<Surface> surfaces = new ArrayList<>();
-            surfaces.add(previewReader.getSurface());
+            surfaces.add(surface);
+            surfaces.add(photoReader.getSurface());
 
             cameraDevice.createCaptureSession(surfaces, new CameraCaptureSession.StateCallback() {
                 @Override
@@ -318,15 +345,12 @@ public class Camera2NativePlugin extends Plugin {
                     captureSession = session;
                     try {
                         CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                        builder.addTarget(previewReader.getSurface());
-                        // Auto-focus
-                        try {
-                            builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-                        } catch (Exception e) {}
+                        builder.addTarget(surface);
+                        try { builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE); } catch (Exception e) {}
                         session.setRepeatingRequest(builder.build(), null, backgroundHandler);
-                        Log.i(TAG, "Preview started");
+                        Log.i(TAG, "Camera2 preview started on TextureView");
                     } catch (Exception e) {
-                        Log.e(TAG, "Failed to start preview: " + e.getMessage());
+                        Log.e(TAG, "Failed to start repeating request: " + e.getMessage());
                     }
                 }
 
@@ -335,11 +359,129 @@ public class Camera2NativePlugin extends Plugin {
                     Log.e(TAG, "Preview configuration failed");
                 }
             }, backgroundHandler);
-
         } catch (Exception e) {
-            Log.e(TAG, "startPreview failed: " + e.getMessage());
+            Log.e(TAG, "startPreviewWithSurface failed: " + e.getMessage());
         }
     }
+
+    /**
+     * v4.7.44: Buat TextureView overlay di atas WebView bridge.
+     * Sama seperti Saatiril-Andro: FrameLayout → TextureView (bottom) + WebView (top, transparent)
+     */
+    private void ensureTextureView() {
+        if (textureView != null) return;
+
+        try {
+            android.app.Activity activity = getActivity();
+            if (activity == null) return;
+
+            activity.runOnUiThread(() -> {
+                try {
+                    // Cari root FrameLayout dari Capacitor bridge
+                    ViewGroup rootView = (ViewGroup) activity.findViewById(android.R.id.content);
+                    if (rootView == null) {
+                        Log.e(TAG, "Cannot find root content view");
+                        return;
+                    }
+
+                    // Buat FrameLayout container untuk TextureView
+                    textureContainer = new FrameLayout(activity);
+                    FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    );
+                    textureContainer.setLayoutParams(containerParams);
+
+                    // Buat TextureView
+                    textureView = new TextureView(activity);
+                    FrameLayout.LayoutParams tvParams = new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    );
+                    textureView.setLayoutParams(tvParams);
+                    textureContainer.addView(textureView);
+
+                    // Tambah container ke root (di belakang WebView)
+                    rootView.addView(textureContainer, 0);  // index 0 = bottom layer
+                    // WebView (bridge) ada di index 1+ = top layer (transparent background)
+
+                    Log.i(TAG, "TextureView overlay created");
+                } catch (Exception e) {
+                    Log.e(TAG, "ensureTextureView failed: " + e.getMessage(), e);
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "ensureTextureView outer failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * v4.7.44: Sembunyikan TextureView (kembali ke WebView camera)
+     */
+    private void hideTextureView() {
+        try {
+            android.app.Activity activity = getActivity();
+            if (activity == null) return;
+            activity.runOnUiThread(() -> {
+                if (textureContainer != null) {
+                    textureContainer.setVisibility(View.GONE);
+                }
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "hideTextureView failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * v4.7.44: Tampilkan TextureView
+     */
+    private void showTextureView() {
+        try {
+            android.app.Activity activity = getActivity();
+            if (activity == null) return;
+            activity.runOnUiThread(() -> {
+                if (textureContainer != null) {
+                    textureContainer.setVisibility(View.VISIBLE);
+                    textureContainer.bringToFront();
+                }
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "showTextureView failed: " + e.getMessage());
+        }
+    }
+
+    // Photo available listener (reused)
+    private final ImageReader.OnImageAvailableListener photoAvailableListener = new ImageReader.OnImageAvailableListener() {
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            Image image = reader.acquireLatestImage();
+            if (image == null) return;
+            try {
+                ByteBuffer buffer = image.getPlanes()[0].getBuffer();
+                byte[] bytes = new byte[buffer.remaining()];
+                buffer.get(bytes);
+                String base64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+                Log.i(TAG, "Photo captured: " + bytes.length + " bytes");
+                if (pendingPhotoCallback != null) {
+                    JSObject ret = new JSObject();
+                    ret.put("success", true);
+                    ret.put("base64", base64);
+                    ret.put("width", Math.max(PREVIEW_WIDTH, PREVIEW_HEIGHT));
+                    ret.put("height", Math.min(PREVIEW_WIDTH, PREVIEW_HEIGHT));
+                    pendingPhotoCallback.resolve(ret);
+                    pendingPhotoCallback = null;
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "Photo processing error: " + e.getMessage());
+                if (pendingPhotoCallback != null) {
+                    pendingPhotoCallback.reject("Photo failed: " + e.getMessage());
+                    pendingPhotoCallback = null;
+                }
+            } finally {
+                image.close();
+            }
+        }
+    };
 
     /**
      * Capture high-quality photo.
@@ -432,6 +574,7 @@ public class Camera2NativePlugin extends Plugin {
 
     private void closeCameraInternal() {
         closeRequested = true;
+        hideTextureView();
         try { if (captureSession != null) captureSession.close(); } catch (Exception e) {}
         captureSession = null;
         try { if (cameraDevice != null) cameraDevice.close(); } catch (Exception e) {}
@@ -451,9 +594,40 @@ public class Camera2NativePlugin extends Plugin {
         enumerateCameras(call);
     }
 
+    /**
+     * v4.7.44: Show/hide TextureView dari JS
+     */
+    @PluginMethod
+    public void showPreview(PluginCall call) {
+        showTextureView();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void hidePreview(PluginCall call) {
+        hideTextureView();
+        call.resolve();
+    }
+
     @Override
     protected void handleOnDestroy() {
         closeCameraInternal();
+        // Remove TextureView dari root
+        try {
+            android.app.Activity activity = getActivity();
+            if (activity != null && textureContainer != null) {
+                activity.runOnUiThread(() -> {
+                    try {
+                        ViewGroup rootView = (ViewGroup) activity.findViewById(android.R.id.content);
+                        if (rootView != null && textureContainer != null) {
+                            rootView.removeView(textureContainer);
+                        }
+                    } catch (Exception e) {}
+                });
+            }
+        } catch (Exception e) {}
+        textureView = null;
+        textureContainer = null;
         stopBackgroundThread();
         super.handleOnDestroy();
     }
