@@ -31,6 +31,16 @@ function getCamera2Native(): any {
   return cap.Plugins.Camera2Native || null
 }
 
+// v4.7.51: Helper untuk akses UVCCameraNative plugin — direct USB UVC device access.
+// Camera2 API tidak bisa lihat semua UVC device (MacroSilicon capture card, dll).
+// UVCCameraNative pakai libuvccamera untuk bypass Camera2 dan akses USB device langsung.
+function getUVCCameraNative(): any {
+  if (typeof window === 'undefined') return null
+  const cap = (window as any).Capacitor
+  if (!cap || !cap.Plugins) return null
+  return cap.Plugins.UVCCameraNative || null
+}
+
 import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
 import { useEventStore } from '../stores/events'
 import { useMediaStore } from '../stores/media'
@@ -104,6 +114,10 @@ export function BoothPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  // v4.7.51: Track apakah UVC (USB capture card) sedang aktif.
+  // Saat true: preview di-render oleh native TextureView (di belakang WebView),
+  // captureFrame() harus pakai UVCCameraNative.capturePhoto() (bukan <video> drawImage).
+  const uvcActiveRef = useRef<boolean>(false)
 
   const { events, loadEvents, activeEventId, setActiveEvent } = useEventStore()
   const { addMedia } = useMediaStore()
@@ -222,6 +236,16 @@ export function BoothPage() {
       videoRef.current.srcObject = null
       videoRef.current.onloadedmetadata = null
     }
+    // v4.7.51: Close UVC camera + sembunyikan TextureView + remove body class
+    if (uvcActiveRef.current) {
+      const uvc = getUVCCameraNative()
+      if (uvc) {
+        try { uvc.hidePreview({}).catch(() => {}) } catch (e) {}
+        try { uvc.closeCamera({}).catch(() => {}) } catch (e) {}
+      }
+      uvcActiveRef.current = false
+      document.body.classList.remove('aray-uvc-active')
+    }
   }, [])
 
   // v4.7.42: Enumerate cameras — pakai Camera2Native jika Android (support USB)
@@ -272,6 +296,59 @@ export function BoothPage() {
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
       }
+      // v4.7.51: Reset UVC flag — akan di-set true hanya jika benar-benar pakai UVC
+      uvcActiveRef.current = false
+
+      // ─────────────────────────────────────────────────────────────
+      // v4.7.51: UVC camera detection — PRIORITAS PERTAMA.
+      // Jika settings.camera_device_id cocok dengan UVC device (dari UVCCameraNative.enumerateCameras),
+      // pakai UVCCameraNative.openCamera(). JANGAN jatuh ke getUserMedia — itu akan throw
+      // OverconstrainedError karena WebView tidak bisa lihat UVC device.
+      // ─────────────────────────────────────────────────────────────
+      const uvcPlugin = getUVCCameraNative()
+      if (uvcPlugin && settings?.camera_device_id) {
+        try {
+          // Pastikan USBMonitor ter-register
+          try { await uvcPlugin.initCamera({}) } catch (e) {
+            console.warn('[ARAY] UVC initCamera failed (might already be init):', e)
+          }
+          // Beri waktu USB stack untuk enumerate device yang baru dicolok
+          await new Promise(r => setTimeout(r, 500))
+          const enumResult = await uvcPlugin.enumerateCameras()
+          const uvcCams: Array<{ id: string; label: string }> = (enumResult.cameras || []).map((c: any) => ({
+            id: String(c.id ?? c.deviceName ?? ''),
+            label: String(c.label ?? c.id ?? 'USB Camera')
+          }))
+          console.log('[ARAY] UVC enumerated cameras:', uvcCams.length, uvcCams)
+          const targetUvc = uvcCams.find((c) => c.id === settings.camera_device_id)
+          if (targetUvc) {
+            console.log('[ARAY] Opening UVC camera:', targetUvc.label, '→', targetUvc.id)
+            // Close getUserMedia stream dulu (kalau ada yang masih hidup)
+            const oldStream = streamRef.current as MediaStream | null
+            if (oldStream) {
+              oldStream.getTracks().forEach((t: MediaStreamTrack) => t.stop())
+              streamRef.current = null
+            }
+            if (videoRef.current) videoRef.current.srcObject = null
+            // Open UVC device via native plugin
+            await uvcPlugin.openCamera({ deviceName: targetUvc.id })
+            uvcActiveRef.current = true
+            // TextureView (native, di belakang WebView) sekarang menampilkan preview.
+            // Pastikan body punya class 'aray-uvc-active' supaya background transparent.
+            document.body.classList.add('aray-uvc-active')
+            // Show native preview (defensive — openCamera juga sudah showTextureView)
+            try { await uvcPlugin.showPreview({}) } catch (e) {
+              console.warn('[ARAY] UVC showPreview failed (might not be implemented):', e)
+            }
+            console.log('[ARAY] UVC camera opened — preview should be visible behind WebView')
+            return true
+          } else {
+            console.warn('[ARAY] camera_device_id tidak match UVC list:', settings.camera_device_id, '→ available:', uvcCams.map(c => c.id))
+          }
+        } catch (e) {
+          console.warn('[ARAY] UVC enumerate/open failed, falling through to Camera2/getUserMedia:', e)
+        }
+      }
 
       // v4.7.45: Cek jika camera_device_id adalah external/USB — pakai Camera2Native
       const cap = (window as any).Capacitor
@@ -315,6 +392,9 @@ export function BoothPage() {
         constraints.video = { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
       }
       // v4.7.41: Jika settings.camera_device_id set (dari Settings), pakai itu
+      // v4.7.51: HANYA kalau bukan UVC device (UVC sudah di-handle di atas, return true).
+      // Jika sampai sini dengan camera_device_id set, berarti itu bukan UVC — bisa
+      // external webcam yang terlihat di getUserMedia. Pakai exact deviceId.
       if (settings?.camera_device_id) {
         constraints.video = { deviceId: { exact: settings.camera_device_id }, width: { ideal: 1280 }, height: { ideal: 720 } }
       }
@@ -340,14 +420,22 @@ export function BoothPage() {
       } else if (e?.name === 'NotFoundError') {
         setError('Kamera tidak ditemukan. Pastikan kamera terhubung.')
       } else if (e?.name === 'OverconstrainedError') {
-        setError('Constraint kamera tidak match. Coba ganti kamera di Settings.')
+        // v4.7.51: Lebih informatif — tampilkan deviceId yang gagal
+        const devId = settings?.camera_device_id || selectedDeviceId || '(none)'
+        setError(
+          `Constraint kamera tidak match (deviceId: ${devId}).\n\n` +
+          `Kemungkinan:\n` +
+          `1. USB capture card belum di-scan — buka Settings → Scan & Pilih USB Camera.\n` +
+          `2. Kamera USB dicabut. Restart kamera setelah colok kembali.\n` +
+          `3. deviceId tidak valid. Pilih ulang kamera di Settings.`
+        )
       } else {
         setError(e?.message ?? 'Camera failed to start')
       }
       setPhase('error')
       return false
     }
-  }, [settings?.camera_facing, selectedDeviceId])
+  }, [settings?.camera_facing, settings?.camera_device_id, selectedDeviceId])
 
   // v4.6.5: switch antara front ('user') dan back ('environment') camera.
   // Restart camera stream supaya constraint facingMode baru diterapkan.
@@ -386,7 +474,67 @@ export function BoothPage() {
   // Assign ke ref supaya tombol di top bar bisa panggil sebelum deklarasi literal
   switchCameraRef.current = switchCamera
 
-  const captureFrame = useCallback((): { full: string; thumb: string } | null => {
+  // v4.7.51: captureFrame sekarang async — bisa capture via UVC plugin (USB capture card)
+  // atau via <video> drawImage (kamera built-in / webcam).
+  // Return type Promise<{full, thumb} | null>.
+  const captureFrame = useCallback(async (): Promise<{ full: string; thumb: string } | null> => {
+    // ─── UVC path: capture via native plugin (TextureView bitmap) ───
+    if (uvcActiveRef.current) {
+      const uvc = getUVCCameraNative()
+      if (!uvc) {
+        console.error('[ARAY] UVC active but plugin not available')
+        return null
+      }
+      try {
+        const result: any = await uvc.capturePhoto({})
+        const base64: string | undefined = result?.base64
+        if (!base64) {
+          console.error('[ARAY] UVC capturePhoto returned no base64:', result)
+          return null
+        }
+        const fullDataUrl = `data:image/jpeg;base64,${base64}`
+
+        // Generate thumbnail by drawing full image into small canvas.
+        // Need to load the image first (async).
+        const thumbDataUrl = await new Promise<string>((resolve) => {
+          const img = new Image()
+          img.onload = () => {
+            try {
+              const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+              const thumbW = 320
+              const thumbH = Math.round(320 * dims.h / dims.w)
+              const tc = document.createElement('canvas')
+              tc.width = thumbW; tc.height = thumbH
+              const tctx = tc.getContext('2d')
+              if (!tctx) { resolve(fullDataUrl); return }
+              // Cover-fit
+              const ir = img.width / img.height
+              const cr = thumbW / thumbH
+              let sx = 0, sy = 0, sw = img.width, sh = img.height
+              if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
+              else { sh = img.width / cr; sy = (img.height - sh) / 2 }
+              if (mirror) { tctx.translate(thumbW, 0); tctx.scale(-1, 1) }
+              if (activeFilter.canvasFilter !== 'none') tctx.filter = activeFilter.canvasFilter
+              tctx.drawImage(img, sx, sy, sw, sh, 0, 0, thumbW, thumbH)
+              tctx.setTransform(1, 0, 0, 1, 0, 0)
+              tctx.filter = 'none'
+              resolve(tc.toDataURL('image/jpeg', 0.8))
+            } catch (e) {
+              console.warn('[ARAY] UVC thumbnail gen failed:', e)
+              resolve(fullDataUrl)
+            }
+          }
+          img.onerror = () => resolve(fullDataUrl)
+          img.src = fullDataUrl
+        })
+        return { full: fullDataUrl, thumb: thumbDataUrl }
+      } catch (e) {
+        console.error('[ARAY] UVC capturePhoto failed:', e)
+        return null
+      }
+    }
+
+    // ─── getUserMedia path: capture via <video> drawImage ───
     const video = videoRef.current
     const canvas = canvasRef.current
     if (!video || !canvas) return null
@@ -453,7 +601,8 @@ export function BoothPage() {
       return
     }
 
-    const frames = captureFrame()
+    // v4.7.51: captureFrame sekarang async (UVC capture lewat native plugin).
+    const frames = await captureFrame()
     if (!frames) {
       setError('Failed to capture frame. Camera may not be ready.')
       setPhase('error')
@@ -868,10 +1017,11 @@ export function BoothPage() {
       setCountdown(i)
       await sleep(1000)
     }
-    // v4.7.26: Capture frame DULU (synchronous), LALU flash + YAP! bersamaan.
+    // v4.7.26: Capture frame DULU, LALU flash + YAP! bersamaan.
+    // v4.7.51: captureFrame sekarang async (UVC capture lewat native plugin).
     
-    // 1. Capture frame dari video (synchronous, instant)
-    const frames = captureFrame()
+    // 1. Capture frame (await — UVC path butuh native round-trip)
+    const frames = await captureFrame()
     if (!frames) {
       setError('Failed to capture frame. Camera may not be ready.')
       setPhase('error')
@@ -976,6 +1126,16 @@ export function BoothPage() {
         palmTriggerRef.current.dispose?.()
         palmTriggerRef.current = null
       }
+      // v4.7.51: Close UVC camera + remove body class on unmount
+      if (uvcActiveRef.current) {
+        const uvc = getUVCCameraNative()
+        if (uvc) {
+          try { uvc.hidePreview({}).catch(() => {}) } catch (e) {}
+          try { uvc.closeCamera({}).catch(() => {}) } catch (e) {}
+        }
+        uvcActiveRef.current = false
+        document.body.classList.remove('aray-uvc-active')
+      }
     }
   }, [])
 
@@ -1037,6 +1197,25 @@ export function BoothPage() {
     document.addEventListener('visibilitychange', handleVisibility)
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [phase, startCamera, stopCamera])
+
+  // v4.7.51: Toggle native TextureView visibility berdasarkan phase.
+  // TextureView (UVC preview) ada di belakang WebView. Saat phase menampilkan
+  // konten WebView penuh (review/result/error), hide TextureView supaya tidak
+  // konflik. Saat preview/countdown/flash, show TextureView supaya live camera
+  // tetap visible di belakang overlay WebView (countdown number, flash).
+  useEffect(() => {
+    const uvc = getUVCCameraNative()
+    if (!uvc || !uvcActiveRef.current) return
+    const showPhases: BoothPhase[] = ['preview', 'countdown', 'flash', 'greeting']
+    if (showPhases.includes(phase)) {
+      try { uvc.showPreview({}).catch(() => {}) } catch (e) {}
+      document.body.classList.add('aray-uvc-active')
+    } else {
+      // review / result / error — sembunyikan TextureView supaya WebView composite terlihat
+      try { uvc.hidePreview({}).catch(() => {}) } catch (e) {}
+      document.body.classList.remove('aray-uvc-active')
+    }
+  }, [phase])
 
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER

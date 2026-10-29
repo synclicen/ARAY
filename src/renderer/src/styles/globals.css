@@ -33,6 +33,22 @@
     overscroll-behavior: contain;
   }
 
+  /* v4.7.51: UVC (USB capture card) mode — make body transparent so the native
+     TextureView (behind WebView) shows through as live camera preview.
+     Only applied when UVC camera is active in Booth. Other UI elements (top bar,
+     bottom nav, countdown overlay) still draw their own backgrounds on top. */
+  body.aray-uvc-active {
+    background: transparent !important;
+  }
+  body.aray-uvc-active #root {
+    background: transparent !important;
+  }
+  /* v4.7.51: Override bg-surface-base (AppShell root + Booth page containers)
+     to transparent so the native TextureView camera preview shows through. */
+  body.aray-uvc-active .bg-surface-base {
+    background: transparent !important;
+  }
+
   /* Custom scrollbar — desktop only (mobile uses touch) */
   @media (pointer: fine) {
     ::-webkit-scrollbar {

@@ -4,6 +4,8 @@ import android.os.Bundle;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.graphics.Color;
+import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
@@ -24,6 +26,20 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(UVCCameraNativePlugin.class);
 
         super.onCreate(savedInstanceState);
+
+        // v4.7.51: Make WebView background transparent so the native TextureView
+        // (UVCCameraNativePlugin's preview surface, added at index 0 of rootView —
+        // i.e., BEHIND the WebView) shows through when body.aray-uvc-active CSS
+        // class is applied. Without this, WebView draws an opaque white background
+        // and the UVC camera preview is invisible.
+        try {
+            WebView webView = this.bridge.getWebView();
+            if (webView != null) {
+                webView.setBackgroundColor(Color.TRANSPARENT);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("ARAY", "Failed to set WebView transparent: " + e.getMessage());
+        }
 
         // Request camera permission at startup — required for getUserMedia() in WebView
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
