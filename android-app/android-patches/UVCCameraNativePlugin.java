@@ -555,7 +555,7 @@ public class UVCCameraNativePlugin extends Plugin {
             }
 
             // Step 4: Set capture callback for photo
-            camera.setFrameCallback(mFrameCallback, UVCCamera.PIXEL_FORMAT JPEG);
+            camera.setFrameCallback(mFrameCallback, UVCCamera.PIXEL_FORMAT_JPEG);
 
             // Notify JS
             JSObject ret = new JSObject();
