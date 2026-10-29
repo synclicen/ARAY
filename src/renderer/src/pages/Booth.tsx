@@ -21,14 +21,14 @@ import {
   KeyRound
 } from 'lucide-react'
 
-// v4.7.42: Helper untuk akses Camera2Native plugin (USB capture card support)
-async function getCamera2Native(): Promise<any> {
-  if (typeof window === 'undefined' || !(window as any).aray?.isAndroid) return null
-  try {
-    // Dynamic import — @capacitor/core only available in Android build
-    const mod = await (Function('return import("@capacitor/core")')() as Promise<any>)
-    return mod.registerPlugin('Camera2Native')
-  } catch { return null }
+// v4.7.43: Helper untuk akses Camera2Native plugin — via window.Capacitor.Plugins
+// Plugin sudah ter-register via registerPlugin() di MainActivity onCreate
+// Tidak perlu import @capacitor/core — akses langsung dari global Capacitor object
+function getCamera2Native(): any {
+  if (typeof window === 'undefined') return null
+  const cap = (window as any).Capacitor
+  if (!cap || !cap.Plugins) return null
+  return cap.Plugins.Camera2Native || null
 }
 
 import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
@@ -230,9 +230,10 @@ export function BoothPage() {
 
   const enumerateCameras = useCallback(async () => {
     // v4.7.42: Coba Camera2Native dulu (support USB capture card)
-    const Camera2Native = await getCamera2Native();
+    const Camera2Native = getCamera2Native();
     if (Camera2Native) {
       try {
+        console.log('[ARAY] Camera2Native plugin found — enumerating native cameras')
         const result = await Camera2Native.enumerateCameras()
         const cameras = result.cameras || []
         setNativeCameras(cameras)
@@ -250,6 +251,7 @@ export function BoothPage() {
       }
     }
     // Fallback: getUserMedia enumerate
+    console.warn('[ARAY] Camera2Native plugin not found — falling back to getUserMedia')
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
       const videoInputs = devices.filter(d => d.kind === 'videoinput')
@@ -1241,7 +1243,7 @@ export function BoothPage() {
                   key={device.deviceId || idx}
                   onClick={async () => {
                     // v4.7.42: Jika USB camera, pakai Camera2Native
-                    const cam2 = await getCamera2Native();
+                    const cam2 = getCamera2Native();
                     if (isUSB && cam2) {
                       setUseNativeCamera2(true)
                       // Stop getUserMedia camera
@@ -1253,7 +1255,7 @@ export function BoothPage() {
                     } else {
                       // Built-in camera: pakai getUserMedia
                       setUseNativeCamera2(false)
-                      const cam2b = await getCamera2Native();
+                      const cam2b = getCamera2Native();
                       if (cam2b) { try { await cam2b.closeCamera() } catch(e) {} }
                       setSelectedDeviceId(device.deviceId)
                       await updateSettings({ camera_device_id: device.deviceId })
