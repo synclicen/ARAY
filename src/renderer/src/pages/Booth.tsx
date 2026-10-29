@@ -285,8 +285,9 @@ export function BoothPage() {
           if (targetCam?.isExternal) {
             console.log('[ARAY] Opening USB camera via Camera2Native:', targetCam.label)
             // Close getUserMedia stream dulu
-            if (streamRef.current) {
-              streamRef.current.getTracks().forEach((t) => t.stop())
+            const stream = streamRef.current as MediaStream | null
+            if (stream) {
+              stream.getTracks().forEach((t: MediaStreamTrack) => t.stop())
               streamRef.current = null
             }
             if (videoRef.current) videoRef.current.srcObject = null
