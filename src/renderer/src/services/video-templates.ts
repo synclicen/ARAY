@@ -30,7 +30,17 @@ export interface VideoTemplate {
   filterCss: string   // always '' — filters come from Effect dropdown
 }
 
+const plainTemplate: VideoTemplate = {
+  id: 'plain',
+  name: 'Plain (No Effect)',
+  description: 'Raw video tanpa motion effect',
+  duration: 10,
+  motionType: 'none',
+  filterCss: ''
+}
+
 export const VIDEO_TEMPLATES: VideoTemplate[] = [
+  plainTemplate,
   // ═══ 10 DETIK (5 templates) — Short Reels/TikTok style ═══
   {
     id: 'viral-bounce-10',
@@ -43,7 +53,7 @@ export const VIDEO_TEMPLATES: VideoTemplate[] = [
   {
     id: 'speed-ramp-10',
     name: 'Speed Ramp 10s',
-    description: 'Slow start + burst fast + freeze end. Reels transition style.',
+    description: 'Progressive zoom with accelerating bounce. Reels transition style.',
     duration: 10,
     motionType: 'speed-ramp-freeze',
     filterCss: ''

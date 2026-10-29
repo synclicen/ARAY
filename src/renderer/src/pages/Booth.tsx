@@ -25,7 +25,7 @@ import { useEventStore } from '../stores/events'
 import { useMediaStore } from '../stores/media'
 import { useSettingsStore } from '../stores/settings'
 import { TEMPLATES, compositeTemplate, getCustomTemplates, compositeCustomTemplate } from '../services/templates'
-import { VIDEO_TEMPLATES, drawMotionFrame, type VideoTemplate } from '../services/video-templates'
+import { VIDEO_TEMPLATES, drawMotionFrame } from '../services/video-templates'
 import { PalmTrigger } from '../services/palm-trigger'
 
 // Aspect ratio dimensions helper
@@ -171,7 +171,6 @@ export function BoothPage() {
   const totalShots = settings?.booth_shot_count ?? 4
   const countdownSeconds = settings?.booth_countdown_seconds ?? 3
   const activeFilter = FILTERS.find(f => f.id === (mode === 'video' ? activeFilterIdVideo : activeFilterId)) || FILTERS[0]
-  const activeVideoTemplate = VIDEO_TEMPLATES.find(t => t.id === selectedVideoTemplate) || VIDEO_TEMPLATES[0]
   const currentAspectRatio = mode === 'video' ? aspectRatioVideo : aspectRatio
 
   // Refs to avoid stale closures in async recording callbacks
@@ -485,6 +484,8 @@ export function BoothPage() {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             mediaRecorderRef.current.stop()
           }
+          setError('Kamera terputus saat merekam. Silakan retry.')
+          setPhase('error')
           return
         }
         if (video.videoWidth > 0) {
