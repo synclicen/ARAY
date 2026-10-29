@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Folder,
   Save,
@@ -23,6 +23,39 @@ import { VIDEO_TEMPLATES } from '../services/video-templates'
 export function SettingsPage() {
   const { settings, storageInfo, updateSettings, setStoragePath, loadStorageInfo, loadSettings } = useSettingsStore()
   const [busy, setBusy] = useState(false)
+
+  // v4.7.50: Track discovered USB cameras so they appear in the camera <select> dropdown.
+  // BUGFIX: previously, scan + select saved settings.camera_device_id but the dropdown
+  // only had Front/Back <option>s — so the user's selection was invisible.
+  const [usbCameras, setUsbCameras] = useState<Array<{ id: string; label: string }>>([])
+  const [scanning, setScanning] = useState(false)
+
+  const refreshUsbCameras = useCallback(async () => {
+    const cap = (window as any).Capacitor
+    if (!cap?.Plugins?.UVCCameraNative) return
+    try {
+      // Ensure USBMonitor registered
+      try { await cap.Plugins.UVCCameraNative.initCamera({}) } catch (e) {}
+      // Give USB stack a moment to enumerate attached devices
+      await new Promise(r => setTimeout(r, 800))
+      const result = await cap.Plugins.UVCCameraNative.enumerateCameras()
+      const cams: Array<{ id: string; label: string }> = (result.cameras || []).map((c: any) => ({
+        id: String(c.id ?? c.deviceName ?? ''),
+        label: String(c.label ?? c.id ?? 'USB Camera')
+      }))
+      setUsbCameras(cams)
+      console.log('[Settings] USB cameras refreshed:', cams.length, cams)
+    } catch (e) {
+      console.warn('[Settings] refreshUsbCameras failed:', e)
+    }
+  }, [])
+
+  // Auto-enumerate on mount so a previously-selected USB camera re-appears in dropdown
+  useEffect(() => {
+    if ((window as any).aray?.isAndroid) {
+      refreshUsbCameras()
+    }
+  }, [refreshUsbCameras])
 
   if (!settings) return null
 
@@ -139,7 +172,7 @@ export function SettingsPage() {
             hint="Front, back, atau USB capture card"
           >
             <select
-              className="aray-input w-full sm:w-auto sm:max-w-[240px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[280px]"
               value={settings.camera_device_id || settings.camera_facing || 'user'}
               onChange={async (e) => {
                 const val = e.target.value
@@ -150,10 +183,13 @@ export function SettingsPage() {
                     camera_facing: val,
                     camera_mirror: val === 'user'
                   })
-                  // Close Camera2Native jika sedang open
+                  // Close Camera2Native / UVC jika sedang open
                   const cap = (window as any).Capacitor
                   if (cap?.Plugins?.Camera2Native) {
                     try { await cap.Plugins.Camera2Native.closeCamera() } catch(e) {}
+                  }
+                  if (cap?.Plugins?.UVCCameraNative) {
+                    try { await cap.Plugins.UVCCameraNative.closeCamera() } catch(e) {}
                   }
                 } else {
                   // USB/External camera — simpan device_id
@@ -183,6 +219,23 @@ export function SettingsPage() {
             >
               <option value="user">Front Camera (selfie)</option>
               <option value="environment">Back Camera</option>
+              {/* v4.7.50: Render USB cameras discovered via Scan button.
+                  BUGFIX: previously these <option>s were missing, so the
+                  user's selection was invisible in the dropdown. */}
+              {usbCameras.map((cam) => (
+                <option key={cam.id} value={cam.id}>
+                  {cam.label}
+                </option>
+              ))}
+              {/* Fallback: jika camera_device_id diset tapi tidak ada di usbCameras list
+                  (misalnya page reload, atau USB device belum di-enumerate),
+                  tetap tampilkan sebagai option supaya dropdown tidak kosong. */}
+              {settings.camera_device_id &&
+               !usbCameras.some((c) => c.id === settings.camera_device_id) && (
+                <option value={settings.camera_device_id}>
+                  USB Camera (terpilih)
+                </option>
+              )}
             </select>
           </SettingRow>
 
@@ -190,7 +243,7 @@ export function SettingsPage() {
           <SettingRow
             icon={<Camera className="w-4 h-4" />}
             label="USB Capture Card"
-            hint="Untuk DSLR via capture card (USB OTG)"
+            hint="Untuk DSLR via capture card (USB OTG). Setelah scan, pilih kamera di dropdown Camera di atas."
           >
             <button
               onClick={async () => {
@@ -199,27 +252,46 @@ export function SettingsPage() {
                   alert('UVC plugin tidak tersedia di perangkat ini.')
                   return
                 }
+                setScanning(true)
                 try {
-                  alert('Scanning USB camera... Pastikan capture card terhubung via OTG.')
                   await cap.Plugins.UVCCameraNative.initCamera({})
                   await new Promise(r => setTimeout(r, 2000))
                   const result = await cap.Plugins.UVCCameraNative.enumerateCameras()
-                  const cams = result.cameras || []
+                  const cams: Array<{ id: string; label: string }> = (result.cameras || []).map((c: any) => ({
+                    id: String(c.id ?? c.deviceName ?? ''),
+                    label: String(c.label ?? c.id ?? 'USB Camera')
+                  }))
                   console.log('[Settings] UVC cameras found:', cams.length, cams)
+
+                  // v4.7.50: Update state supaya dropdown langsung menampilkan USB cameras
+                  setUsbCameras(cams)
+
                   if (cams.length > 0) {
-                    const labels = cams.map((c: any, i: number) => `${i + 1}. ${c.label}`).join('\n')
+                    const labels = cams.map((c, i) => `${i + 1}. ${c.label}`).join('\n')
                     const choice = prompt(`Ditemukan ${cams.length} USB camera:\n\n${labels}\n\nKetik nomor (1-${cams.length}):`)
                     if (choice) {
                       const idx = parseInt(choice) - 1
                       if (idx >= 0 && idx < cams.length) {
                         const cam = cams[idx]
+                        // v4.7.50: Tunggu refresh state selesai sebelum simpan settings,
+                        // supaya render berikutnya dropdown sudah punya option untuk cam.id ini.
                         await updateSettings({
                           camera_device_id: cam.id,
                           camera_facing: 'environment',
                           camera_mirror: false
                         })
-                        await cap.Plugins.UVCCameraNative.openCamera({ deviceName: cam.id })
-                        alert(`USB camera dipilih: ${cam.label}\n\nBuka Booth untuk mulai menggunakan kamera ini.`)
+                        try {
+                          await cap.Plugins.UVCCameraNative.openCamera({ deviceName: cam.id })
+                        } catch (e) {
+                          console.warn('[Settings] openCamera failed (will retry on Booth):', e)
+                        }
+                        alert(
+                          `USB camera dipilih: ${cam.label}\n\n` +
+                          `Pilihan tersimpan. Dropdown "Camera" di atas sekarang menampilkan kamera ini.\n` +
+                          `Buka tab Booth untuk mulai menggunakannya.`
+                        )
+                      } else {
+                        alert('Nomor tidak valid. Tidak ada kamera yang dipilih.')
                       }
                     }
                   } else {
@@ -227,12 +299,26 @@ export function SettingsPage() {
                   }
                 } catch (e: any) {
                   alert('Error: ' + (e?.message || e))
+                } finally {
+                  setScanning(false)
                 }
               }}
+              disabled={scanning}
               className="aray-btn-gold w-full text-sm"
             >
-              Scan & Pilih USB Camera
+              {scanning ? 'Scanning...' : 'Scan & Pilih USB Camera'}
             </button>
+            {/* v4.7.50: Tampilkan info camera USB yang sedang terdeteksi */}
+            {usbCameras.length > 0 && (
+              <div className="text-xs text-silver-400 mt-2 leading-relaxed">
+                Terdeteksi: {usbCameras.map((c) => c.label).join(', ')}
+              </div>
+            )}
+            {settings.camera_device_id && (
+              <div className="text-xs text-gold-300 mt-1">
+                Aktif: {usbCameras.find((c) => c.id === settings.camera_device_id)?.label || settings.camera_device_id}
+              </div>
+            )}
           </SettingRow>
 
           <SettingRow
