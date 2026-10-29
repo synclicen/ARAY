@@ -133,64 +133,11 @@ jobs:
           # v4.7.52: Patch AndroidManifest.xml — tambah USB_DEVICE_ATTACHED intent-filter
           # pada MainActivity. Tanpa ini, Android tidak auto-grant USB permission saat
           # capture card dicolok — user harus approve manual setiap kali.
+          # Script dipindah ke file terpisah (patch-manifest-usb.py) untuk avoid YAML
+          # heredoc parsing issues (PYEOF di column 1 break literal block).
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q "USB_DEVICE_ATTACHED" "$MANIFEST"; then
-            echo "  -> Adding USB_DEVICE_ATTACHED intent-filter to MainActivity"
-            python3 << 'PYEOF'
-            import re
-            with open("android/app/src/main/AndroidManifest.xml") as f:
-                content = f.read()
-
-            # Find the MainActivity <activity> block. Inject USB_DEVICE_ATTACHED
-            # intent-filter + meta-data before the closing </activity> tag of the
-            # FIRST <activity> (Capacitor's MainActivity is always first).
-            pattern = r'(<activity[^>]*android:name="[^"]*MainActivity"[^>]*>)(.*?)(</activity>)'
-            match = re.search(pattern, content, re.DOTALL)
-            if match:
-                activity_open = match.group(1)
-                activity_body = match.group(2)
-                activity_close = match.group(3)
-
-                usb_block = """
-            <!-- v4.7.52: Handle USB device attachment (UVC capture card) — auto-grant permission -->
-            <intent-filter>
-                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-            </intent-filter>
-            <meta-data
-                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
-                android:resource="@xml/device_filter" />
-"""
-
-                # Insert before closing </activity>
-                new_activity = activity_open + activity_body + usb_block + activity_close
-                content = content[:match.start()] + new_activity + content[match.end():]
-                with open("android/app/src/main/AndroidManifest.xml", "w") as f:
-                    f.write(content)
-                print("OK Injected USB_DEVICE_ATTACHED intent-filter into MainActivity")
-            else:
-                # Fallback: inject into first <activity> block
-                pattern = r'(<activity[^>]*>)(.*?)(</activity>)'
-                match = re.search(pattern, content, re.DOTALL)
-                if match:
-                    usb_block = """
-            <intent-filter>
-                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
-            </intent-filter>
-            <meta-data
-                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
-                android:resource="@xml/device_filter" />
-"""
-                    new_activity = match.group(1) + match.group(2) + usb_block + match.group(3)
-                    content = content[:match.start()] + new_activity + content[match.end():]
-                    with open("android/app/src/main/AndroidManifest.xml", "w") as f:
-                        f.write(content)
-                    print("OK Injected USB_DEVICE_ATTACHED intent-filter into first activity (fallback)")
-                else:
-                    print("WARN: No <activity> block found in AndroidManifest")
-PYEOF
-          else
-            echo "OK USB_DEVICE_ATTACHED intent-filter already present"
-          fi
+          cp android-patches/patch-manifest-usb.py /tmp/patch-manifest-usb.py
+          python3 /tmp/patch-manifest-usb.py "$MANIFEST"
 
           # Ensure androidx.core dependency in app/build.gradle (Capacitor 6 usually includes it transitively)
           if ! grep -q "androidx.core:core" android/app/build.gradle; then
