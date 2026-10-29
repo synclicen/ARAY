@@ -875,6 +875,16 @@ if (typeof window !== 'undefined') {
   }
 }
 
+// v4.7.48: Init UVC camera plugin saat app start
+if (typeof window !== 'undefined') {
+  const cap = (window as any).Capacitor
+  if (cap?.Plugins?.UVCCameraNative) {
+    cap.Plugins.UVCCameraNative.initCamera({}).then(() => {
+      console.log('[ARAY] UVCCameraNative initialized')
+    }).catch(() => {})
+  }
+}
+
 ;(window as any).aray = arayAPI
 
 // v4.6.8: Auto-flush saat app pause/background (visibilitychange)

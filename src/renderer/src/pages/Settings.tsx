@@ -183,49 +183,44 @@ export function SettingsPage() {
             >
               <option value="user">Front Camera (selfie)</option>
               <option value="environment">Back Camera</option>
-              {/* v4.7.46: USB cameras dari Camera2Native */}
-              {(() => {
+            </select>
+            <button
+              onClick={async () => {
                 const cap = (window as any).Capacitor
-                // v4.7.47: Cek UVCCameraNative dulu (support capture card via UVC library)
                 if (cap?.Plugins?.UVCCameraNative) {
-                  cap.Plugins.UVCCameraNative.enumerateCameras().then((result: any) => {
+                  try {
+                    await cap.Plugins.UVCCameraNative.initCamera({})
+                    await new Promise(r => setTimeout(r, 1500))
+                    const result = await cap.Plugins.UVCCameraNative.enumerateCameras()
                     const cams = result.cameras || []
-                    if (cams.length > 0 && !document.getElementById('uvc-cam-options')) {
-                      const select = document.querySelector('select[class*="aray-input"]')
+                    console.log('[Settings] UVC cameras:', cams.length)
+                    if (cams.length > 0) {
+                      const select = document.querySelector('select[class*="aray-input"]') as HTMLSelectElement
                       if (select) {
+                        Array.from(select.options).forEach(opt => {
+                          if (opt.value !== 'user' && opt.value !== 'environment') select.removeChild(opt)
+                        })
                         cams.forEach((c: any) => {
                           const opt = document.createElement('option')
                           opt.value = c.id
                           opt.text = c.label
-                          opt.id = 'uvc-cam-options'
                           select.appendChild(opt)
                         })
                       }
+                    } else {
+                      alert('Tidak ada USB camera ditemukan. Pastikan capture card terhubung via OTG.')
                     }
-                  }).catch(() => {})
+                  } catch (e: any) {
+                    alert('Gagal scan USB: ' + (e?.message || e))
+                  }
+                } else {
+                  alert('UVC plugin tidak tersedia.')
                 }
-                // Juga cek Camera2Native (Camera2 API external cameras)
-                if (cap?.Plugins?.Camera2Native) {
-                  cap.Plugins.Camera2Native.enumerateCameras().then((result: any) => {
-                    const cams = result.cameras || []
-                    const usbCams = cams.filter((c: any) => c.isExternal)
-                    if (usbCams.length > 0 && !document.getElementById('cam2-cam-options')) {
-                      const select = document.querySelector('select[class*="aray-input"]')
-                      if (select) {
-                        usbCams.forEach((c: any) => {
-                          const opt = document.createElement('option')
-                          opt.value = c.id
-                          opt.text = c.label + ' (USB)'
-                          opt.id = 'cam2-cam-options'
-                          select.appendChild(opt)
-                        })
-                      }
-                    }
-                  }).catch(() => {})
-                }
-                return null
-              })()}
-            </select>
+              }}
+              className="text-xs text-purple-haze-300 hover:text-purple-haze-100 mt-1"
+            >
+              Scan Kamera USB
+            </button>
           </SettingRow>
 
           <SettingRow
