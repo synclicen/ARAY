@@ -25,12 +25,10 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import com.serenegiant.usb.IFrameCallback;
 import com.serenegiant.usb.UVCCamera;
 import com.serenegiant.usb.USBMonitor;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -555,7 +553,7 @@ public class UVCCameraNativePlugin extends Plugin {
             }
 
             // Step 4: Set capture callback for photo
-            camera.setFrameCallback(mFrameCallback, UVCCamera.PIXEL_FORMAT_JPEG);
+            // camera.setFrameCallback(mFrameCallback, UVCCamera.PIXEL_FORMAT_JPEG); // API TBD
 
             // Notify JS
             JSObject ret = new JSObject();
@@ -676,54 +674,39 @@ public class UVCCameraNativePlugin extends Plugin {
     // Photo Capture
     // ═══════════════════════════════════════════════════════════════
 
-    private final IFrameCallback mFrameCallback = new IFrameCallback() {
-        @Override
-        public void onFrame(ByteBuffer frame) {
-            // Frame callback for preview — not used for photo capture
-            // Photo capture uses capturePhoto() which calls UVCCamera.setCaptureMode
-        }
-    };
+    // v4.7.47: IFrameCallback TBD — API mungkin berbeda di v0.0.13
+    // private final IFrameCallback mFrameCallback = new IFrameCallback() {
+    //     @Override
+    //     public void onFrame(ByteBuffer frame) {}
+    // };
 
     @PluginMethod
     public void capturePhoto(PluginCall call) {
-        if (uvcCamera == null) {
+        // v4.7.47: Photo capture TBD — need to verify UVCCamera API for v0.0.13
+        // For now, capture from TextureView bitmap
+        if (uvcCamera == null || textureView == null) {
             call.reject("UVC camera not opened");
             return;
         }
 
         try {
-            // Use UVCCamera's built-in JPEG snapshot
-            // setCaptureMode + takeSnapshot
-            uvcCamera.setCaptureMode(UVCCamera.CAPTURE_JPEG);
+            android.graphics.Bitmap bitmap = textureView.getBitmap();
+            if (bitmap == null) {
+                call.reject("Failed to capture bitmap from TextureView");
+                return;
+            }
 
-            UVCCamera.OnCaptureCallback captureCallback = new UVCCamera.OnCaptureCallback() {
-                @Override
-                public void onCaptureSuccess(byte[] data) {
-                    Log.i(TAG, "Photo captured: " + data.length + " bytes");
-                    if (pendingPhotoCallback != null) {
-                        String base64 = android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP);
-                        JSObject ret = new JSObject();
-                        ret.put("success", true);
-                        ret.put("base64", base64);
-                        pendingPhotoCallback.resolve(ret);
-                        pendingPhotoCallback = null;
-                    }
-                }
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, baos);
+            byte[] bytes = baos.toByteArray();
+            String base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
 
-                @Override
-                public void onCaptureFailed(Exception e) {
-                    Log.e(TAG, "Capture failed: " + e.getMessage());
-                    if (pendingPhotoCallback != null) {
-                        pendingPhotoCallback.reject("Capture failed: " + e.getMessage());
-                        pendingPhotoCallback = null;
-                    }
-                }
-            };
+            Log.i(TAG, "Photo captured from TextureView: " + bytes.length + " bytes");
 
-            pendingPhotoCallback = call;
-            uvcCamera.setCaptureCallback(captureCallback);
-            uvcCamera.captureSnapshot();
-
+            JSObject ret = new JSObject();
+            ret.put("success", true);
+            ret.put("base64", base64);
+            call.resolve(ret);
         } catch (Exception e) {
             Log.e(TAG, "capturePhoto failed: " + e.getMessage(), e);
             call.reject("Capture failed: " + e.getMessage());
