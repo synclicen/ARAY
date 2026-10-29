@@ -138,14 +138,10 @@ jobs:
           # v4.7.47: Add UVC camera library for USB capture card support
           if ! grep -q "org.uvccamera:lib" android/app/build.gradle; then
             echo "  -> Adding org.uvccamera:lib dependency (USB capture card)"
-            sed -i '/dependencies {/a \    implementation "org.uvccamera:lib:1.0.0"' android/app/build.gradle
+            sed -i '/dependencies {/a \    implementation "org.uvccamera:lib:0.0.13"' android/app/build.gradle
           fi
 
-          # v4.7.47: Add JitPack repo for UVC library
-          if ! grep -q "jitpack.io" android/build.gradle; then
-            echo "  -> Adding JitPack repository"
-            sed -i '/repositories {/a \        maven { url "https://jitpack.io" }' android/build.gradle
-          fi
+          # v4.7.47: JitPack repo not needed — org.uvccamera:lib is on Maven Central
 
       - name: Sync Capacitor
         working-directory: android-app
