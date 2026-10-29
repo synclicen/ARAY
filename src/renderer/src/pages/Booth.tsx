@@ -268,19 +268,36 @@ export function BoothPage() {
 
   // v4.6.5: switch antara front ('user') dan back ('environment') camera.
   // Restart camera stream supaya constraint facingMode baru diterapkan.
+  // v4.7.40: Guard untuk prevent double switchCamera
+  const switchingRef = useRef(false)
   const switchCamera = useCallback(async () => {
-    const current = settings?.camera_facing ?? 'user'
-    const next = current === 'user' ? 'environment' : 'user'
-    // Update mirror default kalau user belum pernah set manual:
-    // front cam → mirror on, back cam → mirror off
-    await updateSettings({
-      camera_facing: next,
-      camera_mirror: next === 'user'
-    })
-    setMirror(next === 'user')
-    // Restart stream
-    stopCamera()
-    setTimeout(() => { startCamera() }, 150)
+    if (switchingRef.current) return  // v4.7.40: block double-tap
+    switchingRef.current = true
+
+    try {
+      const current = settings?.camera_facing ?? 'user'
+      const next = current === 'user' ? 'environment' : 'user'
+      await updateSettings({
+        camera_facing: next,
+        camera_mirror: next === 'user'
+      })
+      setMirror(next === 'user')
+      // v4.7.40: Stop palm trigger dulu — prevent freeze dari MediaPipe
+      if (palmTriggerRef.current) {
+        palmTriggerRef.current.dispose?.()
+        palmTriggerRef.current = null
+      }
+      setPalmTriggerActive(false)
+      setPalmState('none')
+      // Stop camera + clear video element
+      stopCamera()
+      // v4.7.40: Tunggu 300ms (bukan 150ms) supaya stream benar-benar release
+      await new Promise(resolve => setTimeout(resolve, 300))
+      // Start camera dengan facingMode baru
+      await startCamera()
+    } finally {
+      switchingRef.current = false
+    }
   }, [settings?.camera_facing, updateSettings, stopCamera, startCamera])
 
   // Assign ke ref supaya tombol di top bar bisa panggil sebelum deklarasi literal
