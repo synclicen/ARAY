@@ -20,6 +20,16 @@ import {
   FlipHorizontal,
   KeyRound
 } from 'lucide-react'
+
+// v4.7.42: Helper untuk akses Camera2Native plugin (USB capture card support)
+async function getCamera2Native(): Promise<any> {
+  if (typeof window === 'undefined' || !(window as any).aray?.isAndroid) return null
+  try {
+    const { registerPlugin } = await import('@capacitor/core')
+    return registerPlugin('Camera2Native')
+  } catch { return null }
+}
+
 import { ArayButton, ArayBadge, ArayLogo } from '../components/ui'
 import { useEventStore } from '../stores/events'
 import { useMediaStore } from '../stores/media'
