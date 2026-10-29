@@ -162,6 +162,22 @@ export function SettingsPage() {
                     camera_facing: 'environment',
                     camera_mirror: false
                   })
+                  // v4.7.47: Init + open UVC camera jika plugin tersedia
+                  const cap2 = (window as any).Capacitor
+                  if (cap2?.Plugins?.UVCCameraNative) {
+                    try {
+                      await cap2.Plugins.UVCCameraNative.initCamera({})
+                      await cap2.Plugins.UVCCameraNative.openCamera({ deviceName: val })
+                      console.log('[Settings] UVC camera opened:', val)
+                    } catch(e) {
+                      console.warn('[Settings] UVC open failed, trying Camera2Native:', e)
+                      if (cap2?.Plugins?.Camera2Native) {
+                        try { await cap2.Plugins.Camera2Native.openCamera({ cameraId: val }) } catch(e2) {}
+                      }
+                    }
+                  } else if (cap2?.Plugins?.Camera2Native) {
+                    try { await cap2.Plugins.Camera2Native.openCamera({ cameraId: val }) } catch(e) {}
+                  }
                 }
               }}
             >
@@ -170,19 +186,37 @@ export function SettingsPage() {
               {/* v4.7.46: USB cameras dari Camera2Native */}
               {(() => {
                 const cap = (window as any).Capacitor
+                // v4.7.47: Cek UVCCameraNative dulu (support capture card via UVC library)
+                if (cap?.Plugins?.UVCCameraNative) {
+                  cap.Plugins.UVCCameraNative.enumerateCameras().then((result: any) => {
+                    const cams = result.cameras || []
+                    if (cams.length > 0 && !document.getElementById('uvc-cam-options')) {
+                      const select = document.querySelector('select[class*="aray-input"]')
+                      if (select) {
+                        cams.forEach((c: any) => {
+                          const opt = document.createElement('option')
+                          opt.value = c.id
+                          opt.text = c.label
+                          opt.id = 'uvc-cam-options'
+                          select.appendChild(opt)
+                        })
+                      }
+                    }
+                  }).catch(() => {})
+                }
+                // Juga cek Camera2Native (Camera2 API external cameras)
                 if (cap?.Plugins?.Camera2Native) {
-                  // Trigger enumerate (async, tapi options akan update on re-render)
                   cap.Plugins.Camera2Native.enumerateCameras().then((result: any) => {
                     const cams = result.cameras || []
                     const usbCams = cams.filter((c: any) => c.isExternal)
-                    if (usbCams.length > 0 && !document.getElementById('usb-cam-options')) {
+                    if (usbCams.length > 0 && !document.getElementById('cam2-cam-options')) {
                       const select = document.querySelector('select[class*="aray-input"]')
                       if (select) {
                         usbCams.forEach((c: any) => {
                           const opt = document.createElement('option')
                           opt.value = c.id
                           opt.text = c.label + ' (USB)'
-                          opt.id = 'usb-cam-options'
+                          opt.id = 'cam2-cam-options'
                           select.appendChild(opt)
                         })
                       }

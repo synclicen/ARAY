@@ -20,6 +20,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DriveBackupPlugin.class);
         // v4.7.42: Register native Camera2 plugin for USB capture card support
         registerPlugin(Camera2NativePlugin.class);
+        // v4.7.47: Register UVC camera plugin for USB capture card (libuvccamera)
+        registerPlugin(UVCCameraNativePlugin.class);
 
         super.onCreate(savedInstanceState);
 

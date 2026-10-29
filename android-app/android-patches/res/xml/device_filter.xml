@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UVC Video Class devices (USB capture cards) -->
+    <usb-device class="14" />  <!-- USB Video Class -->
+    <usb-device class="239" subclass="2" />  <!-- Miscellaneous + Video -->
+    
+    <!-- Known capture card Vendor IDs -->
+    <usb-device vendor-id="13407" />  <!-- MacroSilicon 0x345F -->
+    <usb-device vendor-id="1161" />   <!-- Fushicai 0x0489 -->
+    <usb-device vendor-id="1046" />   <!-- Magewell 0x0416 -->
+    
+    <!-- Generic USB video devices -->
+    <usb-device class="14" subclass="2" />
+    <usb-device class="14" subclass="3" />
+</resources>

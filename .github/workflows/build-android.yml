@@ -72,7 +72,7 @@ jobs:
           echo "=== Before patch: AndroidManifest.xml ==="
           cat "$MANIFEST"
           
-          # Inject CAMERA permission + hardware feature if not present
+          # Inject CAMERA + USB permissions + hardware features if not present
           if ! grep -q "android.permission.CAMERA" "$MANIFEST"; then
             # Use awk to insert permissions right after <manifest ...> opening tag
             awk '
@@ -86,6 +86,8 @@ jobs:
                 print "    <uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" android:maxSdkVersion=\"28\" />"
                 print "    <uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" android:maxSdkVersion=\"32\" />"
                 print "    <uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" />"
+                print "    <uses-permission android:name=\"android.hardware.usb.host\" />"
+                print "    <uses-feature android:name=\"android.hardware.usb.host\" android:required=\"false\" />"
                 done=1
                 next
               }
@@ -116,6 +118,11 @@ jobs:
           cp android-patches/Camera2NativePlugin.java "$CAMERA2_PLUGIN"
           echo "OK Copied Camera2NativePlugin.java (Camera2 API plugin)"
 
+          # v4.7.47: Copy UVCCameraNativePlugin.java (UVC library for USB capture card)
+          UVC_PLUGIN="android/app/src/main/java/com/aray/booth/UVCCameraNativePlugin.java"
+          cp android-patches/UVCCameraNativePlugin.java "$UVC_PLUGIN"
+          echo "OK Copied UVCCameraNativePlugin.java (UVC camera plugin)"
+
           # Ensure androidx.core dependency in app/build.gradle (Capacitor 6 usually includes it transitively)
           if ! grep -q "androidx.core:core" android/app/build.gradle; then
             echo "  -> Adding androidx.core dependency"
@@ -126,6 +133,18 @@ jobs:
           if ! grep -q "androidx.documentfile:documentfile" android/app/build.gradle; then
             echo "  -> Adding androidx.documentfile:documentfile dependency"
             sed -i '/dependencies {/a \    implementation "androidx.documentfile:documentfile:1.0.1"' android/app/build.gradle
+          fi
+
+          # v4.7.47: Add UVC camera library for USB capture card support
+          if ! grep -q "org.uvccamera:lib" android/app/build.gradle; then
+            echo "  -> Adding org.uvccamera:lib dependency (USB capture card)"
+            sed -i '/dependencies {/a \    implementation "org.uvccamera:lib:1.0.0"' android/app/build.gradle
+          fi
+
+          # v4.7.47: Add JitPack repo for UVC library
+          if ! grep -q "jitpack.io" android/build.gradle; then
+            echo "  -> Adding JitPack repository"
+            sed -i '/repositories {/a \        maven { url "https://jitpack.io" }' android/build.gradle
           fi
 
       - name: Sync Capacitor
