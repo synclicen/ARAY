@@ -105,6 +105,7 @@ export function BoothPage() {
   const [error, setError] = useState<string | null>(null)
   const [lastFlash, setLastFlash] = useState(false)
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [showCameraSelector, setShowCameraSelector] = useState(false)  // v4.7.41: camera device selector
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   // v4.6.5: mirror initialized from settings (not hardcoded true).
   // Front camera (user) typically wants mirror=true, back camera wants false.
@@ -212,6 +213,20 @@ export function BoothPage() {
     }
   }, [])
 
+  // v4.7.41: Enumerate available camera devices
+  const enumerateCameras = useCallback(async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const videoInputs = devices.filter(d => d.kind === 'videoinput')
+      setVideoDevices(videoInputs)
+      console.log('[ARAY] Camera devices found:', videoInputs.length, videoInputs.map(d => d.label || d.deviceId.substring(0, 8)))
+      return videoInputs
+    } catch (e) {
+      console.error('[ARAY] enumerateDevices failed:', e)
+      return []
+    }
+  }, [])
+
   const startCamera = useCallback(async () => {
     try {
       setError(null)
@@ -231,9 +246,13 @@ export function BoothPage() {
         },
         audio: false
       }
-      // Jika user pilih device spesifik (desktop), override facingMode dengan deviceId
+      // v4.7.41: Jika user pilih device spesifik, override facingMode dengan deviceId
       if (selectedDeviceId) {
         constraints.video = { deviceId: { exact: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      }
+      // v4.7.41: Jika settings.camera_device_id set (dari Settings), pakai itu
+      if (settings?.camera_device_id) {
+        constraints.video = { deviceId: { exact: settings.camera_device_id }, width: { ideal: 1280 }, height: { ideal: 720 } }
       }
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       streamRef.current = stream
@@ -900,6 +919,7 @@ export function BoothPage() {
   useEffect(() => {
     if (phase === 'greeting' && !streamRef.current) {
       startCamera()
+      enumerateCameras()  // v4.7.41: list cameras saat greeting
       // v4.6.8: Trigger event session lock — grace period 72 jam aktif
       ;(window as any).aray?.license?.startEventSession?.()
       // v4.7.13: Preload PalmTrigger MediaPipe scripts saat greeting (bukan saat preview)
@@ -1144,6 +1164,17 @@ export function BoothPage() {
             >
               <SwitchCamera className="w-4 h-4 text-silver-200" />
             </button>
+            {/* v4.7.41: Camera device selector — list semua kamera termasuk USB */}
+            <button
+              onClick={async () => {
+                await enumerateCameras()
+                setShowCameraSelector(!showCameraSelector)
+              }}
+              title="Pilih kamera"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px]"
+            >
+              <Camera className="w-4 h-4 text-silver-200" />
+            </button>
             <button
               onClick={toggleMirror}
               title={mirror ? 'Mirror: ON (tap to disable)' : 'Mirror: OFF (tap to enable)'}
@@ -1156,6 +1187,56 @@ export function BoothPage() {
               <FlipHorizontal className="w-4 h-4" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* v4.7.41: Camera device selector dropdown */}
+      {showCameraSelector && phase === 'preview' && !fullscreenBooth && (
+        <div className="absolute top-20 right-3 z-50 bg-surface-raised border border-silver-300/15 rounded-xl shadow-card p-2 max-w-[280px]">
+          <div className="text-xs text-silver-500 px-2 py-1 mb-1">Pilih Kamera:</div>
+          {videoDevices.length === 0 ? (
+            <div className="text-xs text-silver-400 px-2 py-2">Tidak ada kamera ditemukan</div>
+          ) : (
+            videoDevices.map((device, idx) => (
+              <button
+                key={device.deviceId || idx}
+                onClick={async () => {
+                  setSelectedDeviceId(device.deviceId)
+                  await updateSettings({ camera_device_id: device.deviceId })
+                  setShowCameraSelector(false)
+                  stopCamera()
+                  await new Promise(r => setTimeout(r, 200))
+                  await startCamera()
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all ${
+                  selectedDeviceId === device.deviceId || settings?.camera_device_id === device.deviceId
+                    ? 'bg-purple-haze-500/20 text-purple-haze-100'
+                    : 'text-silver-300 hover:bg-silver-200/5'
+                }`}
+              >
+                {device.label || `Kamera ${idx + 1}`}
+              </button>
+            ))
+          )}
+          <button
+            onClick={async () => {
+              setSelectedDeviceId(null)
+              await updateSettings({ camera_device_id: null })
+              setShowCameraSelector(false)
+              stopCamera()
+              await new Promise(r => setTimeout(r, 200))
+              await startCamera()
+            }}
+            className="w-full text-left px-3 py-2 rounded-lg text-xs text-silver-500 hover:bg-silver-200/5 mt-1 border-t border-silver-300/10 pt-2"
+          >
+            Auto (Front/Back)
+          </button>
+          <button
+            onClick={() => setShowCameraSelector(false)}
+            className="w-full text-center px-3 py-1.5 text-xs text-silver-600 hover:text-silver-400 mt-1"
+          >
+            Tutup
+          </button>
         </div>
       )}
 
