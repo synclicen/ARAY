@@ -417,6 +417,24 @@ export function BoothPage() {
         try { await uvcPlugin.showPreview({}) } catch (e) {
           console.warn('[ARAY] UVC showPreview failed (might not be implemented):', e)
         }
+
+        // v4.7.57: Apply selected aspect ratio immediately after openCamera.
+        // The textureView is created async by ensureTextureView (mainHandler.post),
+        // so we retry setAspectRatio with delays to catch the moment textureView exists.
+        // The useEffect [currentAspectRatio, uvcActive] also handles this, but calling
+        // here ensures the ratio is applied as early as possible.
+        const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+        for (let i = 1; i <= 3; i++) {
+          try {
+            const r: any = await uvcPlugin.setAspectRatio({ width: dims.w, height: dims.h })
+            console.log(`[ARAY] UVC setAspectRatio (startCamera attempt ${i}): ${dims.w}x${dims.h}, textureViewExists=${r?.textureViewExists}`)
+            if (r?.textureViewExists) break
+          } catch (e) {
+            console.warn(`[ARAY] UVC setAspectRatio (startCamera attempt ${i}) failed:`, e)
+          }
+          await new Promise(r => setTimeout(r, 500))
+        }
+
         console.log('[ARAY] UVC camera open requested — preview should appear within ~1s')
         return true
       }
@@ -1483,26 +1501,40 @@ export function BoothPage() {
     }
   }, [phase])
 
-  // v4.7.54: Sync TextureView aspect ratio with selected aspect ratio.
-  // v4.7.55: CHANGED — TextureView now fills the ENTIRE screen (cover behavior),
-  // matching the getUserMedia path's <video className="object-cover">.
-  // The selected aspect ratio only affects the CAPTURED PHOTO (cropped in
-  // captureFrame via cover-fit). This way the live preview always fills the
-  // screen, regardless of selected ratio — same as front/back camera.
+  // v4.7.57: Sync TextureView aspect ratio with selected aspect ratio.
+  // FIXED: Previously set ratio to 0 (fill screen) — that caused the live view to
+  // exceed the booth layout (fill entire screen behind top/bottom bars) and the
+  // selected ratio had no effect on the live view.
+  // Now: setAspectRatio is called with the selected ratio (e.g. 16,9 for 16:9).
+  // AutoFitTextureView constrains itself to that ratio, centered in the screen.
+  // The native plugin stores targetAspectRatio and applies it when the AutoFitTextureView
+  // is created (async), so even if setAspectRatio is called before textureView exists,
+  // the ratio will be applied.
+  // Retry logic: call setAspectRatio 3x with delay to handle async textureView creation.
   useEffect(() => {
     const uvc = getUVCCameraNative()
     if (!uvc || !uvcActiveRef.current) return
-    // Set ratio to 0 = fill screen (MATCH_PARENT). The camera frame (1280x720)
-    // will be stretched to fill the screen, matching object-cover behavior.
-    try {
-      uvc.setAspectRatio({ width: 0, height: 0 }).catch((e: any) => {
-        console.warn('[ARAY] UVC setAspectRatio failed:', e)
-      })
-      console.log('[ARAY] UVC setAspectRatio: fill screen (0=cover, photo ratio handled in captureFrame)')
-    } catch (e) {
-      console.warn('[ARAY] UVC setAspectRatio error:', e)
+    const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+
+    const applyRatio = async (attempt: number) => {
+      try {
+        const result: any = await uvc.setAspectRatio({ width: dims.w, height: dims.h })
+        console.log(`[ARAY] UVC setAspectRatio attempt ${attempt}: ${currentAspectRatio} → ${dims.w}x${dims.h} (ratio=${result?.ratio}, textureViewExists=${result?.textureViewExists})`)
+        // If textureView didn't exist yet, retry after delay
+        if (!result?.textureViewExists && attempt < 3) {
+          await new Promise(r => setTimeout(r, 500))
+          applyRatio(attempt + 1)
+        }
+      } catch (e: any) {
+        console.warn(`[ARAY] UVC setAspectRatio attempt ${attempt} failed:`, e)
+        if (attempt < 3) {
+          await new Promise(r => setTimeout(r, 500))
+          applyRatio(attempt + 1)
+        }
+      }
     }
-  }, [uvcActive])
+    applyRatio(1)
+  }, [currentAspectRatio, uvcActive])
 
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER

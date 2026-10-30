@@ -628,7 +628,12 @@ public class UVCCameraNativePlugin extends Plugin {
 
                     // v4.7.53: AutoFitTextureView measures itself based on targetAspectRatio.
                     // Gravity CENTER so it's centered within the container.
+                    // v4.7.57: CRITICAL — apply stored targetAspectRatio to the AutoFitTextureView
+                    // when it's created. Without this, AutoFitTextureView defaults to ratio=0 (fill
+                    // parent) and ignores all setAspectRatio calls made before textureView existed.
+                    // This was the root cause of "rasio tidak berfungsi ke live view".
                     textureView = new AutoFitTextureView(activity);
+                    textureView.setAspectRatio(targetAspectRatio);  // Apply stored ratio!
                     FrameLayout.LayoutParams tvParams = new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
                         FrameLayout.LayoutParams.MATCH_PARENT,
@@ -811,6 +816,9 @@ public class UVCCameraNativePlugin extends Plugin {
     // The AutoFitTextureView will constrain itself to that ratio, centered on screen.
     // This prevents the UVC preview from stretching/exceeding the screen when the
     // camera's native 16:9 output doesn't match the user's selected aspect ratio.
+    // v4.7.57: targetAspectRatio is stored as a field, so even if textureView is
+    // null when this is called (async creation), the ratio will be applied when
+    // ensureTextureView creates the AutoFitTextureView.
     @PluginMethod
     public void setAspectRatio(PluginCall call) {
         int w = call.getInt("width", 0);
@@ -820,21 +828,27 @@ public class UVCCameraNativePlugin extends Plugin {
         } else {
             targetAspectRatio = 0f;  // fill screen
         }
-        Log.i(TAG, "setAspectRatio: " + w + "x" + h + " → ratio=" + targetAspectRatio);
+        Log.i(TAG, "setAspectRatio: " + w + "x" + h + " → ratio=" + targetAspectRatio + " (textureView exists: " + (textureView != null) + ")");
 
-        // Apply to existing TextureView (if created)
-        if (textureView != null) {
-            mainHandler.post(() -> {
+        // Apply to existing TextureView (if created). If not yet created,
+        // targetAspectRatio is already stored and will be applied in ensureTextureView.
+        mainHandler.post(() -> {
+            if (textureView != null) {
                 textureView.setAspectRatio(targetAspectRatio);
-                // Force re-layout
-                if (textureContainer != null) {
-                    textureContainer.requestLayout();
-                }
-            });
-        }
+                // v4.7.57: Force both requestLayout AND invalidate to ensure
+                // onMeasure is called again with the new ratio.
+                textureView.requestLayout();
+                textureView.invalidate();
+            }
+            if (textureContainer != null) {
+                textureContainer.requestLayout();
+            }
+        });
+
         JSObject ret = new JSObject();
         ret.put("success", true);
         ret.put("ratio", targetAspectRatio);
+        ret.put("textureViewExists", textureView != null);
         call.resolve(ret);
     }
 
