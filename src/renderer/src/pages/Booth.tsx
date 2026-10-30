@@ -1588,6 +1588,13 @@ export function BoothPage() {
             // Valid frame received — preview is streaming
             uvcPreviewReadyRef.current = true
             setUvcPreviewReady(true)
+            // v4.7.62: Re-call showPreview to ensure TextureView is VISIBLE.
+            // The phase effect may have called showPreview before textureContainer
+            // was created (async). Now that we have a valid frame, the container
+            // exists — make it visible.
+            try { await uvc.showPreview({}) } catch (e) {
+              console.warn('[ARAY] UVC showPreview after ready failed:', e)
+            }
             console.log(`[ARAY] UVC preview ready after ${attempts} attempts (~${attempts * 500}ms)`)
             return
           }

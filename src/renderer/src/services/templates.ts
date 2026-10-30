@@ -496,10 +496,12 @@ export async function compositeCustomTemplate(
       if (!loaded) throw new Error('Failed to load frame from Filesystem: ' + frameDataUrl)
       frameDataUrl = loaded
     }
+    console.log('[compositeCustomTemplate] Frame loaded, length:', frameDataUrl.length, 'starts with data:', frameDataUrl.startsWith('data:'))
 
     // Load the PNG frame FIRST to get its natural dimensions
     const frameImg = await loadImage(frameDataUrl)
     if (!frameImg) throw new Error('Failed to load frame image')
+    console.log('[compositeCustomTemplate] Frame image natural dims:', frameImg.naturalWidth, 'x', frameImg.naturalHeight)
 
     // Use PNG frame's natural dimensions as canvas size
     // This ensures the frame is NOT stretched — it's pixel-perfect
@@ -553,14 +555,17 @@ export async function compositeCustomTemplate(
     // v4.7.61: FIX — slots are ALREADY in pixel coords (both detected and fallback).
     // Previous code double-calculated for fallback path → photos drawn at wrong position.
     const photos = photoDataUrls.slice(0, slots.length)
+    console.log('[compositeCustomTemplate] Photos to draw:', photos.length, 'slots:', slots.length, 'usingDetected:', usingDetected)
     for (let i = 0; i < slots.length && i < photos.length; i++) {
       const slot = slots[i]
+      console.log(`[compositeCustomTemplate] Photo ${i + 1}: dataUrl length=${photos[i]?.length || 0}, starts with data: ${photos[i]?.startsWith('data:')}`)
       const img = await loadImage(photos[i])
-      if (!img) continue
+      if (!img) {
+        console.error(`[compositeCustomTemplate] Photo ${i + 1} FAILED to load as Image!`)
+        continue
+      }
+      console.log(`[compositeCustomTemplate] Photo ${i + 1} loaded: ${img.naturalWidth}x${img.naturalHeight}, slot: ${slot.w.toFixed(0)}x${slot.h.toFixed(0)} @ (${slot.x.toFixed(0)},${slot.y.toFixed(0)})`)
       // slot.x/y/w/h are ALL in pixel coords — use directly
-      console.log(`[compositeCustomTemplate] Photo ${i + 1}:`,
-        `slot ${slot.w.toFixed(0)}x${slot.h.toFixed(0)} @ (${slot.x.toFixed(0)},${slot.y.toFixed(0)})`,
-        `— contain-fit, no crop`)
       drawImageContain(ctx, img, slot.x, slot.y, slot.w, slot.h)
     }
 
