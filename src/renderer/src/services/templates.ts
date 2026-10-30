@@ -550,19 +550,18 @@ export async function compositeCustomTemplate(
 
     // Draw photos into slots — contain-fit (FULL photo visible, no crop)
     // Photos maintain their aspect ratio, centered in slot with black bars
+    // v4.7.61: FIX — slots are ALREADY in pixel coords (both detected and fallback).
+    // Previous code double-calculated for fallback path → photos drawn at wrong position.
     const photos = photoDataUrls.slice(0, slots.length)
     for (let i = 0; i < slots.length && i < photos.length; i++) {
       const slot = slots[i]
       const img = await loadImage(photos[i])
       if (!img) continue
-      const sx = usingDetected ? slot.x : (slot.x / 100) * canvas.width
-      const sy = usingDetected ? slot.y : (slot.y / 100) * canvas.height
-      const sw = usingDetected ? slot.w : (slot.w / 100) * canvas.width
-      const sh = usingDetected ? slot.h : (slot.h / 100) * canvas.height
+      // slot.x/y/w/h are ALL in pixel coords — use directly
       console.log(`[compositeCustomTemplate] Photo ${i + 1}:`,
-        `slot ${sw.toFixed(0)}x${sh.toFixed(0)} @ (${sx.toFixed(0)},${sy.toFixed(0)})`,
+        `slot ${slot.w.toFixed(0)}x${slot.h.toFixed(0)} @ (${slot.x.toFixed(0)},${slot.y.toFixed(0)})`,
         `— contain-fit, no crop`)
-      drawImageContain(ctx, img, sx, sy, sw, sh)
+      drawImageContain(ctx, img, slot.x, slot.y, slot.w, slot.h)
     }
 
     // Overlay PNG frame at NATURAL size — no stretching!

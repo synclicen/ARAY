@@ -123,6 +123,12 @@ export function BoothPage() {
   // calls startCamera() again. For UVC, streamRef is always null so the old guard
   // didn't work. This ref prevents duplicate UVC open → native memory leak → OOM.
   const cameraStartingRef = useRef<boolean>(false)
+  // v4.7.61: Track if UVC preview is actually showing frames (not just opened).
+  // UVC camera takes 1-3s to start streaming. During that time, TextureView is
+  // blank. This state controls a "Camera starting..." overlay so user doesn't
+  // see a blank/white screen.
+  const [uvcPreviewReady, setUvcPreviewReady] = useState(false)
+  const uvcPreviewReadyRef = useRef(false)
 
   const { events, loadEvents, activeEventId, setActiveEvent } = useEventStore()
   const { addMedia } = useMediaStore()
@@ -263,6 +269,9 @@ export function BoothPage() {
       }
       uvcActiveRef.current = false
       setUvcActive(false)
+      // v4.7.61: Reset preview ready state
+      uvcPreviewReadyRef.current = false
+      setUvcPreviewReady(false)
       document.body.classList.remove('aray-uvc-active')
     }
     // v4.7.56: Reset starting guard so next startCamera can proceed
@@ -1550,6 +1559,52 @@ export function BoothPage() {
     applyRatio(1)
   }, [currentAspectRatio, uvcActive])
 
+  // v4.7.61: Poll UVC camera until it's actually streaming frames.
+  // UVC camera takes 1-3s to initialize (USB permission → open → setPreviewSize →
+  // startPreview). During that time, TextureView is blank. This effect polls
+  // capturePhoto every 500ms until it returns a valid base64 → preview is ready.
+  // Shows "Camera starting..." overlay while polling.
+  useEffect(() => {
+    if (!uvcActive) {
+      uvcPreviewReadyRef.current = false
+      setUvcPreviewReady(false)
+      return
+    }
+    const uvc = getUVCCameraNative()
+    if (!uvc) return
+
+    let cancelled = false
+    let attempts = 0
+    const maxAttempts = 20  // 20 × 500ms = 10s max wait
+
+    const poll = async () => {
+      while (!cancelled && attempts < maxAttempts && !uvcPreviewReadyRef.current) {
+        attempts++
+        try {
+          const result: any = await uvc.capturePhoto({})
+          if (cancelled) break
+          const base64 = result?.base64
+          if (base64 && base64.length > 1000) {
+            // Valid frame received — preview is streaming
+            uvcPreviewReadyRef.current = true
+            setUvcPreviewReady(true)
+            console.log(`[ARAY] UVC preview ready after ${attempts} attempts (~${attempts * 500}ms)`)
+            return
+          }
+        } catch (e) {
+          // Expected during initialization — keep polling
+        }
+        await new Promise(r => setTimeout(r, 500))
+      }
+      if (!cancelled && !uvcPreviewReadyRef.current) {
+        console.warn(`[ARAY] UVC preview not ready after ${maxAttempts} attempts`)
+      }
+    }
+    poll()
+
+    return () => { cancelled = true }
+  }, [uvcActive])
+
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
@@ -1988,8 +2043,24 @@ export function BoothPage() {
             {/* v4.7.13: Simplified overlay — lighter for Android WebView performance
                 v4.7.52: When UVC active, use lighter overlay (bg-surface-base/30) so the
                 native TextureView camera preview is visible behind. When not UVC, use
-                bg-surface-base/70 for darker background (getUserMedia video is the bg). */}
-            <div className={`absolute inset-0 ${uvcActive ? 'bg-surface-base/30' : 'bg-surface-base/70'}`} />
+                bg-surface-base/70 for darker background (getUserMedia video is the bg).
+                v4.7.61: When UVC active but preview not ready, use DARK overlay so user
+                doesn't see blank/white screen while camera initializes. */}
+            <div className={`absolute inset-0 ${
+              uvcActive
+                ? (uvcPreviewReady ? 'bg-surface-base/30' : 'bg-surface-base/90')
+                : 'bg-surface-base/70'
+            }`} />
+            {/* v4.7.61: "Camera starting..." overlay when UVC not ready yet.
+                Shows spinner + text so user knows camera is loading, not broken. */}
+            {uvcActive && !uvcPreviewReady && (
+              <div className="relative z-20 text-center px-6">
+                <div className="inline-block w-12 h-12 border-4 border-gold-300/30 border-t-gold-300 rounded-full animate-spin mb-4" />
+                <p className="text-silver-200 text-lg font-medium mb-1">Memulai kamera USB...</p>
+                <p className="text-silver-400 text-sm">Capture card butuh 1-3 detik untuk inisialisasi</p>
+              </div>
+            )}
+            {(!uvcActive || uvcPreviewReady) && (
             <div className="relative z-10 text-center">
               <ArayLogo size="md" className="mb-6" />
               <p className="text-silver-300 text-lg italic mb-6">Let's make a memory.</p>
@@ -2045,6 +2116,7 @@ export function BoothPage() {
                 LET'S YAP!
               </ArayButton>
             </div>
+            )}
         </div>
       )}
 
