@@ -582,17 +582,18 @@ export async function compositeCustomTemplate(
 export async function compositeTemplate(
   template: ArayTemplateDef,
   photoDataUrls: string[],
-  _aspectRatio?: string  // v4.7.58: IGNORED — template's canvasWidth/Height (PNG shape) takes priority
+  aspectRatio?: string  // v4.7.63: RESTORED — was working before v1.0.81
 ): Promise<string | null> {
   try {
     const canvas = document.createElement('canvas')
-    // v4.7.58: ALWAYS use template's canvas dimensions (its "PNG shape"), not the
-    // selected aspect ratio. The template defines its own layout (vertical strip,
-    // horizontal grid, etc.) — forcing the selected aspect ratio distorts the
-    // template and photos don't fit the slots correctly.
-    // If user wants output in a specific aspect ratio, they should pick a template
-    // that matches (or use a custom PNG template).
-    const dims = { w: template.canvasWidth, h: template.canvasHeight }
+    // v4.7.63: REVERT v1.0.81 change that broke HP camera composites.
+    // v1.0.81 forced template.canvasWidth/canvasHeight, ignoring user's selected
+    // aspect ratio. This broke HP camera photos which are captured at the selected
+    // ratio (e.g. 16:9) — they didn't fit the template's fixed canvas.
+    // RESTORED: If aspectRatio provided, use aspect ratio dims (user's selection).
+    // If not provided (e.g. legacy call), fall back to template.canvasWidth/Height.
+    // This is the behavior that worked for HP camera before UVC changes.
+    const dims = aspectRatio ? getCompositeDims(aspectRatio) : { w: template.canvasWidth, h: template.canvasHeight }
     canvas.width = dims.w
     canvas.height = dims.h
     const ctx = canvas.getContext('2d')

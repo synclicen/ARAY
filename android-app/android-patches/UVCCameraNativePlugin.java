@@ -590,10 +590,31 @@ public class UVCCameraNativePlugin extends Plugin {
             }
 
             // Step 3: Setup preview surface (TextureView)
+            // v4.7.63: ensureTextureView() posts TextureView creation to mainHandler (async).
+            // So textureView is null immediately after ensureTextureView() returns.
+            // Previous code checked 'if (textureView != null)' right after → always false
+            // → setupPreviewSurface never called → preview never started → blank screen.
+            // FIX: Always schedule setupPreviewSurface on mainHandler. It will run AFTER
+            // ensureTextureView's post completes, so textureView will exist by then.
+            // setupPreviewSurface already checks 'if (uvcCamera == null || textureView == null)'.
             ensureTextureView();
-            if (textureView != null) {
-                mainHandler.post(() -> setupPreviewSurface());
-            }
+            mainHandler.post(() -> {
+                // By now, ensureTextureView's post has run and textureView exists.
+                // But check again in case it failed.
+                if (textureView != null && uvcCamera != null) {
+                    setupPreviewSurface();
+                    // Also make container visible
+                    showTextureView();
+                } else {
+                    Log.w(TAG, "TextureView or uvcCamera still null after post — retry in 200ms");
+                    mainHandler.postDelayed(() -> {
+                        if (textureView != null && uvcCamera != null) {
+                            setupPreviewSurface();
+                            showTextureView();
+                        }
+                    }, 200);
+                }
+            });
 
             // Step 4: Set capture callback for photo
             // camera.setFrameCallback(mFrameCallback, UVCCamera.PIXEL_FORMAT_JPEG); // API TBD
