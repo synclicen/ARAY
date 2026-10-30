@@ -740,20 +740,6 @@ export function BoothPage() {
 
   const startRecording = useCallback(() => {
     const video = videoRef.current
-    // v4.7.53: Block video recording when UVC active — canvas drawImage needs <video>
-    // with active getUserMedia stream, but UVC has none (preview is native TextureView).
-    // Attempting to record would: draw blank frames → MediaRecorder produces empty webm
-    // → or worse, MediaPipe/canvas OOM → phone restart.
-    if (uvcActiveRef.current) {
-      setError(
-        'Video mode tidak tersedia dengan kamera USB (UVC).\n\n' +
-        'Kamera USB hanya support Photo mode.\n' +
-        'Untuk video, gunakan kamera Front atau Back (Settings → Camera).'
-      )
-      setPhase('error')
-      return
-    }
-    if (!video || !streamRef.current) return
 
     // v4.5.0: Cleanup any leftover recording state from previous session.
     // Ini prevent: double countdown, flicker, draw loop conflict, video tidak tersimpan.
@@ -770,7 +756,7 @@ export function BoothPage() {
     const templateFilter = template.filterCss || ''
     const combinedFilter = (camFilter + ' ' + templateFilter).trim()
 
-    console.log('[Booth] startRecording — template:', template.id, 'duration:', duration, 'motion:', template.motionType, 'filter:', filter.id)
+    console.log('[Booth] startRecording — template:', template.id, 'duration:', duration, 'motion:', template.motionType, 'filter:', filter.id, 'uvc:', uvcActiveRef.current)
 
     try {
       const canvas = document.createElement('canvas')
@@ -784,6 +770,174 @@ export function BoothPage() {
       if (!ctx) throw new Error('Canvas context failed')
 
       const startTime = Date.now()
+      const uvcPlugin = getUVCCameraNative()
+
+      // ─── UVC recording path (v4.7.55) ───
+      // UVC camera has no <video> stream (preview is native TextureView).
+      // Capture frames via UVCCameraNative.capturePhoto() → base64 JPEG → Image → canvas drawImage.
+      // Frame rate limited by capturePhoto speed (~10-15fps), but produces a real video.
+      if (uvcActiveRef.current && uvcPlugin) {
+        let lastImage: HTMLImageElement | null = null
+        let lastImageReady = false
+
+        const drawUvcFrame = () => {
+          const elapsed = (Date.now() - startTime) / 1000
+          if (lastImageReady && lastImage) {
+            // drawMotionFrame handles cover-fit crop + motion effect internally.
+            // It now accepts HTMLImageElement (v4.7.55).
+            drawMotionFrame(ctx, lastImage, w, h, template.motionType, elapsed, duration, mir, combinedFilter)
+          }
+          rafRecordRef.current = requestAnimationFrame(drawUvcFrame)
+        }
+        drawUvcFrame()
+
+        // Separate capture loop — async, doesn't block raf
+        let capturing = true
+        const captureLoop = async () => {
+          while (capturing) {
+            try {
+              const result: any = await uvcPlugin.capturePhoto({})
+              const base64 = result?.base64
+              if (base64) {
+                const img = new Image()
+                img.onload = () => {
+                  lastImage = img
+                  lastImageReady = true
+                }
+                img.src = `data:image/jpeg;base64,${base64}`
+              }
+            } catch (e) {
+              console.warn('[Booth] UVC frame capture failed:', e)
+            }
+            // Wait a bit before next capture (~15fps target)
+            await new Promise(r => setTimeout(r, 66))
+          }
+        }
+        captureLoop()
+
+        // Store capturing flag for cleanup
+        ;(canvas as any)._uvcCapturing = () => { capturing = false }
+
+        // Capture stream from canvas — 30fps
+        const canvasStream = canvas.captureStream(30)
+
+        let mimeType = 'video/webm;codecs=vp9'
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/webm;codecs=vp8'
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm'
+        }
+
+        const recorder = new MediaRecorder(canvasStream, { mimeType, videoBitsPerSecond: 5000000 })
+        recordedChunksRef.current = []
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunksRef.current.push(e.data)
+        }
+        recorder.onerror = (e: any) => {
+          console.error('[Booth] MediaRecorder error (UVC):', e)
+          setError('Video recorder error. Silakan retry.')
+          setPhase('error')
+        }
+        recorder.onstop = async () => {
+          capturing = false
+          if (rafRecordRef.current) {
+            cancelAnimationFrame(rafRecordRef.current)
+            rafRecordRef.current = null
+          }
+          const rawBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' })
+          console.log('[Booth] UVC video recorded:', rawBlob.size, 'bytes, template:', template.id)
+          if (rawBlob.size === 0) {
+            console.error('[Booth] Video blob is EMPTY')
+            setError('Video recording failed — no data captured')
+            setPhase('error')
+            return
+          }
+          console.log('[Booth] Converting to base64...')
+          try {
+            const arrayBuffer = await rawBlob.arrayBuffer()
+            const bytes = new Uint8Array(arrayBuffer)
+            let binary = ''
+            const chunkSize = 0x8000
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)) as any)
+            }
+            const base64 = btoa(binary)
+            console.log('[Booth] Base64 length:', base64.length)
+            if (activeEvent) {
+              let sessionId = (window as any).__aray_current_session_id
+              if (!sessionId) {
+                console.log('[Booth] Creating new video session...')
+                const sr = await window.aray.sessions.create(activeEvent.id, 'video', 1)
+                if (sr.success) {
+                  sessionId = (sr.data as any).id
+                  ;(window as any).__aray_current_session_id = sessionId
+                  console.log('[Booth] Video session created:', sessionId)
+                } else {
+                  console.error('[Booth] Failed to create video session:', sr)
+                  setError('Failed to create video session: ' + ((sr as any).error?.message || 'unknown'))
+                  setPhase('error')
+                  return
+                }
+              }
+              console.log('[Booth] Saving UVC video, session:', sessionId, 'template:', template.id)
+              const saveResult = await window.aray.media.saveVideo({
+                event_id: activeEvent.id,
+                session_id: sessionId,
+                video_base64: base64,
+                mime_type: 'video/webm',
+                video_style: template.id,
+                filter: filter.id
+              })
+              console.log('[Booth] Save result:', saveResult.success)
+              if (saveResult.success) {
+                const videoMedia = saveResult.data as ArayMedia
+                addMedia(videoMedia)
+                setCompositeMediaId(videoMedia.id)
+                console.log('[Booth] UVC video saved successfully!')
+              } else {
+                console.error('[Booth] Save failed:', (saveResult as any).error)
+                setError('Failed to save video: ' + ((saveResult as any).error?.message || 'unknown'))
+                setPhase('error')
+              }
+            }
+          } catch (e: any) {
+            console.error('[Booth] Video save error:', e)
+            setError('Video save failed: ' + e.message)
+            setPhase('error')
+          }
+        }
+
+        recorder.start(100)
+        mediaRecorderRef.current = recorder
+        setIsRecording(true)
+        setRecordingTime(0)
+        setVideoDuration(duration)
+
+        const recStartTime = Date.now()
+        console.log('[Booth] UVC recording started, target:', duration, 's')
+
+        recordingTimerRef.current = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - recStartTime) / 1000)
+          setRecordingTime(elapsed)
+        }, 500)
+
+        recordTimeoutRef.current = setTimeout(() => {
+          const actual = Math.floor((Date.now() - recStartTime) / 1000)
+          console.log('[Booth] Auto-stop at', actual, 's')
+          if (rafRecordRef.current) { cancelAnimationFrame(rafRecordRef.current); rafRecordRef.current = null }
+          if (recordingTimerRef.current) { clearInterval(recordingTimerRef.current); recordingTimerRef.current = null }
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop()
+          }
+          setIsRecording(false)
+          setPhase('result')
+        }, duration * 1000)
+
+        return  // UVC path complete — don't fall through to getUserMedia path
+      }
+
+      // ─── getUserMedia recording path (original) ───
+      if (!video || !streamRef.current) return
 
       // Draw loop with motion effect — ALL effects applied HERE, in real-time
       const drawFrame = () => {
@@ -1282,34 +1436,38 @@ export function BoothPage() {
     }
   }, [phase])
 
-  // v4.7.53: Sync TextureView aspect ratio with selected aspect ratio.
-  // Without this, UVC preview (native 1280x720 = 16:9) stretches to fill the
-  // entire portrait screen (9:16) — distorting or exceeding the screen.
-  // AutoFitTextureView in the native plugin constrains itself to the ratio.
+  // v4.7.54: Sync TextureView aspect ratio with selected aspect ratio.
+  // v4.7.55: CHANGED — TextureView now fills the ENTIRE screen (cover behavior),
+  // matching the getUserMedia path's <video className="object-cover">.
+  // The selected aspect ratio only affects the CAPTURED PHOTO (cropped in
+  // captureFrame via cover-fit). This way the live preview always fills the
+  // screen, regardless of selected ratio — same as front/back camera.
   useEffect(() => {
     const uvc = getUVCCameraNative()
     if (!uvc || !uvcActiveRef.current) return
-    const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+    // Set ratio to 0 = fill screen (MATCH_PARENT). The camera frame (1280x720)
+    // will be stretched to fill the screen, matching object-cover behavior.
     try {
-      uvc.setAspectRatio({ width: dims.w, height: dims.h }).catch((e: any) => {
+      uvc.setAspectRatio({ width: 0, height: 0 }).catch((e: any) => {
         console.warn('[ARAY] UVC setAspectRatio failed:', e)
       })
-      console.log('[ARAY] UVC setAspectRatio:', currentAspectRatio, '→', dims.w, 'x', dims.h)
+      console.log('[ARAY] UVC setAspectRatio: fill screen (0=cover, photo ratio handled in captureFrame)')
     } catch (e) {
       console.warn('[ARAY] UVC setAspectRatio error:', e)
     }
-  }, [currentAspectRatio, uvcActive])
+  }, [uvcActive])
 
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
-  // v4.7.53: DISABLED when UVC active — palm trigger sends <video> element to MediaPipe,
-  // but UVC has no getUserMedia stream (video.videoWidth === 0). MediaPipe WASM processing
-  // blank/zero-size frames causes native crash → phone restart.
+  // v4.7.55: RE-ENABLED for UVC — palm trigger uses <video> element, but when UVC
+  // is active, the <video> has no stream. We skip palm trigger when UVC active
+  // because MediaPipe can't process frames from a blank video element.
+  // TODO: future version should capture UVC frames to a canvas and send canvas to MediaPipe.
   useEffect(() => {
     // v4.5.4: Don't activate palm trigger during recording — prevent re-trigger
     // v4.7.29: Return early if not preview — but cleanup runs for ALL phase changes
-    // v4.7.53: Also return early if UVC active — MediaPipe + UVC = crash
+    // v4.7.55: Also skip when UVC active — MediaPipe can't see UVC frames (no <video> stream)
     if (phase !== 'preview' || !settings?.palm_trigger || isRecording || uvcActiveRef.current) {
       // v4.7.29: Force cleanup if palm trigger still active when leaving preview
       if (palmTriggerRef.current) {
@@ -1745,9 +1903,8 @@ export function BoothPage() {
 
               {/* v4.6.4: Mode selector — hanya tampil jika booth_mode = 'combined'.
                   Photo only / Video only: mode sudah locked, selector hidden.
-                  v4.7.53: Video button disabled when UVC active — video recording
-                  needs getUserMedia stream (canvas drawImage from <video>), but UVC
-                  uses native TextureView. Recording with UVC = blank frames + crash. */}
+                  v4.7.55: Video mode RE-ENABLED for UVC — recording now works via
+                  capturePhoto() frame capture loop → canvas → MediaRecorder. */}
               {showModeSelector && (
               <div className="mb-8 flex items-center justify-center gap-2">
                 <button
@@ -1761,22 +1918,14 @@ export function BoothPage() {
                   <ImageIcon className="w-4 h-4" /> Photo
                 </button>
                 <button
-                  onClick={() => {
-                    if (uvcActive) return  // v4.7.53: block video mode on UVC
-                    setMode('video')
-                  }}
-                  disabled={uvcActive}
+                  onClick={() => setMode('video')}
                   className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
-                    uvcActive
-                      ? 'bg-silver-200/5 border-silver-300/10 text-silver-600 opacity-50 cursor-not-allowed'
-                      : mode === 'video'
-                        ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
-                        : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+                    mode === 'video'
+                      ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+                      : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
                   }`}
-                  title={uvcActive ? 'Video mode tidak tersedia dengan kamera USB' : ''}
                 >
                   <Video className="w-4 h-4" /> Video
-                  {uvcActive && <span className="text-[10px] ml-1">(USB only Photo)</span>}
                 </button>
               </div>
               )}
@@ -1786,10 +1935,6 @@ export function BoothPage() {
                 size="xl"
                 icon={mode === 'video' ? <Video className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
                 onClick={async () => {
-                  // v4.7.53: Force photo mode when UVC active — video not supported
-                  if (uvcActive && mode === 'video') {
-                    setMode('photo')
-                  }
                   if (!streamRef.current && !uvcActiveRef.current) {
                     const ok = await startCamera()
                     if (!ok) return

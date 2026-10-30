@@ -216,7 +216,7 @@ export const VIDEO_TEMPLATES: VideoTemplate[] = [
  */
 export function drawMotionFrame(
   ctx: CanvasRenderingContext2D,
-  video: HTMLVideoElement,
+  video: HTMLVideoElement | HTMLImageElement,
   w: number,
   h: number,
   motionType: string,
@@ -235,9 +235,10 @@ export function drawMotionFrame(
 
   const progress = Math.min(1, elapsed / duration)
 
-  // Cover-fit: crop video source to match canvas aspect ratio
-  const vw = video.videoWidth
-  const vh = video.videoHeight
+  // v4.7.55: Support both HTMLVideoElement and HTMLImageElement (UVC path uses Image).
+  // HTMLVideoElement: videoWidth/videoHeight. HTMLImageElement: naturalWidth/naturalHeight.
+  const vw = (video as HTMLVideoElement).videoWidth || (video as HTMLImageElement).naturalWidth || 0
+  const vh = (video as HTMLVideoElement).videoHeight || (video as HTMLImageElement).naturalHeight || 0
   const canvasRatio = w / h
   const videoRatio = vw / vh
   let srcX = 0, srcY = 0, srcW = vw, srcH = vh
@@ -249,7 +250,7 @@ export function drawMotionFrame(
     srcY = (vh - srcH) / 2
   }
 
-  // Helper: draw video with cover-fit crop + optional zoom/offset
+  // Helper: draw video/image with cover-fit crop + optional zoom/offset
   const drawCover = (zoom = 1, offsetX = 0, offsetY = 0) => {
     const zsw = srcW / zoom
     const zsh = srcH / zoom
