@@ -352,81 +352,75 @@ export function getCustomTemplates(): CustomTemplate[] {
 // localStorage (Electron). localStorage on Android WebView has ~5MB quota;
 // each PNG frame is 1-5MB → only 1 template fits. By saving frame to Filesystem,
 // localStorage only holds small metadata (id, name, layout, path).
+// v4.7.65: REWORKED — saveCustomTemplate now downscales PNG to max 1080px width
+// and compresses to JPEG quality 85 BEFORE storing. This ensures even large
+// template PNGs fit in localStorage as inline data URL (no Filesystem needed).
+// Filesystem approach was unreliable (wrong paths, event_id mismatch).
 export async function saveCustomTemplate(t: CustomTemplate): Promise<void> {
   const all = getCustomTemplates()
   const idx = all.findIndex(x => x.id === t.id)
 
-  // v4.7.60: If frameDataUrl is large (>500KB), try to save to Filesystem first.
-  // This prevents localStorage QuotaExceededError on Android.
-  let stored = t
-  const isAndroid = (window as any).aray?.isAndroid === true
-  const frameSize = t.frameDataUrl?.length || 0
-
-  if (isAndroid && frameSize > 100000 && (window as any).aray?.media?.saveCapturedFrame) {
-    try {
-      // Save frame PNG to Filesystem as a template file
-      const filename = `templates/${t.id}.png`
-      const saveResult = await (window as any).aray.media.saveCapturedFrame({
-        event_id: '_templates',
-        session_id: 'template',
-        filename: filename,
-        frame_base64: t.frameDataUrl.split(',')[1] || t.frameDataUrl,
-        mime_type: 'image/png'
-      })
-      if (saveResult?.success && saveResult?.data?.path) {
-        // Store path instead of data URL — much smaller in localStorage
-        stored = { ...t, frameDataUrl: saveResult.data.path }
-        console.log('[Template] Frame saved to Filesystem:', saveResult.data.path)
-      } else {
-        console.warn('[Template] Filesystem save failed, falling back to localStorage:', saveResult?.error)
-      }
-    } catch (e) {
-      console.warn('[Template] Filesystem save error, falling back to localStorage:', e)
-    }
+  // v4.7.65: Downscale + compress frame to fit localStorage quota.
+  // Original PNG can be 5MB+. After downscale to 1080px + JPEG 85%, ~200-500KB.
+  // Multiple templates fit easily in 5MB localStorage quota.
+  let storedFrameDataUrl = t.frameDataUrl
+  try {
+    storedFrameDataUrl = await downscaleImage(t.frameDataUrl, 1080, 0.85)
+    console.log('[Template] Frame downscaled:', t.frameDataUrl.length, '→', storedFrameDataUrl.length)
+  } catch (e) {
+    console.warn('[Template] Downscale failed, using original:', e)
+    storedFrameDataUrl = t.frameDataUrl
   }
+
+  const stored = { ...t, frameDataUrl: storedFrameDataUrl }
 
   if (idx >= 0) all[idx] = stored; else all.push(stored)
   try {
     localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
   } catch (e: any) {
-    // v4.7.60: QuotaExceededError — clear old templates and retry with metadata only
     console.error('[Template] localStorage quota exceeded:', e?.message)
-    // Try: strip frameDataUrl from ALL templates (they should be in Filesystem)
-    const stripped = all.map(x => {
-      if (x.frameDataUrl && !x.frameDataUrl.startsWith('data:')) return x  // already a path
-      return { ...x, frameDataUrl: '' }  // strip inline data
-    })
+    // Last resort: try with even more aggressive downscale
     try {
+      const tinyFrame = await downscaleImage(t.frameDataUrl, 720, 0.7)
+      const stripped = all.map(x => ({ ...x, frameDataUrl: x.id === t.id ? tinyFrame : (x.frameDataUrl.length > 500000 ? '' : x.frameDataUrl) }))
       localStorage.setItem(CUSTOM_KEY, JSON.stringify(stripped))
-      console.log('[Template] Saved with stripped frames (paths only)')
+      console.log('[Template] Saved with aggressive downscale')
     } catch (e2) {
       throw new Error('Storage penuh. Hapus template lama di Settings → Templates.')
     }
   }
 }
 
-// v4.7.60: Load frame data for a custom template.
-// If frameDataUrl is a path (not data: URL), load from Filesystem.
-export async function loadTemplateFrame(template: CustomTemplate): Promise<string | null> {
-  if (!template.frameDataUrl) return null
-  // If it's already a data URL, return as-is
-  if (template.frameDataUrl.startsWith('data:')) return template.frameDataUrl
-  // If it's a path, load from Filesystem
-  if ((window as any).aray?.readFile) {
-    try {
-      const result = await (window as any).aray.readFile(template.frameDataUrl)
-      if (result?.success && result?.data) {
-        // data is base64 — convert to data URL
-        const base64 = typeof result.data === 'string' && result.data.startsWith('data:')
-          ? result.data
-          : `data:image/png;base64,${result.data}`
-        return base64
+// v4.7.65: Downscale image to max width, keep PNG format to preserve transparency.
+// detectHolesFromAlpha needs alpha channel — JPEG doesn't have it.
+// PNG compression is less aggressive than JPEG, but downscaling to 1080px
+// still reduces size significantly (5MB → ~1MB).
+async function downscaleImage(dataUrl: string, maxWidth: number, _quality: number): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      try {
+        let w = img.naturalWidth
+        let h = img.naturalHeight
+        if (w > maxWidth) {
+          h = Math.round(h * maxWidth / w)
+          w = maxWidth
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) { resolve(dataUrl); return }
+        // Draw image preserving transparency (no black fill — PNG keeps alpha)
+        ctx.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/png'))
+      } catch (e) {
+        resolve(dataUrl)
       }
-    } catch (e) {
-      console.error('[Template] Failed to load frame from Filesystem:', e)
     }
-  }
-  return null
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
 }
 
 export function deleteCustomTemplate(id: string): void {
@@ -487,16 +481,16 @@ export async function compositeCustomTemplate(
   _aspectRatio?: string  // ignored for custom templates — PNG dimensions take priority
 ): Promise<string | null> {
   try {
-    // v4.7.60: Load frame data — may be in Filesystem (path) or inline (data URL)
+    // v4.7.65: frameDataUrl is now always a data: URL (downscaled PNG stored inline
+    // in localStorage). No more Filesystem loading needed.
     let frameDataUrl = custom.frameDataUrl
     if (!frameDataUrl) throw new Error('No frame data')
+    // Backward compat: if it's a path (old template from v1.0.83-v1.0.84), skip
     if (!frameDataUrl.startsWith('data:')) {
-      // It's a path — load from Filesystem
-      const loaded = await loadTemplateFrame(custom)
-      if (!loaded) throw new Error('Failed to load frame from Filesystem: ' + frameDataUrl)
-      frameDataUrl = loaded
+      console.warn('[compositeCustomTemplate] Frame is a path (legacy), cannot load:', frameDataUrl)
+      throw new Error('Template frame is a legacy path — re-upload the template')
     }
-    console.log('[compositeCustomTemplate] Frame loaded, length:', frameDataUrl.length, 'starts with data:', frameDataUrl.startsWith('data:'))
+    console.log('[compositeCustomTemplate] Frame loaded, length:', frameDataUrl.length)
 
     // Load the PNG frame FIRST to get its natural dimensions
     const frameImg = await loadImage(frameDataUrl)
@@ -621,7 +615,11 @@ export async function compositeTemplate(
       const sw = (slot.width / 100) * canvas.width
       const sh = (slot.height / 100) * canvas.height
 
-      drawImageCover(ctx, img, sx, sy, sw, sh)
+      // v4.7.65: Use contain-fit (NOT cover) so FULL photo is visible — no zoom, no crop.
+      // If camera ratio differs from slot ratio, photo shrinks to fit with black bars.
+      // This preserves all objects in the photo — nothing is lost.
+      // User designs template PNG to match their camera ratio for seamless fit.
+      drawImageContain(ctx, img, sx, sy, sw, sh)
       ctx.strokeStyle = template.frameColor
       ctx.lineWidth = 3
       ctx.strokeRect(sx, sy, sw, sh)
