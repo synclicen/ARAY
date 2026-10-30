@@ -490,12 +490,17 @@ export async function compositeCustomTemplate(
 export async function compositeTemplate(
   template: ArayTemplateDef,
   photoDataUrls: string[],
-  aspectRatio?: string
+  _aspectRatio?: string  // v4.7.58: IGNORED — template's canvasWidth/Height (PNG shape) takes priority
 ): Promise<string | null> {
   try {
     const canvas = document.createElement('canvas')
-    // If aspectRatio provided, use aspect ratio dims instead of template dims
-    const dims = aspectRatio ? getCompositeDims(aspectRatio) : { w: template.canvasWidth, h: template.canvasHeight }
+    // v4.7.58: ALWAYS use template's canvas dimensions (its "PNG shape"), not the
+    // selected aspect ratio. The template defines its own layout (vertical strip,
+    // horizontal grid, etc.) — forcing the selected aspect ratio distorts the
+    // template and photos don't fit the slots correctly.
+    // If user wants output in a specific aspect ratio, they should pick a template
+    // that matches (or use a custom PNG template).
+    const dims = { w: template.canvasWidth, h: template.canvasHeight }
     canvas.width = dims.w
     canvas.height = dims.h
     const ctx = canvas.getContext('2d')

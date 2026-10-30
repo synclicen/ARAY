@@ -166,8 +166,17 @@ export function BoothPage() {
   const boothModeSetting = settings?.booth_mode || 'combined'
   const [activeFilterId, setActiveFilterId] = useState('original')
   const [activeFilterIdVideo, setActiveFilterIdVideo] = useState('original')
-  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
-  const [aspectRatioVideo, setAspectRatioVideo] = useState<'16:9' | '9:16' | '1:1' | '4:3'>('9:16')
+  // v4.7.58: Initialize aspectRatio from settings synchronously (not useEffect).
+  // Previous bug: state initialized to '9:16' → startCamera called setAspectRatio
+  // with {720, 1280} (portrait) even when user selected 16:9. useEffect ran later
+  // but by then TextureView already had wrong ratio. First capture showed portrait,
+  // then re-render finally applied correct ratio.
+  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16' | '1:1' | '4:3'>(
+    (settings?.aspect_ratio as any) || '9:16'
+  )
+  const [aspectRatioVideo, setAspectRatioVideo] = useState<'16:9' | '9:16' | '1:1' | '4:3'>(
+    (settings?.aspect_ratio_video as any) || (settings?.aspect_ratio as any) || '9:16'
+  )
   const [selectedVideoTemplate, setSelectedVideoTemplate] = useState('plain')
   const [videoDuration, setVideoDuration] = useState(15)
   const [isRecording, setIsRecording] = useState(false)
@@ -266,6 +275,46 @@ export function BoothPage() {
 
   const enumerateCameras = useCallback(async () => {
     // v4.7.42: Coba Camera2Native dulu (support USB capture card)
+    // v4.7.58: Also enumerate UVC cameras so USB camera appears in the selector.
+    // If settings.camera_device_id points to a UVC device, it must stay visible.
+    const uvcPlugin = getUVCCameraNative()
+    if (uvcPlugin) {
+      try {
+        const uvcResult = await uvcPlugin.enumerateCameras()
+        const uvcCams = (uvcResult.cameras || []).map((c: any) => ({
+          deviceId: String(c.id ?? c.deviceName ?? ''),
+          label: String(c.label ?? c.id ?? 'USB Camera'),
+          kind: 'videoinput' as MediaDeviceKind
+        }))
+        if (uvcCams.length > 0) {
+          console.log('[ARAY] UVC cameras enumerated:', uvcCams.length, uvcCams.map((c: any) => c.label))
+          // Also try Camera2Native for front/back cameras, merge
+          const Camera2Native = getCamera2Native()
+          let allCams = [...uvcCams]
+          if (Camera2Native) {
+            try {
+              const result = await Camera2Native.enumerateCameras()
+              const cams = (result.cameras || []).map((c: any) => ({
+                deviceId: c.id,
+                label: c.label,
+                kind: 'videoinput' as MediaDeviceKind
+              }))
+              // Merge, avoid duplicates (Camera2Native might list UVC too)
+              const uvcIds = new Set(uvcCams.map((c: any) => c.deviceId))
+              allCams = [...uvcCams, ...cams.filter((c: any) => !uvcIds.has(c.deviceId))]
+              setNativeCameras(result.cameras || [])
+            } catch (e) {
+              console.warn('[ARAY] Camera2Native enumerate failed (UVC path):', e)
+            }
+          }
+          setVideoDevices(allCams)
+          return allCams
+        }
+      } catch (e) {
+        console.warn('[ARAY] UVC enumerate failed:', e)
+      }
+    }
+
     const Camera2Native = getCamera2Native();
     if (Camera2Native) {
       try {

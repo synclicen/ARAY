@@ -779,12 +779,18 @@ public class UVCCameraNativePlugin extends Plugin {
             previewSurface.release();
             previewSurface = null;
         }
-        hideTextureView();
+        // v4.7.58: DO NOT hideTextureView here — keep preview visible so capturePhoto
+        // (textureView.getBitmap) still works. Hide is only needed when switching
+        // to review/result phases, which is handled by hidePreview() from JS.
+        // Also: do NOT destroy textureView — it will be reused on next openCamera.
+        // Previous bug: closeUVCCamera → hideTextureView → next capturePhoto returned
+        // null bitmap (view GONE) → JS error → user had to restart.
     }
 
     private void handleDeviceDisconnect(UsbDevice device) {
         if (currentUsbDevice != null && currentUsbDevice.getDeviceName().equals(device.getDeviceName())) {
             closeUVCCamera();
+            // v4.7.58: Clear these so next openCamera re-initializes properly
             currentUsbDevice = null;
             currentCtrlBlock = null;
             notifyListeners("uvc:disconnected", new JSObject());
