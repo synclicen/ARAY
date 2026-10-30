@@ -132,6 +132,10 @@ export function BoothPage() {
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
   const [showCameraSelector, setShowCameraSelector] = useState(false)  // v4.7.41: camera device selector
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
+  // v4.7.52: UVC active state — mirrors uvcActiveRef but triggers re-render.
+  // When true, booth page backgrounds become transparent so the native TextureView
+  // (behind WebView) shows through as live camera preview.
+  const [uvcActive, setUvcActive] = useState(false)
   // v4.6.5: mirror initialized from settings (not hardcoded true).
   // Front camera (user) typically wants mirror=true, back camera wants false.
   // User can override at runtime via the mirror toggle in Booth UI; the override
@@ -244,6 +248,7 @@ export function BoothPage() {
         try { uvc.closeCamera({}).catch(() => {}) } catch (e) {}
       }
       uvcActiveRef.current = false
+      setUvcActive(false)
       document.body.classList.remove('aray-uvc-active')
     }
   }, [])
@@ -383,6 +388,7 @@ export function BoothPage() {
           // Jangan throw — kasih user kesempatan untuk retry.
         }
         uvcActiveRef.current = true
+        setUvcActive(true)
         document.body.classList.add('aray-uvc-active')
         try { await uvcPlugin.showPreview({}) } catch (e) {
           console.warn('[ARAY] UVC showPreview failed (might not be implemented):', e)
@@ -1175,6 +1181,7 @@ export function BoothPage() {
           try { uvc.closeCamera({}).catch(() => {}) } catch (e) {}
         }
         uvcActiveRef.current = false
+        setUvcActive(false)
         document.body.classList.remove('aray-uvc-active')
       }
     }
@@ -1244,17 +1251,21 @@ export function BoothPage() {
   // konten WebView penuh (review/result/error), hide TextureView supaya tidak
   // konflik. Saat preview/countdown/flash, show TextureView supaya live camera
   // tetap visible di belakang overlay WebView (countdown number, flash).
+  // v4.7.52: Also toggle body class + uvcActive state so CSS transparency applies.
   useEffect(() => {
     const uvc = getUVCCameraNative()
     if (!uvc || !uvcActiveRef.current) return
     const showPhases: BoothPhase[] = ['preview', 'countdown', 'flash', 'greeting']
-    if (showPhases.includes(phase)) {
+    const shouldShow = showPhases.includes(phase)
+    if (shouldShow) {
       try { uvc.showPreview({}).catch(() => {}) } catch (e) {}
       document.body.classList.add('aray-uvc-active')
+      setUvcActive(true)
     } else {
       // review / result / error — sembunyikan TextureView supaya WebView composite terlihat
       try { uvc.hidePreview({}).catch(() => {}) } catch (e) {}
       document.body.classList.remove('aray-uvc-active')
+      setUvcActive(false)
     }
   }, [phase])
 
@@ -1383,27 +1394,27 @@ export function BoothPage() {
   }
 
   return (
-    <div className="h-full w-full relative bg-black overflow-hidden">
+    <div className={`h-full w-full relative overflow-hidden ${uvcActive ? 'bg-transparent' : 'bg-black'}`}>
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Camera video — ALWAYS rendered. Filter applied via CSS. Aspect ratio via inline style. */}
-      <div className="absolute inset-0 flex items-center justify-center bg-black overflow-hidden">
+      {/* Camera video — ALWAYS rendered (for getUserMedia path).
+          v4.7.52: When UVC active, hide the <video> element entirely — it has no
+          srcObject (UVC uses native TextureView behind WebView), and its parent
+          bg-black would block the TextureView from showing through. */}
+      <div className={`absolute inset-0 flex items-center justify-center overflow-hidden ${uvcActive ? 'bg-transparent' : 'bg-black'}`}>
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
           className={`object-cover ${mirror ? 'scale-x-[-1]' : ''} ${
-            phase === 'preview' || phase === 'countdown' || phase === 'flash' || phase === 'greeting' ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            uvcActive ? 'hidden' : (phase === 'preview' || phase === 'countdown' || phase === 'flash' || phase === 'greeting' ? 'opacity-100' : 'opacity-0 pointer-events-none')
           }`}
           style={{
             filter: activeFilter.css,
             aspectRatio: currentAspectRatio.replace(':', ' / '),
             maxHeight: '100dvh',
             maxWidth: '100%',
-            // v4.7.20: Untuk rasio landscape (16:9, 4:3) di screen portrait,
-            // width harus 100% dan height auto — supaya aspectRatio berlaku.
-            // Untuk rasio portrait (9:16) dan square (1:1), height 100dvh dan width auto.
             width: (currentAspectRatio === '16:9' || currentAspectRatio === '4:3') ? '100%' : 'auto',
             height: (currentAspectRatio === '16:9' || currentAspectRatio === '4:3') ? 'auto' : '100dvh'
           }}
@@ -1688,8 +1699,11 @@ export function BoothPage() {
       <AnimatePresence mode="wait">
         {phase === 'greeting' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center" style={{ animation: 'fadeIn 0.2s ease-out' }}>
-            {/* v4.7.13: Simplified overlay — lighter for Android WebView performance */}
-            <div className="absolute inset-0 bg-surface-base/70" />
+            {/* v4.7.13: Simplified overlay — lighter for Android WebView performance
+                v4.7.52: When UVC active, use lighter overlay (bg-surface-base/30) so the
+                native TextureView camera preview is visible behind. When not UVC, use
+                bg-surface-base/70 for darker background (getUserMedia video is the bg). */}
+            <div className={`absolute inset-0 ${uvcActive ? 'bg-surface-base/30' : 'bg-surface-base/70'}`} />
             <div className="relative z-10 text-center">
               <ArayLogo size="md" className="mb-6" />
               <p className="text-silver-300 text-lg italic mb-6">Let's make a memory.</p>

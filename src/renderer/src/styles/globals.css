@@ -48,6 +48,18 @@
   body.aray-uvc-active .bg-surface-base {
     background: transparent !important;
   }
+  /* v4.7.52: Also override common opaque backgrounds used in Booth page.
+     - .bg-black: Booth root + camera container divs
+     - .bg-surface-base\\/70: Greeting overlay (Tailwind opacity modifier
+       generates escaped class name bg-surface-base\\/70)
+     These would otherwise block the UVC TextureView from showing through. */
+  body.aray-uvc-active .bg-black {
+    background: transparent !important;
+  }
+  body.aray-uvc-active .bg-surface-base\\/70,
+  body.aray-uvc-active .bg-surface-base\\/30 {
+    background: rgba(15, 11, 26, 0.3) !important;
+  }
 
   /* Custom scrollbar — desktop only (mobile uses touch) */
   @media (pointer: fine) {
