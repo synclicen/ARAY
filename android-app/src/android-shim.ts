@@ -308,7 +308,9 @@ const DEFAULT_SETTINGS = {
   camera_facing: 'user',
   camera_mirror: true,
   // v4.7.7: Photo quality preset
-  photo_quality: 'high'
+  photo_quality: 'high',
+  // v4.7.66: Photo fit mode for templates — 'fit' (contain) or 'fill' (cover)
+  photo_fit_mode: 'fit'
 }
 
 async function getSettings() {

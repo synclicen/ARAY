@@ -1223,11 +1223,11 @@ export function BoothPage() {
       if (customTemplate) {
         // Custom template: use compositeCustomTemplate
         console.log('[Booth] Compositing with custom template:', customTemplate.name)
-        composite = await compositeCustomTemplate(customTemplate, photoUrls, currentAspectRatio)
+        composite = await compositeCustomTemplate(customTemplate, photoUrls, currentAspectRatio, settings?.photo_fit_mode)
       } else if (builtinTemplate) {
         // Built-in template: use compositeTemplate
         console.log('[Booth] Compositing with built-in template:', builtinTemplate.name)
-        composite = await compositeTemplate(builtinTemplate, photoUrls, currentAspectRatio)
+        composite = await compositeTemplate(builtinTemplate, photoUrls, currentAspectRatio, settings?.photo_fit_mode)
       }
 
       if (composite && activeEvent) {

@@ -141,6 +141,50 @@ export function TemplatesPage() {
         </div>
       </ArayCard>
 
+      {/* v4.7.66: Photo Fit Mode setting — Fit vs Fill */}
+      <ArayCard className="p-6">
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-xl bg-purple-haze-500/20 flex items-center justify-center">
+            <LayoutTemplate className="w-6 h-6 text-purple-haze-300" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold mb-2">Photo Fit Mode</h3>
+            <p className="text-silver-400 text-sm mb-4 leading-relaxed">
+              Pilih cara foto dimasukkan ke slot template:
+              <br />
+              <strong className="text-gold-300">Fit</strong> — Foto sepenuhnya terlihat, mengecil jika rasio berbeda (sisi hitam). Tidak ada object hilang.
+              <br />
+              <strong className="text-gold-300">Fill</strong> — Foto di-zoom hingga penuh slot, sebagian mungkin terpotong jika rasio berbeda.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => updateSettings({ photo_fit_mode: 'fit' })}
+                className={`px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                  (settings?.photo_fit_mode || 'fit') === 'fit'
+                    ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+                    : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+                }`}
+              >
+                Fit (Contain)
+              </button>
+              <button
+                onClick={() => updateSettings({ photo_fit_mode: 'fill' })}
+                className={`px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
+                  settings?.photo_fit_mode === 'fill'
+                    ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+                    : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+                }`}
+              >
+                Fill (Cover)
+              </button>
+            </div>
+            <p className="text-xs text-silver-500 mt-3">
+              Mode aktif: <strong className="text-gold-300">{settings?.photo_fit_mode === 'fill' ? 'Fill' : 'Fit'}</strong>
+            </p>
+          </div>
+        </div>
+      </ArayCard>
+
       {/* Selected template indicator */}
       <div className="flex items-center gap-3 p-4 rounded-xl bg-purple-haze-500/10 border border-purple-haze-500/20">
         <Check className="w-5 h-5 text-green-400" />

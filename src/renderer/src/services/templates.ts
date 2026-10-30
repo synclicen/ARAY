@@ -478,7 +478,8 @@ export function getCompositeDims(aspectRatio: string): { w: number; h: number } 
 export async function compositeCustomTemplate(
   custom: CustomTemplate,
   photoDataUrls: string[],
-  _aspectRatio?: string  // ignored for custom templates — PNG dimensions take priority
+  _aspectRatio?: string,  // ignored for custom templates — PNG dimensions take priority
+  fitMode?: 'fit' | 'fill'  // v4.7.66: user-selectable photo fit mode
 ): Promise<string | null> {
   try {
     // v4.7.65: frameDataUrl is now always a data: URL (downscaled PNG stored inline
@@ -558,9 +559,15 @@ export async function compositeCustomTemplate(
         console.error(`[compositeCustomTemplate] Photo ${i + 1} FAILED to load as Image!`)
         continue
       }
-      console.log(`[compositeCustomTemplate] Photo ${i + 1} loaded: ${img.naturalWidth}x${img.naturalHeight}, slot: ${slot.w.toFixed(0)}x${slot.h.toFixed(0)} @ (${slot.x.toFixed(0)},${slot.y.toFixed(0)})`)
-      // slot.x/y/w/h are ALL in pixel coords — use directly
-      drawImageContain(ctx, img, slot.x, slot.y, slot.w, slot.h)
+      console.log(`[compositeCustomTemplate] Photo ${i + 1} loaded: ${img.naturalWidth}x${img.naturalHeight}, slot: ${slot.w.toFixed(0)}x${slot.h.toFixed(0)} @ (${slot.x.toFixed(0)},${slot.y.toFixed(0)}), fitMode: ${fitMode || 'fit'}`)
+      // v4.7.66: Use user-selected fit mode.
+      // 'fit' (default) = contain — full photo visible, black bars if ratio differs
+      // 'fill' = cover — zoom-crop to fill slot, no black bars
+      if (fitMode === 'fill') {
+        drawImageCover(ctx, img, slot.x, slot.y, slot.w, slot.h)
+      } else {
+        drawImageContain(ctx, img, slot.x, slot.y, slot.w, slot.h)
+      }
     }
 
     // Overlay PNG frame at NATURAL size — no stretching!
@@ -576,17 +583,12 @@ export async function compositeCustomTemplate(
 export async function compositeTemplate(
   template: ArayTemplateDef,
   photoDataUrls: string[],
-  aspectRatio?: string  // v4.7.63: RESTORED — was working before v1.0.81
+  aspectRatio?: string,  // v4.7.63: RESTORED — was working before v1.0.81
+  fitMode?: 'fit' | 'fill'  // v4.7.66: user-selectable photo fit mode
 ): Promise<string | null> {
   try {
     const canvas = document.createElement('canvas')
     // v4.7.63: REVERT v1.0.81 change that broke HP camera composites.
-    // v1.0.81 forced template.canvasWidth/canvasHeight, ignoring user's selected
-    // aspect ratio. This broke HP camera photos which are captured at the selected
-    // ratio (e.g. 16:9) — they didn't fit the template's fixed canvas.
-    // RESTORED: If aspectRatio provided, use aspect ratio dims (user's selection).
-    // If not provided (e.g. legacy call), fall back to template.canvasWidth/Height.
-    // This is the behavior that worked for HP camera before UVC changes.
     const dims = aspectRatio ? getCompositeDims(aspectRatio) : { w: template.canvasWidth, h: template.canvasHeight }
     canvas.width = dims.w
     canvas.height = dims.h
@@ -615,11 +617,14 @@ export async function compositeTemplate(
       const sw = (slot.width / 100) * canvas.width
       const sh = (slot.height / 100) * canvas.height
 
-      // v4.7.65: Use contain-fit (NOT cover) so FULL photo is visible — no zoom, no crop.
-      // If camera ratio differs from slot ratio, photo shrinks to fit with black bars.
-      // This preserves all objects in the photo — nothing is lost.
-      // User designs template PNG to match their camera ratio for seamless fit.
-      drawImageContain(ctx, img, sx, sy, sw, sh)
+      // v4.7.66: Use user-selected fit mode.
+      // 'fit' (default) = contain — full photo visible, black bars if ratio differs
+      // 'fill' = cover — zoom-crop to fill slot, no black bars
+      if (fitMode === 'fill') {
+        drawImageCover(ctx, img, sx, sy, sw, sh)
+      } else {
+        drawImageContain(ctx, img, sx, sy, sw, sh)
+      }
       ctx.strokeStyle = template.frameColor
       ctx.lineWidth = 3
       ctx.strokeRect(sx, sy, sw, sh)

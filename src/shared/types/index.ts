@@ -106,6 +106,13 @@ export interface AraySettings {
   palm_trigger: boolean
   palm_trigger_sensitivity: number
   /**
+   * v4.7.66: Photo fit mode for templates.
+   * 'fit'  = contain (full photo visible, black bars if ratio differs) — DEFAULT
+   * 'fill' = cover (zoom-crop to fill slot, no black bars)
+   * User can toggle in Templates page.
+   */
+  photo_fit_mode?: 'fit' | 'fill'
+  /**
    * Password untuk exit fullscreen booth mode.
    * Jika kosong, exit fullscreen tanpa password.
    * Default: 'aray' (user bisa ubah di Settings).
