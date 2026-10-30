@@ -348,16 +348,94 @@ export function getCustomTemplates(): CustomTemplate[] {
   } catch { return [] }
 }
 
-export function saveCustomTemplate(t: CustomTemplate): void {
+// v4.7.60: Save custom template — frame PNG stored in Filesystem (Android) or
+// localStorage (Electron). localStorage on Android WebView has ~5MB quota;
+// each PNG frame is 1-5MB → only 1 template fits. By saving frame to Filesystem,
+// localStorage only holds small metadata (id, name, layout, path).
+export async function saveCustomTemplate(t: CustomTemplate): Promise<void> {
   const all = getCustomTemplates()
   const idx = all.findIndex(x => x.id === t.id)
-  if (idx >= 0) all[idx] = t; else all.push(t)
-  localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
+
+  // v4.7.60: If frameDataUrl is large (>500KB), try to save to Filesystem first.
+  // This prevents localStorage QuotaExceededError on Android.
+  let stored = t
+  const isAndroid = (window as any).aray?.isAndroid === true
+  const frameSize = t.frameDataUrl?.length || 0
+
+  if (isAndroid && frameSize > 100000 && (window as any).aray?.media?.saveCapturedFrame) {
+    try {
+      // Save frame PNG to Filesystem as a template file
+      const filename = `templates/${t.id}.png`
+      const saveResult = await (window as any).aray.media.saveCapturedFrame({
+        event_id: '_templates',
+        session_id: 'template',
+        filename: filename,
+        frame_base64: t.frameDataUrl.split(',')[1] || t.frameDataUrl,
+        mime_type: 'image/png'
+      })
+      if (saveResult?.success && saveResult?.data?.path) {
+        // Store path instead of data URL — much smaller in localStorage
+        stored = { ...t, frameDataUrl: saveResult.data.path }
+        console.log('[Template] Frame saved to Filesystem:', saveResult.data.path)
+      } else {
+        console.warn('[Template] Filesystem save failed, falling back to localStorage:', saveResult?.error)
+      }
+    } catch (e) {
+      console.warn('[Template] Filesystem save error, falling back to localStorage:', e)
+    }
+  }
+
+  if (idx >= 0) all[idx] = stored; else all.push(stored)
+  try {
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
+  } catch (e: any) {
+    // v4.7.60: QuotaExceededError — clear old templates and retry with metadata only
+    console.error('[Template] localStorage quota exceeded:', e?.message)
+    // Try: strip frameDataUrl from ALL templates (they should be in Filesystem)
+    const stripped = all.map(x => {
+      if (x.frameDataUrl && !x.frameDataUrl.startsWith('data:')) return x  // already a path
+      return { ...x, frameDataUrl: '' }  // strip inline data
+    })
+    try {
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify(stripped))
+      console.log('[Template] Saved with stripped frames (paths only)')
+    } catch (e2) {
+      throw new Error('Storage penuh. Hapus template lama di Settings → Templates.')
+    }
+  }
+}
+
+// v4.7.60: Load frame data for a custom template.
+// If frameDataUrl is a path (not data: URL), load from Filesystem.
+export async function loadTemplateFrame(template: CustomTemplate): Promise<string | null> {
+  if (!template.frameDataUrl) return null
+  // If it's already a data URL, return as-is
+  if (template.frameDataUrl.startsWith('data:')) return template.frameDataUrl
+  // If it's a path, load from Filesystem
+  if ((window as any).aray?.readFile) {
+    try {
+      const result = await (window as any).aray.readFile(template.frameDataUrl)
+      if (result?.success && result?.data) {
+        // data is base64 — convert to data URL
+        const base64 = typeof result.data === 'string' && result.data.startsWith('data:')
+          ? result.data
+          : `data:image/png;base64,${result.data}`
+        return base64
+      }
+    } catch (e) {
+      console.error('[Template] Failed to load frame from Filesystem:', e)
+    }
+  }
+  return null
 }
 
 export function deleteCustomTemplate(id: string): void {
   const all = getCustomTemplates().filter(x => x.id !== id)
-  localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
+  try {
+    localStorage.setItem(CUSTOM_KEY, JSON.stringify(all))
+  } catch (e) {
+    // Ignore quota error on delete
+  }
 }
 
 // Get layout info from any built-in template by ID
@@ -409,8 +487,18 @@ export async function compositeCustomTemplate(
   _aspectRatio?: string  // ignored for custom templates — PNG dimensions take priority
 ): Promise<string | null> {
   try {
+    // v4.7.60: Load frame data — may be in Filesystem (path) or inline (data URL)
+    let frameDataUrl = custom.frameDataUrl
+    if (!frameDataUrl) throw new Error('No frame data')
+    if (!frameDataUrl.startsWith('data:')) {
+      // It's a path — load from Filesystem
+      const loaded = await loadTemplateFrame(custom)
+      if (!loaded) throw new Error('Failed to load frame from Filesystem: ' + frameDataUrl)
+      frameDataUrl = loaded
+    }
+
     // Load the PNG frame FIRST to get its natural dimensions
-    const frameImg = await loadImage(custom.frameDataUrl)
+    const frameImg = await loadImage(frameDataUrl)
     if (!frameImg) throw new Error('Failed to load frame image')
 
     // Use PNG frame's natural dimensions as canvas size

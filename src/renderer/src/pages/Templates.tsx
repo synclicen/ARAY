@@ -76,13 +76,17 @@ export function TemplatesPage() {
       canvasWidth: pngWidth,
       canvasHeight: pngHeight
     }
-    saveCustomTemplate(custom)
-    setCustomTemplates(getCustomTemplates())
-    setShowUploadModal(false)
-    setUploadName('')
-    setUploadFrameData(null)
-    setUploadPreview(null)
-    setUploadLayout('strip-4')
+    try {
+      await saveCustomTemplate(custom)
+      setCustomTemplates(getCustomTemplates())
+      setShowUploadModal(false)
+      setUploadName('')
+      setUploadFrameData(null)
+      setUploadPreview(null)
+      setUploadLayout('strip-4')
+    } catch (e: any) {
+      alert('Gagal menyimpan template: ' + (e?.message || e) + '\n\nCoba gunakan gambar PNG yang lebih kecil, atau hapus template lama.')
+    }
   }
 
   const handleDeleteCustom = (id: string) => {
