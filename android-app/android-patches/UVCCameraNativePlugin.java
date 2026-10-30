@@ -95,7 +95,14 @@ public class UVCCameraNativePlugin extends Plugin {
     private BroadcastReceiver usbPermissionReceiver;
 
     // Discovered devices
-    private final Map<String, UsbDevice> discoveredDevices = new HashMap<>();
+    // v4.7.59: Use ConcurrentHashMap instead of HashMap.
+    // discoveredDevices is accessed from multiple threads:
+    // - USBMonitor callbacks (onAttach/onDettach) on background thread
+    // - enumerateCameras from JS bridge thread
+    // - pollUsbDevices on mainHandler
+    // HashMap with concurrent access → ConcurrentModificationException → native crash.
+    // ConcurrentHashMap is thread-safe for iteration and modification.
+    private final Map<String, UsbDevice> discoveredDevices = new java.util.concurrent.ConcurrentHashMap<>();
 
     // Polling for Android 14+
     private Runnable usbPollingRunnable;
@@ -431,7 +438,15 @@ public class UVCCameraNativePlugin extends Plugin {
     @PluginMethod
     public void enumerateCameras(PluginCall call) {
         JSONArray camerasArray = new JSONArray();
-        for (Map.Entry<String, UsbDevice> entry : discoveredDevices.entrySet()) {
+        // v4.7.59: Copy discoveredDevices to array FIRST, then iterate.
+        // discoveredDevices can be modified concurrently by USBMonitor callbacks
+        // (onAttach/onDettach on background thread). Iterating the map directly
+        // causes ConcurrentModificationException → native crash → phone restart.
+        Map.Entry<String, UsbDevice>[] entries;
+        synchronized (discoveredDevices) {
+            entries = discoveredDevices.entrySet().toArray(new Map.Entry[0]);
+        }
+        for (Map.Entry<String, UsbDevice> entry : entries) {
             UsbDevice device = entry.getValue();
             int vid = device.getVendorId();
             String label;
@@ -725,11 +740,24 @@ public class UVCCameraNativePlugin extends Plugin {
             return;
         }
 
+        // v4.7.59: Check textureView.isAvailable() — if TextureView's SurfaceTexture
+        // is not ready (e.g. view just became visible), getBitmap() can crash on
+        // some devices. Reject gracefully instead of crashing.
+        if (!textureView.isAvailable()) {
+            call.reject("TextureView not ready");
+            return;
+        }
+
         android.graphics.Bitmap bitmap = null;
         try {
             bitmap = textureView.getBitmap();
             if (bitmap == null) {
                 call.reject("Failed to capture bitmap from TextureView");
+                return;
+            }
+            // v4.7.59: Check bitmap not recycled (concurrent recycle could happen)
+            if (bitmap.isRecycled()) {
+                call.reject("Bitmap already recycled");
                 return;
             }
 
@@ -753,8 +781,6 @@ public class UVCCameraNativePlugin extends Plugin {
             call.reject("Capture failed: " + e.getMessage());
         } finally {
             // v4.7.56: CRITICAL — recycle Bitmap to prevent native OOM.
-            // textureView.getBitmap() allocates ~3.7MB native memory per call (1280x720 ARGB_8888).
-            // Without recycle, at 15fps video recording = 55MB/s native leak → OOM → phone restart.
             if (bitmap != null && !bitmap.isRecycled()) {
                 try { bitmap.recycle(); } catch (Exception e) {}
             }
@@ -779,12 +805,10 @@ public class UVCCameraNativePlugin extends Plugin {
             previewSurface.release();
             previewSurface = null;
         }
-        // v4.7.58: DO NOT hideTextureView here — keep preview visible so capturePhoto
-        // (textureView.getBitmap) still works. Hide is only needed when switching
-        // to review/result phases, which is handled by hidePreview() from JS.
-        // Also: do NOT destroy textureView — it will be reused on next openCamera.
-        // Previous bug: closeUVCCamera → hideTextureView → next capturePhoto returned
-        // null bitmap (view GONE) → JS error → user had to restart.
+        // v4.7.59: Revert v1.0.81 change — keep hideTextureView here.
+        // v1.0.81 removed this thinking it would help capturePhoto, but it caused
+        // SurfaceTexture invalid state on re-open → crash. Safer to hide here.
+        hideTextureView();
     }
 
     private void handleDeviceDisconnect(UsbDevice device) {
