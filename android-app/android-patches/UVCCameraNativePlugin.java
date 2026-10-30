@@ -76,9 +76,12 @@ public class UVCCameraNativePlugin extends Plugin {
     private USBMonitor.UsbControlBlock currentCtrlBlock;
 
     // Preview
-    private TextureView textureView;
+    private AutoFitTextureView textureView;
     private FrameLayout textureContainer;
     private Surface previewSurface;
+    // v4.7.53: Target aspect ratio for TextureView (width / height).
+    // 0 = fill screen (MATCH_PARENT). Non-zero = constrain to ratio, centered.
+    private float targetAspectRatio = 0f;
 
     // Background thread
     private HandlerThread backgroundThread;
@@ -614,6 +617,8 @@ public class UVCCameraNativePlugin extends Plugin {
                     ViewGroup rootView = (ViewGroup) activity.findViewById(android.R.id.content);
                     if (rootView == null) return;
 
+                    // v4.7.53: Container is MATCH_PARENT (fills screen).
+                    // TextureView inside it is AutoFit — respects targetAspectRatio.
                     textureContainer = new FrameLayout(activity);
                     FrameLayout.LayoutParams containerParams = new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
@@ -621,16 +626,19 @@ public class UVCCameraNativePlugin extends Plugin {
                     );
                     textureContainer.setLayoutParams(containerParams);
 
-                    textureView = new TextureView(activity);
+                    // v4.7.53: AutoFitTextureView measures itself based on targetAspectRatio.
+                    // Gravity CENTER so it's centered within the container.
+                    textureView = new AutoFitTextureView(activity);
                     FrameLayout.LayoutParams tvParams = new FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        android.view.Gravity.CENTER
                     );
                     textureView.setLayoutParams(tvParams);
                     textureContainer.addView(textureView);
 
                     rootView.addView(textureContainer, 0);
-                    Log.i(TAG, "TextureView overlay created");
+                    Log.i(TAG, "TextureView overlay created (AutoFit, ratio=" + targetAspectRatio + ")");
                 } catch (Exception e) {
                     Log.e(TAG, "ensureTextureView failed: " + e.getMessage(), e);
                 }
@@ -788,6 +796,38 @@ public class UVCCameraNativePlugin extends Plugin {
         call.resolve();
     }
 
+    // v4.7.53: Set target aspect ratio for TextureView.
+    // JS calls this with { width, height } (e.g. 9, 16 for portrait 9:16).
+    // The AutoFitTextureView will constrain itself to that ratio, centered on screen.
+    // This prevents the UVC preview from stretching/exceeding the screen when the
+    // camera's native 16:9 output doesn't match the user's selected aspect ratio.
+    @PluginMethod
+    public void setAspectRatio(PluginCall call) {
+        int w = call.getInt("width", 0);
+        int h = call.getInt("height", 0);
+        if (w > 0 && h > 0) {
+            targetAspectRatio = (float) w / (float) h;
+        } else {
+            targetAspectRatio = 0f;  // fill screen
+        }
+        Log.i(TAG, "setAspectRatio: " + w + "x" + h + " → ratio=" + targetAspectRatio);
+
+        // Apply to existing TextureView (if created)
+        if (textureView != null) {
+            mainHandler.post(() -> {
+                textureView.setAspectRatio(targetAspectRatio);
+                // Force re-layout
+                if (textureContainer != null) {
+                    textureContainer.requestLayout();
+                }
+            });
+        }
+        JSObject ret = new JSObject();
+        ret.put("success", true);
+        ret.put("ratio", targetAspectRatio);
+        call.resolve(ret);
+    }
+
     @Override
     protected void handleOnDestroy() {
         closeUVCCamera();
@@ -820,5 +860,69 @@ public class UVCCameraNativePlugin extends Plugin {
         textureContainer = null;
         stopBackgroundThread();
         super.handleOnDestroy();
+    }
+}
+
+/**
+ * v4.7.53: AutoFitTextureView — TextureView that respects a target aspect ratio.
+ *
+ * Standard TextureView with MATCH_PARENT stretches the camera preview to fill
+ * the entire screen. For UVC cameras (native 1280x720 = 16:9) on a portrait
+ * phone screen (9:16), this distorts the preview or makes it exceed the screen.
+ *
+ * AutoFitTextureView overrides onMeasure to constrain itself to the target
+ * aspect ratio (width / height). The view is centered within its parent
+ * (FrameLayout with Gravity.CENTER), so letterboxing/pillarboxing appears
+ * as transparent margins — letting the WebView background show through.
+ *
+ * Port dari Android Camera2 API sample code (AutoFitTextureView.java).
+ */
+class AutoFitTextureView extends TextureView {
+    private float aspectRatio = 0f;  // width / height, 0 = fill parent
+
+    public AutoFitTextureView(Context context) {
+        super(context);
+    }
+
+    /**
+     * Set target aspect ratio (width / height).
+     * 0 = fill parent (MATCH_PARENT behavior).
+     * Non-zero = constrain to ratio, centered.
+     */
+    public void setAspectRatio(float ratio) {
+        if (ratio < 0) ratio = 0;
+        if (this.aspectRatio != ratio) {
+            this.aspectRatio = ratio;
+            requestLayout();
+        }
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        int parentWidth = MeasureSpec.getSize(widthMeasureSpec);
+        int parentHeight = MeasureSpec.getSize(heightMeasureSpec);
+
+        if (aspectRatio <= 0 || parentWidth <= 0 || parentHeight <= 0) {
+            // No ratio constraint — fill parent
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+            return;
+        }
+
+        // Calculate child dimensions that fit within parent while respecting aspectRatio.
+        // ratio = childWidth / childHeight
+        int childWidth, childHeight;
+
+        float parentRatio = (float) parentWidth / (float) parentHeight;
+        if (parentRatio > aspectRatio) {
+            // Parent is wider than target → constrain by height, crop/pillarbox width
+            childHeight = parentHeight;
+            childWidth = Math.round(childHeight * aspectRatio);
+        } else {
+            // Parent is taller than target → constrain by width, crop/letterbox height
+            childWidth = parentWidth;
+            childHeight = Math.round(childWidth / aspectRatio);
+        }
+
+        setMeasuredDimension(childWidth, childHeight);
     }
 }

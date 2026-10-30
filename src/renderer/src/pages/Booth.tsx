@@ -740,6 +740,19 @@ export function BoothPage() {
 
   const startRecording = useCallback(() => {
     const video = videoRef.current
+    // v4.7.53: Block video recording when UVC active — canvas drawImage needs <video>
+    // with active getUserMedia stream, but UVC has none (preview is native TextureView).
+    // Attempting to record would: draw blank frames → MediaRecorder produces empty webm
+    // → or worse, MediaPipe/canvas OOM → phone restart.
+    if (uvcActiveRef.current) {
+      setError(
+        'Video mode tidak tersedia dengan kamera USB (UVC).\n\n' +
+        'Kamera USB hanya support Photo mode.\n' +
+        'Untuk video, gunakan kamera Front atau Back (Settings → Camera).'
+      )
+      setPhase('error')
+      return
+    }
     if (!video || !streamRef.current) return
 
     // v4.5.0: Cleanup any leftover recording state from previous session.
@@ -1269,13 +1282,35 @@ export function BoothPage() {
     }
   }, [phase])
 
+  // v4.7.53: Sync TextureView aspect ratio with selected aspect ratio.
+  // Without this, UVC preview (native 1280x720 = 16:9) stretches to fill the
+  // entire portrait screen (9:16) — distorting or exceeding the screen.
+  // AutoFitTextureView in the native plugin constrains itself to the ratio.
+  useEffect(() => {
+    const uvc = getUVCCameraNative()
+    if (!uvc || !uvcActiveRef.current) return
+    const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
+    try {
+      uvc.setAspectRatio({ width: dims.w, height: dims.h }).catch((e: any) => {
+        console.warn('[ARAY] UVC setAspectRatio failed:', e)
+      })
+      console.log('[ARAY] UVC setAspectRatio:', currentAspectRatio, '→', dims.w, 'x', dims.h)
+    } catch (e) {
+      console.warn('[ARAY] UVC setAspectRatio error:', e)
+    }
+  }, [currentAspectRatio, uvcActive])
+
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
+  // v4.7.53: DISABLED when UVC active — palm trigger sends <video> element to MediaPipe,
+  // but UVC has no getUserMedia stream (video.videoWidth === 0). MediaPipe WASM processing
+  // blank/zero-size frames causes native crash → phone restart.
   useEffect(() => {
     // v4.5.4: Don't activate palm trigger during recording — prevent re-trigger
     // v4.7.29: Return early if not preview — but cleanup runs for ALL phase changes
-    if (phase !== 'preview' || !settings?.palm_trigger || isRecording) {
+    // v4.7.53: Also return early if UVC active — MediaPipe + UVC = crash
+    if (phase !== 'preview' || !settings?.palm_trigger || isRecording || uvcActiveRef.current) {
       // v4.7.29: Force cleanup if palm trigger still active when leaving preview
       if (palmTriggerRef.current) {
         palmTriggerRef.current.dispose?.()
@@ -1709,7 +1744,10 @@ export function BoothPage() {
               <p className="text-silver-300 text-lg italic mb-6">Let's make a memory.</p>
 
               {/* v4.6.4: Mode selector — hanya tampil jika booth_mode = 'combined'.
-                  Photo only / Video only: mode sudah locked, selector hidden. */}
+                  Photo only / Video only: mode sudah locked, selector hidden.
+                  v4.7.53: Video button disabled when UVC active — video recording
+                  needs getUserMedia stream (canvas drawImage from <video>), but UVC
+                  uses native TextureView. Recording with UVC = blank frames + crash. */}
               {showModeSelector && (
               <div className="mb-8 flex items-center justify-center gap-2">
                 <button
@@ -1723,14 +1761,22 @@ export function BoothPage() {
                   <ImageIcon className="w-4 h-4" /> Photo
                 </button>
                 <button
-                  onClick={() => setMode('video')}
+                  onClick={() => {
+                    if (uvcActive) return  // v4.7.53: block video mode on UVC
+                    setMode('video')
+                  }}
+                  disabled={uvcActive}
                   className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border transition-all ${
-                    mode === 'video'
-                      ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
-                      : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
+                    uvcActive
+                      ? 'bg-silver-200/5 border-silver-300/10 text-silver-600 opacity-50 cursor-not-allowed'
+                      : mode === 'video'
+                        ? 'bg-purple-haze-500/25 border-purple-haze-500/40 text-purple-haze-100'
+                        : 'bg-silver-200/5 border-silver-300/20 text-silver-400'
                   }`}
+                  title={uvcActive ? 'Video mode tidak tersedia dengan kamera USB' : ''}
                 >
                   <Video className="w-4 h-4" /> Video
+                  {uvcActive && <span className="text-[10px] ml-1">(USB only Photo)</span>}
                 </button>
               </div>
               )}
@@ -1740,7 +1786,11 @@ export function BoothPage() {
                 size="xl"
                 icon={mode === 'video' ? <Video className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
                 onClick={async () => {
-                  if (!streamRef.current) {
+                  // v4.7.53: Force photo mode when UVC active — video not supported
+                  if (uvcActive && mode === 'video') {
+                    setMode('photo')
+                  }
+                  if (!streamRef.current && !uvcActiveRef.current) {
                     const ok = await startCamera()
                     if (!ok) return
                   }
