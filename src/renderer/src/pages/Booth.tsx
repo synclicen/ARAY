@@ -118,6 +118,11 @@ export function BoothPage() {
   // Saat true: preview di-render oleh native TextureView (di belakang WebView),
   // captureFrame() harus pakai UVCCameraNative.capturePhoto() (bukan <video> drawImage).
   const uvcActiveRef = useRef<boolean>(false)
+  // v4.7.56: Guard against startCamera re-entry. When settings change (aspect_ratio,
+  // camera_device_id, etc), startCamera is recreated → greeting effect re-runs →
+  // calls startCamera() again. For UVC, streamRef is always null so the old guard
+  // didn't work. This ref prevents duplicate UVC open → native memory leak → OOM.
+  const cameraStartingRef = useRef<boolean>(false)
 
   const { events, loadEvents, activeEventId, setActiveEvent } = useEventStore()
   const { addMedia } = useMediaStore()
@@ -251,6 +256,8 @@ export function BoothPage() {
       setUvcActive(false)
       document.body.classList.remove('aray-uvc-active')
     }
+    // v4.7.56: Reset starting guard so next startCamera can proceed
+    cameraStartingRef.current = false
   }, [])
 
   // v4.7.42: Enumerate cameras — pakai Camera2Native jika Android (support USB)
@@ -294,14 +301,31 @@ export function BoothPage() {
   }, [])
 
   const startCamera = useCallback(async () => {
+    // v4.7.56: CRITICAL — guard against re-entry.
+    // When settings change (e.g. aspect_ratio), startCamera is recreated (it has
+    // settings?.camera_device_id in deps). The greeting effect has [startCamera]
+    // in its deps, so it re-runs → calls startCamera() AGAIN. For UVC,
+    // streamRef.current is always null (no getUserMedia), so the old guard
+    // `!streamRef.current` was always true → UVC re-opened every settings change
+    // → native memory leak → OOM → phone restart.
+    if (cameraStartingRef.current) {
+      console.log('[ARAY] startCamera already in progress — skipping')
+      return false
+    }
+    if (uvcActiveRef.current) {
+      console.log('[ARAY] UVC camera already active — skipping startCamera')
+      return true
+    }
+    if (streamRef.current) {
+      console.log('[ARAY] getUserMedia stream already active — skipping startCamera')
+      return true
+    }
+    cameraStartingRef.current = true
+
     try {
       setError(null)
-      // v4.7.22: Stop existing stream dulu (kalau ada yang zombie)
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-      }
-      // v4.7.51: Reset UVC flag — akan di-set true hanya jika benar-benar pakai UVC
+      // v4.7.56: The guards above already ensure streamRef.current and uvcActiveRef
+      // are false/null at this point. No need to clean up here.
       uvcActiveRef.current = false
 
       // ─────────────────────────────────────────────────────────────
@@ -481,6 +505,9 @@ export function BoothPage() {
       }
       setPhase('error')
       return false
+    } finally {
+      // v4.7.56: Always reset the starting guard — even on error.
+      cameraStartingRef.current = false
     }
   }, [settings?.camera_facing, settings?.camera_device_id, selectedDeviceId])
 
@@ -783,34 +810,54 @@ export function BoothPage() {
         const drawUvcFrame = () => {
           const elapsed = (Date.now() - startTime) / 1000
           if (lastImageReady && lastImage) {
-            // drawMotionFrame handles cover-fit crop + motion effect internally.
-            // It now accepts HTMLImageElement (v4.7.55).
             drawMotionFrame(ctx, lastImage, w, h, template.motionType, elapsed, duration, mir, combinedFilter)
           }
           rafRecordRef.current = requestAnimationFrame(drawUvcFrame)
         }
         drawUvcFrame()
 
-        // Separate capture loop — async, doesn't block raf
+        // v4.7.56: Capture loop with proper backpressure + memory cleanup.
+        // Previous version: no backpressure → Image accumulation → OOM.
+        // Now: only one capturePhoto in-flight at a time, previous Image explicitly
+        // dereferenced, lower frame rate (10fps = 100ms interval) to reduce pressure.
         let capturing = true
         const captureLoop = async () => {
           while (capturing) {
             try {
               const result: any = await uvcPlugin.capturePhoto({})
+              if (!capturing) break  // check after await — recording may have stopped
               const base64 = result?.base64
               if (base64) {
+                // v4.7.56: Release previous Image's data URL reference to help GC.
+                // Setting lastImage = null + lastImageReady = false prevents drawUvcFrame
+                // from using a stale Image while the new one loads.
+                const oldImage = lastImage
+                lastImage = null
+                lastImageReady = false
+                if (oldImage) {
+                  oldImage.src = ''  // release data URL string reference
+                }
+
                 const img = new Image()
                 img.onload = () => {
-                  lastImage = img
-                  lastImageReady = true
+                  if (capturing) {
+                    lastImage = img
+                    lastImageReady = true
+                  } else {
+                    img.src = ''  // release if recording stopped before load
+                  }
+                }
+                img.onerror = () => {
+                  img.src = ''  // release on error
                 }
                 img.src = `data:image/jpeg;base64,${base64}`
               }
             } catch (e) {
               console.warn('[Booth] UVC frame capture failed:', e)
             }
-            // Wait a bit before next capture (~15fps target)
-            await new Promise(r => setTimeout(r, 66))
+            // v4.7.56: 100ms interval = 10fps target. Lower than before (15fps) to
+            // reduce native Bitmap allocation pressure (each capturePhoto = 3.7MB native).
+            await new Promise(r => setTimeout(r, 100))
           }
         }
         captureLoop()

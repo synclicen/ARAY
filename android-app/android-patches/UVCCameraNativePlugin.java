@@ -715,34 +715,44 @@ public class UVCCameraNativePlugin extends Plugin {
 
     @PluginMethod
     public void capturePhoto(PluginCall call) {
-        // v4.7.47: Photo capture TBD — need to verify UVCCamera API for v0.0.13
-        // For now, capture from TextureView bitmap
         if (uvcCamera == null || textureView == null) {
             call.reject("UVC camera not opened");
             return;
         }
 
+        android.graphics.Bitmap bitmap = null;
         try {
-            android.graphics.Bitmap bitmap = textureView.getBitmap();
+            bitmap = textureView.getBitmap();
             if (bitmap == null) {
                 call.reject("Failed to capture bitmap from TextureView");
                 return;
             }
 
             java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, baos);
-            byte[] bytes = baos.toByteArray();
-            String base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
+            try {
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, baos);
+                byte[] bytes = baos.toByteArray();
+                String base64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
 
-            Log.i(TAG, "Photo captured from TextureView: " + bytes.length + " bytes");
-
-            JSObject ret = new JSObject();
-            ret.put("success", true);
-            ret.put("base64", base64);
-            call.resolve(ret);
+                JSObject ret = new JSObject();
+                ret.put("success", true);
+                ret.put("base64", base64);
+                ret.put("width", bitmap.getWidth());
+                ret.put("height", bitmap.getHeight());
+                call.resolve(ret);
+            } finally {
+                try { baos.close(); } catch (Exception e) {}
+            }
         } catch (Exception e) {
             Log.e(TAG, "capturePhoto failed: " + e.getMessage(), e);
             call.reject("Capture failed: " + e.getMessage());
+        } finally {
+            // v4.7.56: CRITICAL — recycle Bitmap to prevent native OOM.
+            // textureView.getBitmap() allocates ~3.7MB native memory per call (1280x720 ARGB_8888).
+            // Without recycle, at 15fps video recording = 55MB/s native leak → OOM → phone restart.
+            if (bitmap != null && !bitmap.isRecycled()) {
+                try { bitmap.recycle(); } catch (Exception e) {}
+            }
         }
     }
 
