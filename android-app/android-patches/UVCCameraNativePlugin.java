@@ -91,6 +91,13 @@ public class UVCCameraNativePlugin extends Plugin {
     // Capture
     private PluginCall pendingPhotoCallback;
 
+    // v4.7.64: Closing guard — prevents openCamera while closeUVCCamera is still
+    // releasing USB handles. libuvccamera can't handle fast close/open cycle →
+    // USB handle not released → native crash → kernel panic → phone restart.
+    private volatile boolean isClosing = false;
+    private volatile long lastCloseTime = 0;
+    private static final long CLOSE_REOPEN_DELAY_MS = 1000;  // Min 1s between close and open
+
     // USB permission
     private BroadcastReceiver usbPermissionReceiver;
 
@@ -550,6 +557,20 @@ public class UVCCameraNativePlugin extends Plugin {
         Log.i(TAG, "  VID=0x" + Integer.toHexString(device.getVendorId()) + " PID=0x" + Integer.toHexString(device.getProductId()));
         Log.i(TAG, "═══════════════════════════════════════════════════");
 
+        // v4.7.64: Check close/reopen delay — prevent crash from fast close/open cycle.
+        // libuvccamera needs time to fully release USB handles after close().
+        // If we open too soon, USB handle is still locked → native crash → phone restart.
+        if (isClosing) {
+            Log.w(TAG, "openUVCCamera BLOCKED — close in progress, skipping");
+            return;
+        }
+        long timeSinceClose = System.currentTimeMillis() - lastCloseTime;
+        if (lastCloseTime > 0 && timeSinceClose < CLOSE_REOPEN_DELAY_MS) {
+            long waitMs = CLOSE_REOPEN_DELAY_MS - timeSinceClose;
+            Log.w(TAG, "openUVCCamera DELAYED — only " + timeSinceClose + "ms since close, waiting " + waitMs + "ms");
+            try { Thread.sleep(waitMs); } catch (InterruptedException e) { return; }
+        }
+
         closeUVCCamera();
 
         try {
@@ -813,6 +834,8 @@ public class UVCCameraNativePlugin extends Plugin {
     // ═══════════════════════════════════════════════════════════════
 
     private void closeUVCCamera() {
+        // v4.7.64: Set closing flag to prevent immediate reopen
+        isClosing = true;
         try {
             if (uvcCamera != null) {
                 uvcCamera.stopPreview();
@@ -827,9 +850,11 @@ public class UVCCameraNativePlugin extends Plugin {
             previewSurface = null;
         }
         // v4.7.59: Revert v1.0.81 change — keep hideTextureView here.
-        // v1.0.81 removed this thinking it would help capturePhoto, but it caused
-        // SurfaceTexture invalid state on re-open → crash. Safer to hide here.
         hideTextureView();
+        // v4.7.64: Record close time + clear closing flag after delay
+        lastCloseTime = System.currentTimeMillis();
+        isClosing = false;
+        Log.i(TAG, "closeUVCCamera complete — reopen allowed after " + CLOSE_REOPEN_DELAY_MS + "ms");
     }
 
     private void handleDeviceDisconnect(UsbDevice device) {

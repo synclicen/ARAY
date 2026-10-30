@@ -555,9 +555,17 @@ export function BoothPage() {
   // v4.6.5: switch antara front ('user') dan back ('environment') camera.
   // Restart camera stream supaya constraint facingMode baru diterapkan.
   // v4.7.40: Guard untuk prevent double switchCamera
+  // v4.7.64: BLOCK when UVC active — UVC has no front/back, and close/reopen
+  // causes native crash (libuvccamera can't handle fast close/open cycle →
+  // USB handle not released → kernel panic → phone restart).
   const switchingRef = useRef(false)
   const switchCamera = useCallback(async () => {
     if (switchingRef.current) return  // v4.7.40: block double-tap
+    // v4.7.64: Block switch when UVC active — prevents phone restart
+    if (uvcActiveRef.current) {
+      console.log('[ARAY] switchCamera blocked — UVC camera active (no front/back)')
+      return
+    }
     switchingRef.current = true
 
     try {
@@ -1487,11 +1495,23 @@ export function BoothPage() {
               setPhase('error')
               return
             }
+            // v4.7.64: UVC cameras don't have getUserMedia stream — streamRef is
+            // always null for UVC. Don't restart UVC on visibilitychange (close/
+            // reopen causes native crash). UVC handles its own lifecycle.
+            if (uvcActiveRef.current) {
+              console.log('[Booth] UVC active on resume — no restart needed (UVC manages own lifecycle)')
+              return
+            }
             console.log('[Booth] Camera stream dead after resume — restarting')
             stopCamera()
             setTimeout(() => { startCamera() }, 200)
           }
         } else if (phase === 'greeting' || phase === 'preview') {
+          // v4.7.64: Don't restart UVC on resume — it's still active
+          if (uvcActiveRef.current) {
+            console.log('[Booth] UVC still active on resume — no restart')
+            return
+          }
           console.log('[Booth] No stream after resume — starting camera')
           startCamera()
         }
@@ -1799,7 +1819,10 @@ export function BoothPage() {
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
             <ArayBadge variant="gold" className="hidden xs:inline-flex sm:inline-flex">{activeEvent.name}</ArayBadge>
-            {/* v4.6.5: Quick camera controls — switch front/back + mirror toggle */}
+            {/* v4.6.5: Quick camera controls — switch front/back + mirror toggle
+                v4.7.64: Hide switch button when UVC active — UVC has no front/back,
+                and pressing it caused phone restart (close/reopen crash). */}
+            {!uvcActive && (
             <button
               onClick={() => switchCameraRef.current()}
               title={`Switch to ${settings?.camera_facing === 'user' ? 'back' : 'front'} camera`}
@@ -1807,6 +1830,7 @@ export function BoothPage() {
             >
               <SwitchCamera className="w-4 h-4 text-silver-200" />
             </button>
+            )}
             {/* v4.7.41: Camera device selector — list semua kamera termasuk USB */}
             <button
               onClick={async () => {
