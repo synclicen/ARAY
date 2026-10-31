@@ -1851,10 +1851,21 @@ export function BoothPage() {
     let monitoring = true
     let brightnessHistory: number[] = []
     const HISTORY_SIZE = 5
-    const BLACKOUT_THRESHOLD = 0.50   // current < 50% of average = blackout
-    const MIN_AVG_BRIGHTNESS = 20     // don't trigger in already-dark scenes
+
+    // v4.7.77: Sensitivity-based thresholds
+    // 'high' = detect brief blackouts (30% drop) — catches quick shutter presses
+    // 'medium' = balanced (40% drop)
+    // 'low' = only long blackouts (60% drop) — stable, may miss quick presses
+    const sensitivity = settings?.hardware_shutter_sensitivity || 'medium'
+    const BLACKOUT_THRESHOLD = sensitivity === 'high' ? 0.70 : sensitivity === 'low' ? 0.40 : 0.60
+    const MIN_AVG_BRIGHTNESS = 20
     const COOLDOWN_MS = 3000
-    let lastBrightness = -1  // track previous frame for fast drop detection
+    let lastBrightness = -1
+    // v4.7.77: Dip-recovery tracking — if we see a dark frame, remember it.
+    // If NEXT frame is bright again (recovered), it was a brief blackout → trigger.
+    // This catches blackouts so short we only caught ONE dark frame.
+    let dipDetected = false
+    let dipBrightness = 0
 
     // Small canvas for brightness sampling
     const sampleCanvas = document.createElement('canvas')
@@ -1898,11 +1909,11 @@ export function BoothPage() {
 
           if (brightness < 0) continue
 
-          // v4.7.76: FAST drop detection — if brightness dropped >50% from PREVIOUS frame
-          // (not just from rolling average), trigger immediately. This catches short
-          // blackouts (100ms) that the rolling average might miss.
-          if (lastBrightness > MIN_AVG_BRIGHTNESS && brightness < lastBrightness * 0.50) {
-            console.log(`[Booth] Hardware shutter (fast drop)! ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)}`)
+          // v4.7.77: DIP-RECOVERY detection — if previous frame was a dip (dark)
+          // and current frame recovered to normal → brief blackout confirmed → trigger.
+          // This catches blackouts so short we only caught ONE dark frame.
+          if (dipDetected && brightness > dipBrightness * 1.5 && brightness > MIN_AVG_BRIGHTNESS) {
+            console.log(`[Booth] Hardware shutter (dip recovery)! dip=${dipBrightness.toFixed(0)} → recovered=${brightness.toFixed(0)}`)
             hardwareShutterCooldownRef.current = Date.now()
 
             setHidePalmTrigger(true)
@@ -1917,8 +1928,42 @@ export function BoothPage() {
 
             brightnessHistory = []
             lastBrightness = -1
+            dipDetected = false
             await new Promise(r => setTimeout(r, COOLDOWN_MS))
             continue
+          }
+
+          // v4.7.77: FAST DROP detection with sensitivity-based threshold
+          // 'high' sensitivity: trigger on 30% drop (catches quick shutter presses)
+          // 'medium': trigger on 40% drop
+          // 'low': trigger on 60% drop (only long blackouts)
+          if (lastBrightness > MIN_AVG_BRIGHTNESS && brightness < lastBrightness * (1 - BLACKOUT_THRESHOLD)) {
+            // For HIGH sensitivity: trigger immediately (don't wait for recovery)
+            if (sensitivity === 'high') {
+              console.log(`[Booth] Hardware shutter (high sens immediate)! ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)}`)
+              hardwareShutterCooldownRef.current = Date.now()
+
+              setHidePalmTrigger(true)
+              setPalmState('triggered')
+              setPalmTriggerActive(false)
+              if (palmTriggerRef.current) {
+                palmTriggerRef.current.dispose?.()
+                palmTriggerRef.current = null
+              }
+              setPhase('countdown')
+              runCountdownRef.current()
+
+              brightnessHistory = []
+              lastBrightness = -1
+              dipDetected = false
+              await new Promise(r => setTimeout(r, COOLDOWN_MS))
+              continue
+            }
+
+            // For MEDIUM/LOW: mark as dip, wait for recovery (confirms real blackout)
+            dipDetected = true
+            dipBrightness = brightness
+            console.log(`[Booth] Dip detected: ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)} (waiting for recovery)`)
           }
 
           // Also check against rolling average (catches gradual dimming)
@@ -1930,7 +1975,7 @@ export function BoothPage() {
             const prevSamples = brightnessHistory.slice(0, -1)
             const avgBrightness = prevSamples.reduce((a, b) => a + b, 0) / prevSamples.length
 
-            if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * BLACKOUT_THRESHOLD) {
+            if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * (1 - BLACKOUT_THRESHOLD)) {
               console.log(`[Booth] Hardware shutter (avg drop)! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
               hardwareShutterCooldownRef.current = Date.now()
 
@@ -1946,6 +1991,7 @@ export function BoothPage() {
 
               brightnessHistory = []
               lastBrightness = -1
+              dipDetected = false
               await new Promise(r => setTimeout(r, COOLDOWN_MS))
               continue
             }

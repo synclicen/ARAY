@@ -312,7 +312,9 @@ const DEFAULT_SETTINGS = {
   // v4.7.66: Photo fit mode for templates — 'fit' (contain) or 'fill' (cover)
   photo_fit_mode: 'fit',
   // v4.7.71: Hardware shutter detection for DSLR via USB capture card
-  hardware_shutter: false
+  hardware_shutter: false,
+  // v4.7.77: Hardware shutter sensitivity — 'low' | 'medium' | 'high'
+  hardware_shutter_sensitivity: 'medium'
 }
 
 async function getSettings() {

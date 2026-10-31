@@ -583,6 +583,40 @@ export function SettingsPage() {
             />
           </SettingRow>
 
+          {/* v4.7.77: Hardware shutter sensitivity */}
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Shutter sensitivity"
+            hint="High = responsif untuk tekanan singkat. Medium = seimbang. Low = stabil, mungkin perlu tekan lebih lama."
+          >
+            <select
+              className="aray-input w-full sm:w-auto sm:max-w-[160px]"
+              value={settings.hardware_shutter_sensitivity || 'medium'}
+              onChange={(e) => updateSettings({ hardware_shutter_sensitivity: e.target.value as 'low' | 'medium' | 'high' })}
+              disabled={!settings.hardware_shutter}
+            >
+              <option value="low">Low (tekan lama)</option>
+              <option value="medium">Medium (seimbang)</option>
+              <option value="high">High (tekan singkat)</option>
+            </select>
+          </SettingRow>
+
+          {/* v4.7.77: DSLR settings guide */}
+          {settings.hardware_shutter && (
+            <div className="p-3 rounded-xl bg-gold-400/10 border border-gold-400/20 text-xs leading-relaxed">
+              <p className="text-gold-300 font-medium mb-2">📌 Pengaturan DSLR ideal untuk shutter detection:</p>
+              <ul className="text-silver-300 space-y-1 ml-4 list-disc">
+                <li><strong>Manual Focus (MF)</strong> — AF menyebabkan delay & blackout tidak konsisten</li>
+                <li><strong>Shutter speed 1/60 atau lebih lambat</strong> — blackout lebih lama = lebih mudah dideteksi</li>
+                <li><strong>Matikan Image Review</strong> — jangan tampilkan foto hasil di LCD setelah capture (menyebabkan blackout panjang yang salah deteksi)</li>
+                <li><strong>Matikan Long Exposure NR</strong> — tambah delay setelah capture</li>
+                <li><strong>Live View mode: Stills</strong> — bukan movie mode</li>
+                <li><strong>Jangan gunakan silent shutter / electronic shutter</strong> — tidak ada mirror flip = tidak ada blackout</li>
+              </ul>
+              <p className="text-silver-400 mt-2">Jika shutter masih sulit terdeteksi, coba ubah sensitivity ke <strong className="text-gold-300">High</strong>.</p>
+            </div>
+          )}
+
           <SettingRow
             icon={<Shield className="w-4 h-4" />}
             label="Fullscreen booth password"
