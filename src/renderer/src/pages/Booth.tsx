@@ -1851,9 +1851,10 @@ export function BoothPage() {
     let monitoring = true
     let brightnessHistory: number[] = []
     const HISTORY_SIZE = 5
-    const BLACKOUT_THRESHOLD = 0.50
-    const MIN_AVG_BRIGHTNESS = 20
+    const BLACKOUT_THRESHOLD = 0.50   // current < 50% of average = blackout
+    const MIN_AVG_BRIGHTNESS = 20     // don't trigger in already-dark scenes
     const COOLDOWN_MS = 3000
+    let lastBrightness = -1  // track previous frame for fast drop detection
 
     // Small canvas for brightness sampling
     const sampleCanvas = document.createElement('canvas')
@@ -1870,13 +1871,14 @@ export function BoothPage() {
         }
 
         try {
-          // v4.7.75: Use capturePhoto — proven to work without breaking preview
+          // capturePhoto takes ~50-100ms native round-trip.
+          // This IS our polling delay — no need for extra setTimeout.
           const result: any = await uvcPlugin.capturePhoto({})
           if (!monitoring || cancelled) break
           const base64 = result?.base64
-          if (!base64) { await new Promise(r => setTimeout(r, 200)); continue }
+          if (!base64) continue
 
-          // Calculate brightness from JPEG — load as Image, draw to tiny canvas
+          // Calculate brightness from JPEG
           const brightness = await new Promise<number>((resolve) => {
             const img = new Image()
             img.onload = () => {
@@ -1894,18 +1896,13 @@ export function BoothPage() {
             img.src = `data:image/jpeg;base64,${base64}`
           })
 
-          if (brightness < 0) { await new Promise(r => setTimeout(r, 200)); continue }
+          if (brightness < 0) continue
 
-          brightnessHistory.push(brightness)
-          if (brightnessHistory.length > HISTORY_SIZE) brightnessHistory.shift()
-
-          if (brightnessHistory.length < 3) { await new Promise(r => setTimeout(r, 200)); continue }
-
-          const prevSamples = brightnessHistory.slice(0, -1)
-          const avgBrightness = prevSamples.reduce((a, b) => a + b, 0) / prevSamples.length
-
-          if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * BLACKOUT_THRESHOLD) {
-            console.log(`[Booth] Hardware shutter detected! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
+          // v4.7.76: FAST drop detection — if brightness dropped >50% from PREVIOUS frame
+          // (not just from rolling average), trigger immediately. This catches short
+          // blackouts (100ms) that the rolling average might miss.
+          if (lastBrightness > MIN_AVG_BRIGHTNESS && brightness < lastBrightness * 0.50) {
+            console.log(`[Booth] Hardware shutter (fast drop)! ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)}`)
             hardwareShutterCooldownRef.current = Date.now()
 
             setHidePalmTrigger(true)
@@ -1919,17 +1916,49 @@ export function BoothPage() {
             runCountdownRef.current()
 
             brightnessHistory = []
+            lastBrightness = -1
             await new Promise(r => setTimeout(r, COOLDOWN_MS))
             continue
+          }
+
+          // Also check against rolling average (catches gradual dimming)
+          brightnessHistory.push(brightness)
+          if (brightnessHistory.length > HISTORY_SIZE) brightnessHistory.shift()
+          lastBrightness = brightness
+
+          if (brightnessHistory.length >= 3) {
+            const prevSamples = brightnessHistory.slice(0, -1)
+            const avgBrightness = prevSamples.reduce((a, b) => a + b, 0) / prevSamples.length
+
+            if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * BLACKOUT_THRESHOLD) {
+              console.log(`[Booth] Hardware shutter (avg drop)! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
+              hardwareShutterCooldownRef.current = Date.now()
+
+              setHidePalmTrigger(true)
+              setPalmState('triggered')
+              setPalmTriggerActive(false)
+              if (palmTriggerRef.current) {
+                palmTriggerRef.current.dispose?.()
+                palmTriggerRef.current = null
+              }
+              setPhase('countdown')
+              runCountdownRef.current()
+
+              brightnessHistory = []
+              lastBrightness = -1
+              await new Promise(r => setTimeout(r, COOLDOWN_MS))
+              continue
+            }
           }
         } catch (e) {
           // Expected — keep polling
         }
-        await new Promise(r => setTimeout(r, 200))
+        // v4.7.76: No extra delay — capturePhoto itself is the delay (~50-100ms).
+        // This gives ~10-15fps polling, much faster than before (was ~3fps).
       }
     }
     monitorLoop()
-    console.log('[Booth] Hardware shutter detection started (capturePhoto mode)')
+    console.log('[Booth] Hardware shutter detection started (fast polling mode)')
 
     return () => {
       cancelled = true
