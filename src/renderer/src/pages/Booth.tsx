@@ -1836,13 +1836,17 @@ export function BoothPage() {
   // This effect monitors UVC frame brightness and detects this blackout pattern.
   // On detection → triggers capture (same as palm trigger or shutter button).
   //
+  // v4.7.72: Use native getBrightness() instead of capturePhoto() — 10x faster.
+  // capturePhoto was ~200-400ms per sample (JPEG + base64 + Image onload) →
+  // missed 100-300ms blackouts. getBrightness reads pixels directly (~20-50ms)
+  // and samples at 50ms interval (20fps) → reliably catches blackouts.
+  //
   // Detection algorithm:
-  // 1. Capture UVC frames at ~5fps (200ms interval)
-  // 2. Calculate average brightness of center 100x100 region
-  // 3. Keep rolling history of last 10 brightness values
-  // 4. If current brightness < 25% of rolling average AND was normal in previous frame
+  // 1. Call getBrightness() at 50ms interval (20fps)
+  // 2. Keep rolling history of last 5 brightness values
+  // 3. If current brightness < 50% of rolling average AND average > 20
   //    → blackout detected → trigger capture
-  // 5. Cooldown 3s after trigger to prevent multiple triggers from same event
+  // 4. Cooldown 3s after trigger to prevent multiple triggers from same event
   const hardwareShutterCooldownRef = useRef<number>(0)
 
   useEffect(() => {
@@ -1856,66 +1860,39 @@ export function BoothPage() {
     if (!uvcPreviewReadyRef.current) return
 
     let cancelled = false
-    let capturing = true
+    let monitoring = true
     let brightnessHistory: number[] = []
-    const HISTORY_SIZE = 10
-    const BLACKOUT_THRESHOLD = 0.25  // 25% of rolling average = blackout
+    const HISTORY_SIZE = 5
+    const BLACKOUT_THRESHOLD = 0.50  // 50% of rolling average = blackout
+    const MIN_AVG_BRIGHTNESS = 20    // Don't trigger in very dark scenes
     const COOLDOWN_MS = 3000
 
-    // Small canvas for brightness sampling (100x100 center crop)
-    const sampleCanvas = document.createElement('canvas')
-    sampleCanvas.width = 100
-    sampleCanvas.height = 100
-    const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })
-    if (!sampleCtx) return
-
     const monitorLoop = async () => {
-      while (capturing && !cancelled) {
+      while (monitoring && !cancelled) {
         // Skip if in cooldown
         if (Date.now() - hardwareShutterCooldownRef.current < COOLDOWN_MS) {
-          await new Promise(r => setTimeout(r, 200))
+          await new Promise(r => setTimeout(r, 50))
           continue
         }
 
         try {
-          const result: any = await uvcPlugin.capturePhoto({})
-          if (!capturing || cancelled) break
-          const base64 = result?.base64
-          if (!base64) { await new Promise(r => setTimeout(r, 200)); continue }
-
-          // Load as Image, sample brightness
-          const brightness = await new Promise<number>((resolve) => {
-            const img = new Image()
-            img.onload = () => {
-              try {
-                // Draw center 100x100 region to sample canvas
-                const cx = (img.width - 100) / 2
-                const cy = (img.height - 100) / 2
-                sampleCtx.drawImage(img, cx, cy, 100, 100, 0, 0, 100, 100)
-                const imageData = sampleCtx.getImageData(0, 0, 100, 100)
-                let sum = 0
-                const data = imageData.data
-                for (let i = 0; i < data.length; i += 4) {
-                  // Luminance = 0.299*R + 0.587*G + 0.114*B
-                  sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
-                }
-                resolve(sum / (data.length / 4))
-              } catch {
-                resolve(-1)
-              }
-            }
-            img.onerror = () => resolve(-1)
-            img.src = `data:image/jpeg;base64,${base64}`
-          })
-
-          if (brightness < 0) { await new Promise(r => setTimeout(r, 200)); continue }
+          const result: any = await uvcPlugin.getBrightness({})
+          if (!monitoring || cancelled) break
+          const brightness = result?.brightness
+          if (typeof brightness !== 'number' || brightness < 0) {
+            await new Promise(r => setTimeout(r, 50))
+            continue
+          }
 
           // Update rolling history
           brightnessHistory.push(brightness)
           if (brightnessHistory.length > HISTORY_SIZE) brightnessHistory.shift()
 
-          // Need at least 5 samples before detecting
-          if (brightnessHistory.length < 5) { await new Promise(r => setTimeout(r, 200)); continue }
+          // Need at least 3 samples before detecting
+          if (brightnessHistory.length < 3) {
+            await new Promise(r => setTimeout(r, 50))
+            continue
+          }
 
           // Calculate rolling average (exclude current sample)
           const prevSamples = brightnessHistory.slice(0, -1)
@@ -1923,7 +1900,7 @@ export function BoothPage() {
 
           // Detect blackout: current brightness is much lower than average
           // AND average is not already dark (avoid triggering in low-light conditions)
-          if (avgBrightness > 40 && brightness < avgBrightness * BLACKOUT_THRESHOLD) {
+          if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * BLACKOUT_THRESHOLD) {
             console.log(`[Booth] Hardware shutter detected! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
             hardwareShutterCooldownRef.current = Date.now()
 
@@ -1947,15 +1924,16 @@ export function BoothPage() {
         } catch (e) {
           // Expected — keep polling
         }
-        await new Promise(r => setTimeout(r, 200))
+        // v4.7.72: 50ms interval = 20fps sampling — fast enough to catch 100ms blackout
+        await new Promise(r => setTimeout(r, 50))
       }
     }
     monitorLoop()
-    console.log('[Booth] Hardware shutter detection started (UVC brightness monitor)')
+    console.log('[Booth] Hardware shutter detection started (20fps brightness monitor)')
 
     return () => {
       cancelled = true
-      capturing = false
+      monitoring = false
       console.log('[Booth] Hardware shutter detection stopped')
     }
   }, [phase, settings?.hardware_shutter, uvcActive, isRecording])

@@ -830,6 +830,63 @@ public class UVCCameraNativePlugin extends Plugin {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // v4.7.72: Fast Brightness Detection
+    // For DSLR hardware shutter detection — reads TextureView pixels directly
+    // without JPEG compression or base64 encoding. Returns average brightness
+    // of center region. ~10x faster than capturePhoto().
+    // ═══════════════════════════════════════════════════════════════
+
+    @PluginMethod
+    public void getBrightness(PluginCall call) {
+        if (uvcCamera == null || textureView == null) {
+            call.reject("UVC camera not opened");
+            return;
+        }
+        if (!textureView.isAvailable()) {
+            call.reject("TextureView not ready");
+            return;
+        }
+
+        android.graphics.Bitmap bitmap = null;
+        try {
+            // Get a SMALL bitmap (32x32) from TextureView — much faster than full-res.
+            // textureView.getBitmap(w, h) scales the view to the requested size.
+            bitmap = textureView.getBitmap(32, 32);
+            if (bitmap == null) {
+                call.reject("Failed to get bitmap");
+                return;
+            }
+
+            // Calculate average brightness of center 16x16 region (avoid edges)
+            long sum = 0;
+            int count = 0;
+            for (int y = 8; y < 24; y++) {
+                for (int x = 8; x < 24; x++) {
+                    int pixel = bitmap.getPixel(x, y);
+                    int r = (pixel >> 16) & 0xFF;
+                    int g = (pixel >> 8) & 0xFF;
+                    int b = pixel & 0xFF;
+                    // Luminance: 0.299R + 0.587G + 0.114B
+                    sum += (299 * r + 587 * g + 114 * b) / 1000;
+                    count++;
+                }
+            }
+            float brightness = (float) sum / count;
+
+            JSObject ret = new JSObject();
+            ret.put("brightness", brightness);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e(TAG, "getBrightness failed: " + e.getMessage());
+            call.reject("Brightness failed: " + e.getMessage());
+        } finally {
+            if (bitmap != null && !bitmap.isRecycled()) {
+                try { bitmap.recycle(); } catch (Exception e) {}
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Close / Cleanup
     // ═══════════════════════════════════════════════════════════════
 
