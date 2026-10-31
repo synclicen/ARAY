@@ -113,6 +113,14 @@ export interface AraySettings {
    */
   photo_fit_mode?: 'fit' | 'fill'
   /**
+   * v4.7.71: Hardware shutter detection for DSLR via USB capture card.
+   * When true, app monitors UVC video feed for "blackout" pattern
+   * (DSLR mirror flip causes brief darkening of live view).
+   * On detection → triggers capture (same as pressing shutter button in app).
+   * Only works with UVC cameras (USB capture card).
+   */
+  hardware_shutter?: boolean
+  /**
    * Password untuk exit fullscreen booth mode.
    * Jika kosong, exit fullscreen tanpa password.
    * Default: 'aray' (user bisa ubah di Settings).

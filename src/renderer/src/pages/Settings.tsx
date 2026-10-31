@@ -571,6 +571,18 @@ export function SettingsPage() {
             </select>
           </SettingRow>
 
+          {/* v4.7.71: Hardware Shutter Detection for DSLR via USB capture card */}
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Hardware Shutter (DSLR)"
+            hint="Deteksi tombol shutter fisik kamera DSLR via USB capture card. Saat shutter ditekan, app otomatis capture. Hanya berfungsi dengan kamera USB."
+          >
+            <Toggle
+              value={settings.hardware_shutter || false}
+              onChange={(v) => updateSettings({ hardware_shutter: v })}
+            />
+          </SettingRow>
+
           <SettingRow
             icon={<Shield className="w-4 h-4" />}
             label="Fullscreen booth password"

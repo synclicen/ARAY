@@ -1830,6 +1830,136 @@ export function BoothPage() {
     }
   }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording, uvcActive])
 
+  // v4.7.71: Hardware Shutter Detection for DSLR via USB capture card.
+  // When DSLR shutter is pressed, the mirror flips up → live view video briefly
+  // goes dark (blackout) for 100-300ms → mirror flips back → video resumes.
+  // This effect monitors UVC frame brightness and detects this blackout pattern.
+  // On detection → triggers capture (same as palm trigger or shutter button).
+  //
+  // Detection algorithm:
+  // 1. Capture UVC frames at ~5fps (200ms interval)
+  // 2. Calculate average brightness of center 100x100 region
+  // 3. Keep rolling history of last 10 brightness values
+  // 4. If current brightness < 25% of rolling average AND was normal in previous frame
+  //    → blackout detected → trigger capture
+  // 5. Cooldown 3s after trigger to prevent multiple triggers from same event
+  const hardwareShutterCooldownRef = useRef<number>(0)
+
+  useEffect(() => {
+    // Only active when: preview phase + hardware_shutter enabled + UVC active + not recording
+    if (phase !== 'preview' || !settings?.hardware_shutter || !uvcActive || isRecording) {
+      return
+    }
+
+    const uvcPlugin = getUVCCameraNative()
+    if (!uvcPlugin) return
+    if (!uvcPreviewReadyRef.current) return
+
+    let cancelled = false
+    let capturing = true
+    let brightnessHistory: number[] = []
+    const HISTORY_SIZE = 10
+    const BLACKOUT_THRESHOLD = 0.25  // 25% of rolling average = blackout
+    const COOLDOWN_MS = 3000
+
+    // Small canvas for brightness sampling (100x100 center crop)
+    const sampleCanvas = document.createElement('canvas')
+    sampleCanvas.width = 100
+    sampleCanvas.height = 100
+    const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true })
+    if (!sampleCtx) return
+
+    const monitorLoop = async () => {
+      while (capturing && !cancelled) {
+        // Skip if in cooldown
+        if (Date.now() - hardwareShutterCooldownRef.current < COOLDOWN_MS) {
+          await new Promise(r => setTimeout(r, 200))
+          continue
+        }
+
+        try {
+          const result: any = await uvcPlugin.capturePhoto({})
+          if (!capturing || cancelled) break
+          const base64 = result?.base64
+          if (!base64) { await new Promise(r => setTimeout(r, 200)); continue }
+
+          // Load as Image, sample brightness
+          const brightness = await new Promise<number>((resolve) => {
+            const img = new Image()
+            img.onload = () => {
+              try {
+                // Draw center 100x100 region to sample canvas
+                const cx = (img.width - 100) / 2
+                const cy = (img.height - 100) / 2
+                sampleCtx.drawImage(img, cx, cy, 100, 100, 0, 0, 100, 100)
+                const imageData = sampleCtx.getImageData(0, 0, 100, 100)
+                let sum = 0
+                const data = imageData.data
+                for (let i = 0; i < data.length; i += 4) {
+                  // Luminance = 0.299*R + 0.587*G + 0.114*B
+                  sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+                }
+                resolve(sum / (data.length / 4))
+              } catch {
+                resolve(-1)
+              }
+            }
+            img.onerror = () => resolve(-1)
+            img.src = `data:image/jpeg;base64,${base64}`
+          })
+
+          if (brightness < 0) { await new Promise(r => setTimeout(r, 200)); continue }
+
+          // Update rolling history
+          brightnessHistory.push(brightness)
+          if (brightnessHistory.length > HISTORY_SIZE) brightnessHistory.shift()
+
+          // Need at least 5 samples before detecting
+          if (brightnessHistory.length < 5) { await new Promise(r => setTimeout(r, 200)); continue }
+
+          // Calculate rolling average (exclude current sample)
+          const prevSamples = brightnessHistory.slice(0, -1)
+          const avgBrightness = prevSamples.reduce((a, b) => a + b, 0) / prevSamples.length
+
+          // Detect blackout: current brightness is much lower than average
+          // AND average is not already dark (avoid triggering in low-light conditions)
+          if (avgBrightness > 40 && brightness < avgBrightness * BLACKOUT_THRESHOLD) {
+            console.log(`[Booth] Hardware shutter detected! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
+            hardwareShutterCooldownRef.current = Date.now()
+
+            // Trigger capture — same as palm trigger onPalmLeft
+            setHidePalmTrigger(true)
+            setPalmState('triggered')
+            setPalmTriggerActive(false)
+            if (palmTriggerRef.current) {
+              palmTriggerRef.current.dispose?.()
+              palmTriggerRef.current = null
+            }
+            setPhase('countdown')
+            runCountdownRef.current()
+
+            // Clear history to avoid re-triggering
+            brightnessHistory = []
+            // Wait for cooldown
+            await new Promise(r => setTimeout(r, COOLDOWN_MS))
+            continue
+          }
+        } catch (e) {
+          // Expected — keep polling
+        }
+        await new Promise(r => setTimeout(r, 200))
+      }
+    }
+    monitorLoop()
+    console.log('[Booth] Hardware shutter detection started (UVC brightness monitor)')
+
+    return () => {
+      cancelled = true
+      capturing = false
+      console.log('[Booth] Hardware shutter detection stopped')
+    }
+  }, [phase, settings?.hardware_shutter, uvcActive, isRecording])
+
   // No active event
   if (!activeEvent) {
     return (

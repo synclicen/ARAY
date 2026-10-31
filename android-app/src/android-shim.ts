@@ -310,7 +310,9 @@ const DEFAULT_SETTINGS = {
   // v4.7.7: Photo quality preset
   photo_quality: 'high',
   // v4.7.66: Photo fit mode for templates — 'fit' (contain) or 'fill' (cover)
-  photo_fit_mode: 'fit'
+  photo_fit_mode: 'fit',
+  // v4.7.71: Hardware shutter detection for DSLR via USB capture card
+  hardware_shutter: false
 }
 
 async function getSettings() {
