@@ -875,7 +875,7 @@ public class UVCCameraNativePlugin extends Plugin {
             // Use a blocking call to mainHandler.
             final float[] result = new float[1];
             result[0] = -1;
-            final CountDownLatch latch = new CountDownLatch(1);
+            final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
             mainHandler.post(() -> {
                 android.graphics.Bitmap bitmap = null;
                 try {
