@@ -98,6 +98,11 @@ public class UVCCameraNativePlugin extends Plugin {
     private volatile long lastCloseTime = 0;
     private static final long CLOSE_REOPEN_DELAY_MS = 1000;  // Min 1s between close and open
 
+    // v4.7.73: Capture lock — prevents concurrent getBitmap calls (capturePhoto +
+    // getBrightness). Both lock SurfaceTexture → concurrent calls freeze preview.
+    private volatile boolean isCapturing = false;
+    private volatile float lastBrightness = 128;  // Default mid-range brightness
+
     // USB permission
     private BroadcastReceiver usbPermissionReceiver;
 
@@ -782,13 +787,18 @@ public class UVCCameraNativePlugin extends Plugin {
             return;
         }
 
-        // v4.7.59: Check textureView.isAvailable() — if TextureView's SurfaceTexture
-        // is not ready (e.g. view just became visible), getBitmap() can crash on
-        // some devices. Reject gracefully instead of crashing.
+        // v4.7.59: Check textureView.isAvailable()
         if (!textureView.isAvailable()) {
             call.reject("TextureView not ready");
             return;
         }
+
+        // v4.7.73: Wait if getBrightness is in progress — prevent concurrent getBitmap
+        // (both lock SurfaceTexture → preview freeze/black screen)
+        while (isCapturing) {
+            try { Thread.sleep(5); } catch (Exception e) { break; }
+        }
+        isCapturing = true;
 
         android.graphics.Bitmap bitmap = null;
         try {
@@ -826,6 +836,8 @@ public class UVCCameraNativePlugin extends Plugin {
             if (bitmap != null && !bitmap.isRecycled()) {
                 try { bitmap.recycle(); } catch (Exception e) {}
             }
+            // v4.7.73: Release capture lock
+            isCapturing = false;
         }
     }
 
@@ -847,42 +859,66 @@ public class UVCCameraNativePlugin extends Plugin {
             return;
         }
 
-        android.graphics.Bitmap bitmap = null;
-        try {
-            // Get a SMALL bitmap (32x32) from TextureView — much faster than full-res.
-            // textureView.getBitmap(w, h) scales the view to the requested size.
-            bitmap = textureView.getBitmap(32, 32);
-            if (bitmap == null) {
-                call.reject("Failed to get bitmap");
-                return;
-            }
+        // v4.7.73: Check if capturePhoto is in progress — don't call getBitmap
+        // concurrently (both lock SurfaceTexture → preview freeze/black screen).
+        if (isCapturing) {
+            // Return last known brightness instead of competing for the lock
+            JSObject ret = new JSObject();
+            ret.put("brightness", lastBrightness);
+            call.resolve(ret);
+            return;
+        }
 
-            // Calculate average brightness of center 16x16 region (avoid edges)
-            long sum = 0;
-            int count = 0;
-            for (int y = 8; y < 24; y++) {
-                for (int x = 8; x < 24; x++) {
-                    int pixel = bitmap.getPixel(x, y);
-                    int r = (pixel >> 16) & 0xFF;
-                    int g = (pixel >> 8) & 0xFF;
-                    int b = pixel & 0xFF;
-                    // Luminance: 0.299R + 0.587G + 0.114B
-                    sum += (299 * r + 587 * g + 114 * b) / 1000;
-                    count++;
+        isCapturing = true;
+        try {
+            // v4.7.73: getBitmap must run on main thread to avoid locking issues.
+            // Use a blocking call to mainHandler.
+            final float[] result = new float[1];
+            result[0] = -1;
+            final CountDownLatch latch = new CountDownLatch(1);
+            mainHandler.post(() -> {
+                android.graphics.Bitmap bitmap = null;
+                try {
+                    // Get a SMALL bitmap (32x32) — much faster than full-res
+                    bitmap = textureView.getBitmap(32, 32);
+                    if (bitmap == null) {
+                        latch.countDown();
+                        return;
+                    }
+                    // Calculate average brightness of center 16x16 region
+                    long sum = 0;
+                    int count = 0;
+                    for (int y = 8; y < 24; y++) {
+                        for (int x = 8; x < 24; x++) {
+                            int pixel = bitmap.getPixel(x, y);
+                            int r = (pixel >> 16) & 0xFF;
+                            int g = (pixel >> 8) & 0xFF;
+                            int b = pixel & 0xFF;
+                            sum += (299 * r + 587 * g + 114 * b) / 1000;
+                            count++;
+                        }
+                    }
+                    result[0] = (float) sum / count;
+                    lastBrightness = result[0];
+                } catch (Exception e) {
+                    Log.e(TAG, "getBrightness inner: " + e.getMessage());
+                } finally {
+                    if (bitmap != null && !bitmap.isRecycled()) {
+                        try { bitmap.recycle(); } catch (Exception e) {}
+                    }
+                    latch.countDown();
                 }
-            }
-            float brightness = (float) sum / count;
+            });
+            try { latch.await(200, java.util.concurrent.TimeUnit.MILLISECONDS); } catch (Exception e) {}
 
             JSObject ret = new JSObject();
-            ret.put("brightness", brightness);
+            ret.put("brightness", result[0] >= 0 ? result[0] : lastBrightness);
             call.resolve(ret);
         } catch (Exception e) {
             Log.e(TAG, "getBrightness failed: " + e.getMessage());
             call.reject("Brightness failed: " + e.getMessage());
         } finally {
-            if (bitmap != null && !bitmap.isRecycled()) {
-                try { bitmap.recycle(); } catch (Exception e) {}
-            }
+            isCapturing = false;
         }
     }
 

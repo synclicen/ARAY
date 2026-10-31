@@ -1837,12 +1837,12 @@ export function BoothPage() {
   // On detection → triggers capture (same as palm trigger or shutter button).
   //
   // v4.7.72: Use native getBrightness() instead of capturePhoto() — 10x faster.
-  // capturePhoto was ~200-400ms per sample (JPEG + base64 + Image onload) →
-  // missed 100-300ms blackouts. getBrightness reads pixels directly (~20-50ms)
-  // and samples at 50ms interval (20fps) → reliably catches blackouts.
+  // v4.7.73: Reduced sampling from 50ms to 150ms — 50ms was too aggressive,
+  // caused getBitmap to lock SurfaceTexture too often → preview went black.
+  // 150ms (6.7fps) still catches 100-300ms blackout (1-2 dark samples).
   //
   // Detection algorithm:
-  // 1. Call getBrightness() at 50ms interval (20fps)
+  // 1. Call getBrightness() at 150ms interval (6.7fps)
   // 2. Keep rolling history of last 5 brightness values
   // 3. If current brightness < 50% of rolling average AND average > 20
   //    → blackout detected → trigger capture
@@ -1871,7 +1871,7 @@ export function BoothPage() {
       while (monitoring && !cancelled) {
         // Skip if in cooldown
         if (Date.now() - hardwareShutterCooldownRef.current < COOLDOWN_MS) {
-          await new Promise(r => setTimeout(r, 50))
+          await new Promise(r => setTimeout(r, 150))
           continue
         }
 
@@ -1880,7 +1880,7 @@ export function BoothPage() {
           if (!monitoring || cancelled) break
           const brightness = result?.brightness
           if (typeof brightness !== 'number' || brightness < 0) {
-            await new Promise(r => setTimeout(r, 50))
+            await new Promise(r => setTimeout(r, 150))
             continue
           }
 
@@ -1890,7 +1890,7 @@ export function BoothPage() {
 
           // Need at least 3 samples before detecting
           if (brightnessHistory.length < 3) {
-            await new Promise(r => setTimeout(r, 50))
+            await new Promise(r => setTimeout(r, 150))
             continue
           }
 
@@ -1925,7 +1925,7 @@ export function BoothPage() {
           // Expected — keep polling
         }
         // v4.7.72: 50ms interval = 20fps sampling — fast enough to catch 100ms blackout
-        await new Promise(r => setTimeout(r, 50))
+        await new Promise(r => setTimeout(r, 150))
       }
     }
     monitorLoop()
