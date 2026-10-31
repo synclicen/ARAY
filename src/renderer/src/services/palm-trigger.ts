@@ -115,7 +115,7 @@ export class PalmTrigger {
   private error: string | null = null
 
   private hands: any = null
-  private video: HTMLVideoElement | null = null
+  private video: HTMLVideoElement | HTMLCanvasElement | null = null
   private animFrame: number | null = null
   private isDetecting = false
 
@@ -197,12 +197,13 @@ export class PalmTrigger {
 
   /**
    * Start detection. Will auto-initialize if needed.
-   * @param video    HTMLVideoElement with camera stream
+   * @param video    HTMLVideoElement with camera stream, OR HTMLCanvasElement
+   *                 (for UVC cameras where we capture frames to canvas)
    * @param _sensitivity  ignored (kept for backward compat — MediaPipe uses 0.3 confidence)
    * @param callbacks   onPalmConfirmed, onPalmLeft, optional onStateChange/onStatusChange
    */
   async start(
-    video: HTMLVideoElement,
+    video: HTMLVideoElement | HTMLCanvasElement,
     _sensitivity: number,
     callbacks: PalmCallbacks
   ): Promise<void> {

@@ -1653,14 +1653,16 @@ export function BoothPage() {
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
-  // v4.7.69: CRITICAL FIX — palm trigger was broken by infinite loop:
-  //   - palmStatus in deps → onStatusChange fires → setPalmStatus → effect re-runs
-  //   - cleanup disposes palm → re-creates → pt.start → onStatusChange → loop forever
-  //   Fix: removed palmStatus from deps. Use ref for error check.
-  // v4.7.68: Reuse preloaded PalmTrigger instance (don't create new each time).
-  // v4.7.64: Skip when UVC active — MediaPipe can't see UVC frames (no <video> stream).
+  // v4.7.69: CRITICAL FIX — palm trigger was broken by infinite loop (palmStatus in deps).
+  // v4.7.70: UVC SUPPORT — palm trigger now works with USB capture cards!
+  //   MediaPipe needs an image source. For HP camera, we pass <video> element.
+  //   For UVC, there's no <video> stream (preview is native TextureView).
+  //   Solution: create a hidden canvas, capture UVC frames to it via capturePhoto(),
+  //   pass canvas to PalmTrigger. MediaPipe accepts canvas elements.
+  //   Capture loop runs at ~5fps (200ms interval) — enough for hand detection,
+  //   keeps native Bitmap allocation low (5 per second, recycled).
   useEffect(() => {
-    if (phase !== 'preview' || !settings?.palm_trigger || isRecording || uvcActive) {
+    if (phase !== 'preview' || !settings?.palm_trigger || isRecording) {
       if (palmTriggerRef.current) {
         palmTriggerRef.current.dispose?.()
         palmTriggerRef.current = null
@@ -1673,36 +1675,105 @@ export function BoothPage() {
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let attempts = 0
-    let started = false  // v4.7.69: guard against double-start
+    let started = false
+    // v4.7.70: UVC canvas + capture loop
+    let uvcCanvas: HTMLCanvasElement | null = null
+    let uvcCaptureLoop: Promise<void> | null = null
+    let uvcCapturing = false
 
     const startPalmTrigger = async () => {
       if (cancelled || started) return
       if (isRecording) return
-      const video = videoRef.current
-      if (!video) {
-        attempts++
-        if (attempts > 50) { console.warn('[Booth] Palm: video not available after 50 attempts'); return }
-        retryTimer = setTimeout(startPalmTrigger, 100)
-        return
-      }
-      if (video.videoWidth === 0 || video.readyState < 2) {
-        attempts++
-        if (attempts > 50) { console.warn('[Booth] Palm: video not ready after 50 attempts'); return }
-        retryTimer = setTimeout(startPalmTrigger, 100)
-        return
+
+      // v4.7.70: For UVC, create a hidden canvas and start capture loop.
+      // For HP camera, use the <video> element directly.
+      let imageSource: HTMLVideoElement | HTMLCanvasElement
+
+      if (uvcActive) {
+        // UVC path: create canvas, start frame capture loop
+        const uvcPlugin = getUVCCameraNative()
+        if (!uvcPlugin) {
+          console.warn('[Booth] Palm: UVC active but plugin not available')
+          return
+        }
+        if (!uvcPreviewReadyRef.current) {
+          attempts++
+          if (attempts > 50) { console.warn('[Booth] Palm: UVC preview not ready after 50 attempts'); return }
+          retryTimer = setTimeout(startPalmTrigger, 200)
+          return
+        }
+        // Create hidden canvas (320x240 — enough for hand detection, saves memory)
+        uvcCanvas = document.createElement('canvas')
+        uvcCanvas.width = 320
+        uvcCanvas.height = 240
+        const uvcCtx = uvcCanvas.getContext('2d')
+        if (!uvcCtx) { console.warn('[Booth] Palm: UVC canvas context failed'); return }
+        // Fill black initially
+        uvcCtx.fillStyle = '#000000'
+        uvcCtx.fillRect(0, 0, 320, 240)
+        imageSource = uvcCanvas
+
+        // Start capture loop — draws UVC frames to canvas at ~5fps
+        uvcCapturing = true
+        uvcCaptureLoop = (async () => {
+          while (uvcCapturing && !cancelled) {
+            try {
+              const result: any = await uvcPlugin.capturePhoto({})
+              if (!uvcCapturing || cancelled) break
+              const base64 = result?.base64
+              if (base64) {
+                // Load as Image, draw to small canvas
+                const img = new Image()
+                img.onload = () => {
+                  if (!uvcCapturing || cancelled) return
+                  if (uvcCtx) {
+                    // Cover-fit the UVC frame to 320x240
+                    const ir = img.width / img.height
+                    const cr = 320 / 240
+                    let sx = 0, sy = 0, sw = img.width, sh = img.height
+                    if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
+                    else { sh = img.width / cr; sy = (img.height - sh) / 2 }
+                    uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
+                  }
+                }
+                img.src = `data:image/jpeg;base64,${base64}`
+              }
+            } catch (e) {
+              // Expected — keep polling
+            }
+            // ~5fps = 200ms interval
+            await new Promise(r => setTimeout(r, 200))
+          }
+        })()
+        console.log('[Booth] Palm: UVC canvas capture loop started (5fps)')
+      } else {
+        // HP camera path: use <video> element
+        const video = videoRef.current
+        if (!video) {
+          attempts++
+          if (attempts > 50) { console.warn('[Booth] Palm: video not available after 50 attempts'); return }
+          retryTimer = setTimeout(startPalmTrigger, 100)
+          return
+        }
+        if (video.videoWidth === 0 || video.readyState < 2) {
+          attempts++
+          if (attempts > 50) { console.warn('[Booth] Palm: video not ready after 50 attempts'); return }
+          retryTimer = setTimeout(startPalmTrigger, 100)
+          return
+        }
+        imageSource = video
       }
 
       if (isRecording || cancelled) return
-      started = true  // v4.7.69: mark as started — don't start again
+      started = true
 
-      // v4.7.68: Reuse preloaded PalmTrigger instance. Only create new if none exists.
       if (!palmTriggerRef.current) {
         palmTriggerRef.current = new PalmTrigger()
       }
       const pt = palmTriggerRef.current
 
       // Wire callbacks
-      await pt.start(video, settings.palm_trigger_sensitivity || 0.6, {
+      await pt.start(imageSource, settings.palm_trigger_sensitivity || 0.6, {
         onPalmConfirmed: () => {
           console.log('[Booth] Palm confirmed — waiting for hand to leave')
         },
@@ -1723,8 +1794,6 @@ export function BoothPage() {
         onStatusChange: (newStatus, err) => {
           setPalmStatus(newStatus)
           setPalmError(err ?? null)
-          // v4.7.69: If error, mark for recreation on next preview entry.
-          // Don't dispose here — would cause loop. Just log.
           if (newStatus === 'error') {
             console.warn('[Booth] Palm trigger error:', err)
           }
@@ -1741,7 +1810,7 @@ export function BoothPage() {
 
       if (!cancelled) {
         setPalmTriggerActive(true)
-        console.log('[Booth] Palm trigger v3 activated (MediaPipe Hands)')
+        console.log(`[Booth] Palm trigger v3 activated (${uvcActive ? 'UVC canvas' : 'HP video'})`)
       }
     }
 
@@ -1749,6 +1818,8 @@ export function BoothPage() {
 
     return () => {
       cancelled = true
+      // v4.7.70: Stop UVC capture loop
+      uvcCapturing = false
       if (retryTimer) clearTimeout(retryTimer)
       if (palmTriggerRef.current) {
         palmTriggerRef.current.dispose?.()
