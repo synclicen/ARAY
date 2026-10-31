@@ -1653,14 +1653,12 @@ export function BoothPage() {
   // Palm trigger v3: MediaPipe Hands (Saatiril-Andro port)
   // Flow: hand appear → 500ms sustain → "confirmed" → hand leaves → START TIMER
   // v4.3.7: Palm trigger aktif di BOTH photo dan video mode (sebelumnya photo only)
-  // v4.7.55: RE-ENABLED for UVC — palm trigger uses <video> element, but when UVC
-  // is active, the <video> has no stream. We skip palm trigger when UVC active
-  // because MediaPipe can't process frames from a blank video element.
-  // v4.7.68: STABILITY FIX for 5000-pax events:
-  //   1. Added 'uvcActive' to deps (was using ref, didn't trigger re-run)
-  //   2. Reuse preloaded PalmTrigger instance (don't create new each time)
-  //   3. Added readyState polling with backoff
-  //   4. Dispose + recreate if status is 'error' (auto-recover)
+  // v4.7.69: CRITICAL FIX — palm trigger was broken by infinite loop:
+  //   - palmStatus in deps → onStatusChange fires → setPalmStatus → effect re-runs
+  //   - cleanup disposes palm → re-creates → pt.start → onStatusChange → loop forever
+  //   Fix: removed palmStatus from deps. Use ref for error check.
+  // v4.7.68: Reuse preloaded PalmTrigger instance (don't create new each time).
+  // v4.7.64: Skip when UVC active — MediaPipe can't see UVC frames (no <video> stream).
   useEffect(() => {
     if (phase !== 'preview' || !settings?.palm_trigger || isRecording || uvcActive) {
       if (palmTriggerRef.current) {
@@ -1675,9 +1673,10 @@ export function BoothPage() {
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let attempts = 0
+    let started = false  // v4.7.69: guard against double-start
 
     const startPalmTrigger = async () => {
-      if (cancelled) return
+      if (cancelled || started) return
       if (isRecording) return
       const video = videoRef.current
       if (!video) {
@@ -1686,7 +1685,6 @@ export function BoothPage() {
         retryTimer = setTimeout(startPalmTrigger, 100)
         return
       }
-      // v4.7.68: Wait for video to be ready (readyState >= 2 = HAVE_CURRENT_DATA)
       if (video.videoWidth === 0 || video.readyState < 2) {
         attempts++
         if (attempts > 50) { console.warn('[Booth] Palm: video not ready after 50 attempts'); return }
@@ -1695,15 +1693,11 @@ export function BoothPage() {
       }
 
       if (isRecording || cancelled) return
+      started = true  // v4.7.69: mark as started — don't start again
 
-      // v4.7.68: Reuse preloaded PalmTrigger instance if available and not in error state.
-      // Creating new PalmTrigger each time reloads MediaPipe WASM (2-3s) → lag between shots.
-      if (!palmTriggerRef.current || palmStatus === 'error') {
-        if (palmTriggerRef.current) {
-          palmTriggerRef.current.dispose?.()
-        }
+      // v4.7.68: Reuse preloaded PalmTrigger instance. Only create new if none exists.
+      if (!palmTriggerRef.current) {
         palmTriggerRef.current = new PalmTrigger()
-        setPalmStatus('unloaded')
       }
       const pt = palmTriggerRef.current
 
@@ -1729,6 +1723,11 @@ export function BoothPage() {
         onStatusChange: (newStatus, err) => {
           setPalmStatus(newStatus)
           setPalmError(err ?? null)
+          // v4.7.69: If error, mark for recreation on next preview entry.
+          // Don't dispose here — would cause loop. Just log.
+          if (newStatus === 'error') {
+            console.warn('[Booth] Palm trigger error:', err)
+          }
         },
         onDebug: (info) => {
           setPalmDebug({
@@ -1758,7 +1757,7 @@ export function BoothPage() {
         setPalmState('none')
       }
     }
-  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording, uvcActive, palmStatus])
+  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording, uvcActive])
 
   // No active event
   if (!activeEvent) {
