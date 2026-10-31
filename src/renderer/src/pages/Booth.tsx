@@ -1871,7 +1871,7 @@ export function BoothPage() {
       while (monitoring && !cancelled) {
         // Skip if in cooldown
         if (Date.now() - hardwareShutterCooldownRef.current < COOLDOWN_MS) {
-          await new Promise(r => setTimeout(r, 150))
+          await new Promise(r => setTimeout(r, 50))
           continue
         }
 
@@ -1880,7 +1880,7 @@ export function BoothPage() {
           if (!monitoring || cancelled) break
           const brightness = result?.brightness
           if (typeof brightness !== 'number' || brightness < 0) {
-            await new Promise(r => setTimeout(r, 150))
+            await new Promise(r => setTimeout(r, 50))
             continue
           }
 
@@ -1890,7 +1890,7 @@ export function BoothPage() {
 
           // Need at least 3 samples before detecting
           if (brightnessHistory.length < 3) {
-            await new Promise(r => setTimeout(r, 150))
+            await new Promise(r => setTimeout(r, 50))
             continue
           }
 
@@ -1925,7 +1925,7 @@ export function BoothPage() {
           // Expected — keep polling
         }
         // v4.7.72: 50ms interval = 20fps sampling — fast enough to catch 100ms blackout
-        await new Promise(r => setTimeout(r, 150))
+        await new Promise(r => setTimeout(r, 50))
       }
     }
     monitorLoop()
