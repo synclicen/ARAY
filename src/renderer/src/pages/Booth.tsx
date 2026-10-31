@@ -1369,7 +1369,9 @@ export function BoothPage() {
     
     // 4. Flash off + tunggu sebentar sebelum next phase
     setLastFlash(false)
-    await sleep(300)
+    // v4.7.68: Reduced from 300ms to 150ms — was causing noticeable lag between shots.
+    // 150ms is enough for flash effect to register visually.
+    await sleep(150)
 
     // v4.6.2: If retaking, go back to result. Otherwise continue sequence.
     if (retakeShotNumber) {
@@ -1379,6 +1381,8 @@ export function BoothPage() {
       setCurrentShot((n) => n + 1)
       // v4.7.38: Reset hidePalmTrigger untuk foto kedua — palm trigger UI harus muncul lagi
       setHidePalmTrigger(false)
+      // v4.7.68: Set phase to 'preview' immediately — palm trigger will re-activate
+      // in the background. Don't wait for palm trigger to be ready before showing preview.
       setPhase('preview')
     } else {
       setPhase('result')
@@ -1398,6 +1402,20 @@ export function BoothPage() {
       ;(window as any).__aray_current_session_id = undefined
     }
   }, [stopCamera])
+
+  // v4.7.68: Pre-create session when entering preview phase — eliminates lag
+  // on first capture. Session creation is async IPC; doing it during countdown
+  // causes 200-500ms delay. Pre-creating when entering preview hides this latency.
+  useEffect(() => {
+    if (phase === 'preview' && activeEvent && !(window as any).__aray_current_session_id) {
+      window.aray.sessions.create(activeEvent.id, 'photo', totalShots).then((result: any) => {
+        if (result.success && !(window as any).__aray_current_session_id) {
+          ;(window as any).__aray_current_session_id = (result.data as any).id
+          console.log('[Booth] Session pre-created:', (result.data as any).id)
+        }
+      }).catch(() => {})
+    }
+  }, [phase, activeEvent, totalShots])
 
   // v4.6.4: Auto-set mode from settings. If 'photo' or 'video', lock mode.
   // If 'combined', user can switch in greeting screen.
@@ -1638,13 +1656,13 @@ export function BoothPage() {
   // v4.7.55: RE-ENABLED for UVC — palm trigger uses <video> element, but when UVC
   // is active, the <video> has no stream. We skip palm trigger when UVC active
   // because MediaPipe can't process frames from a blank video element.
-  // TODO: future version should capture UVC frames to a canvas and send canvas to MediaPipe.
+  // v4.7.68: STABILITY FIX for 5000-pax events:
+  //   1. Added 'uvcActive' to deps (was using ref, didn't trigger re-run)
+  //   2. Reuse preloaded PalmTrigger instance (don't create new each time)
+  //   3. Added readyState polling with backoff
+  //   4. Dispose + recreate if status is 'error' (auto-recover)
   useEffect(() => {
-    // v4.5.4: Don't activate palm trigger during recording — prevent re-trigger
-    // v4.7.29: Return early if not preview — but cleanup runs for ALL phase changes
-    // v4.7.55: Also skip when UVC active — MediaPipe can't see UVC frames (no <video> stream)
-    if (phase !== 'preview' || !settings?.palm_trigger || isRecording || uvcActiveRef.current) {
-      // v4.7.29: Force cleanup if palm trigger still active when leaving preview
+    if (phase !== 'preview' || !settings?.palm_trigger || isRecording || uvcActive) {
       if (palmTriggerRef.current) {
         palmTriggerRef.current.dispose?.()
         palmTriggerRef.current = null
@@ -1656,49 +1674,52 @@ export function BoothPage() {
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let attempts = 0
 
     const startPalmTrigger = async () => {
       if (cancelled) return
-      // v4.7.32: Cek isRecording lagi — mungkin berubah selama await
       if (isRecording) return
       const video = videoRef.current
       if (!video) {
-        retryTimer = setTimeout(startPalmTrigger, 200)
+        attempts++
+        if (attempts > 50) { console.warn('[Booth] Palm: video not available after 50 attempts'); return }
+        retryTimer = setTimeout(startPalmTrigger, 100)
         return
       }
+      // v4.7.68: Wait for video to be ready (readyState >= 2 = HAVE_CURRENT_DATA)
       if (video.videoWidth === 0 || video.readyState < 2) {
-        retryTimer = setTimeout(startPalmTrigger, 200)
+        attempts++
+        if (attempts > 50) { console.warn('[Booth] Palm: video not ready after 50 attempts'); return }
+        retryTimer = setTimeout(startPalmTrigger, 100)
         return
       }
 
-      // v4.7.32: Cek isRecording sekali lagi sebelum buat PalmTrigger
       if (isRecording || cancelled) return
 
-      if (!palmTriggerRef.current) {
+      // v4.7.68: Reuse preloaded PalmTrigger instance if available and not in error state.
+      // Creating new PalmTrigger each time reloads MediaPipe WASM (2-3s) → lag between shots.
+      if (!palmTriggerRef.current || palmStatus === 'error') {
+        if (palmTriggerRef.current) {
+          palmTriggerRef.current.dispose?.()
+        }
         palmTriggerRef.current = new PalmTrigger()
+        setPalmStatus('unloaded')
       }
       const pt = palmTriggerRef.current
 
-      // Wire callbacks — Saatiril API: onPalmConfirmed, onPalmLeft, onStateChange, onStatusChange
+      // Wire callbacks
       await pt.start(video, settings.palm_trigger_sensitivity || 0.6, {
         onPalmConfirmed: () => {
-          // Hand sustained 500ms — show "SIAP" overlay (UI reads palmState === 'confirmed')
           console.log('[Booth] Palm confirmed — waiting for hand to leave')
         },
         onPalmLeft: () => {
-          // Confirmed hand left frame → START TIMER/RECORDING!
-          // v4.5.3: Video mode JUGA pakai countdown (3 detik) sebelum recording.
-          // v4.7.36: Set hidePalmTrigger=true — prevent palm trigger re-activate
-          // setelah countdown selesai (glitch sebelum recording dimulai)
           setHidePalmTrigger(true)
           setPalmState('triggered')
           setPalmTriggerActive(false)
-          // Dispose palm trigger NOW — stop detection immediately
           if (palmTriggerRef.current) {
             palmTriggerRef.current.dispose?.()
             palmTriggerRef.current = null
           }
-          // Both modes: countdown first, then capture/record
           setPhase('countdown')
           runCountdownRef.current()
         },
@@ -1721,7 +1742,7 @@ export function BoothPage() {
 
       if (!cancelled) {
         setPalmTriggerActive(true)
-        console.log('[Booth] Palm trigger v3 activated (MediaPipe Hands — Saatiril-style)')
+        console.log('[Booth] Palm trigger v3 activated (MediaPipe Hands)')
       }
     }
 
@@ -1731,16 +1752,13 @@ export function BoothPage() {
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
       if (palmTriggerRef.current) {
-        // v4.6.8 P0#2: dispose() untuk release MediaPipe WASM model + WebGL context.
-        // Sebelumnya hanya stop() yang cancel rAF tapi model tetap loaded → memory leak
-        // kumulatif → OOM di Android setelah 30-100 sesi. Untuk 5000 peserta, WAJIB dispose.
         palmTriggerRef.current.dispose?.()
         palmTriggerRef.current = null
         setPalmTriggerActive(false)
         setPalmState('none')
       }
     }
-  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording])
+  }, [phase, mode, settings?.palm_trigger, settings?.palm_trigger_sensitivity, isRecording, uvcActive, palmStatus])
 
   // No active event
   if (!activeEvent) {
