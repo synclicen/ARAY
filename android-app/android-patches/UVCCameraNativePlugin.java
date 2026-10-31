@@ -655,48 +655,9 @@ public class UVCCameraNativePlugin extends Plugin {
             // Step 4: Set capture callback for photo
             // camera.setFrameCallback(mFrameCallback, UVCCamera.PIXEL_FORMAT_JPEG); // API TBD
 
-            // v4.7.74: Set continuous frame callback for brightness monitoring.
-            // IFrameCallback reads NV21 frames directly from camera — does NOT touch
-            // TextureView → no SurfaceTexture lock → preview stays live.
-            // Callback runs on background thread, updates lastFrameBrightness.
-            try {
-                brightnessFrameCallback = new IFrameCallback() {
-                    @Override
-                    public void onFrame(ByteBuffer frame) {
-                        if (!frame.hasRemaining()) return;
-                        try {
-                            // Sample a few bytes from the NV21 Y-plane to estimate brightness.
-                            // NV21 format: Y-plane first (width*height bytes), then VU interleaved.
-                            // We sample center region Y values for brightness.
-                            int frameLen = frame.remaining();
-                            // For 1280x720: Y-plane = 921600 bytes. Sample center 32x32 = 1024 bytes.
-                            // But we don't know exact dims here, so just sample evenly across Y-plane.
-                            // Estimate Y-plane size = 2/3 of total (NV21: Y=2/3, VU=1/3)
-                            int yLen = frameLen * 2 / 3;
-                            if (yLen < 100) return;
-                            // Sample 256 points evenly distributed across Y-plane
-                            int sum = 0;
-                            int count = 0;
-                            int step = yLen / 256;
-                            if (step < 1) step = 1;
-                            for (int i = 0; i < yLen && count < 256; i += step) {
-                                sum += frame.get(i) & 0xFF;  // Y value = brightness
-                                count++;
-                            }
-                            if (count > 0) {
-                                lastFrameBrightness = (float) sum / count;
-                            }
-                        } catch (Exception e) {
-                            // Ignore frame errors
-                        }
-                    }
-                };
-                camera.setFrameCallback(brightnessFrameCallback, UVCCamera.PIXEL_FORMAT_NV21);
-                brightnessCallbackActive = true;
-                Log.i(TAG, "★ Brightness frame callback installed (NV21)");
-            } catch (Exception e) {
-                Log.w(TAG, "Frame callback setup failed (non-critical): " + e.getMessage());
-            }
+            // v4.7.75: REMOVED IFrameCallback for brightness — it was switching UVC
+            // preview format from MJPEG to NV21, breaking the preview pipeline → black screen.
+            // Hardware shutter detection now uses capturePhoto() on slow interval (JS side).
 
             // Notify JS
             JSObject ret = new JSObject();
@@ -903,17 +864,10 @@ public class UVCCameraNativePlugin extends Plugin {
 
     @PluginMethod
     public void getBrightness(PluginCall call) {
-        if (uvcCamera == null) {
-            call.reject("UVC camera not opened");
-            return;
-        }
-
-        // v4.7.74: Return brightness from continuous frame callback — NO getBitmap!
-        // Frame callback reads NV21 frames directly from camera on background thread,
-        // updates lastFrameBrightness. This method just returns the cached value.
-        // Zero impact on preview rendering — TextureView never touched.
+        // v4.7.75: Simplified — just return cached value. No getBitmap, no IFrameCallback.
+        // Hardware shutter detection in JS uses capturePhoto() instead (proven working).
         JSObject ret = new JSObject();
-        ret.put("brightness", lastFrameBrightness);
+        ret.put("brightness", lastBrightness);
         call.resolve(ret);
     }
 
@@ -924,16 +878,6 @@ public class UVCCameraNativePlugin extends Plugin {
     private void closeUVCCamera() {
         // v4.7.64: Set closing flag to prevent immediate reopen
         isClosing = true;
-        // v4.7.74: Remove frame callback before closing camera
-        try {
-            if (uvcCamera != null && brightnessCallbackActive) {
-                uvcCamera.setFrameCallback(null, 0);
-                brightnessCallbackActive = false;
-                brightnessFrameCallback = null;
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Frame callback cleanup error: " + e.getMessage());
-        }
         try {
             if (uvcCamera != null) {
                 uvcCamera.stopPreview();
