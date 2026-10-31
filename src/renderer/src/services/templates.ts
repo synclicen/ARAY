@@ -516,58 +516,60 @@ export async function compositeCustomTemplate(
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const detectedSlots = detectHolesFromAlpha(imageData, 128, Math.max(1000, Math.floor((canvas.width * canvas.height) * 0.005)))
 
-    // Decide which slot list to use
-    let slots: { x: number; y: number; w: number; h: number }[]
+    // v4.7.67: Detected slots now include angle + rotated dimensions (rw, rh).
+    // Fallback slots (from layout) are axis-aligned (angle=0).
+    let slots: DetectedSlot[]
     let usingDetected = false
     if (detectedSlots.length >= Math.min(photoDataUrls.length, 1)) {
-      // Smart detection found usable holes — use them (pixel coords)
       slots = detectedSlots
       usingDetected = true
       console.log('[compositeCustomTemplate] Smart slot detection:',
-        detectedSlots.length, 'slots found in PNG →',
-        detectedSlots.map(s => `${s.w}x${s.h} @(${s.x},${s.y})`).join(', '))
+        detectedSlots.length, 'slots found →',
+        detectedSlots.map(s => `${s.rw|0}x${s.rh|0} @(${s.cx|0},${s.cy|0}) ${(s.angle*180/Math.PI).toFixed(1)}°`).join(', '))
     } else {
-      // Fallback: use hardcoded percentages from layout
+      // Fallback: use hardcoded percentages from layout (axis-aligned, angle=0)
       const info = getLayoutInfo(custom.layout)
-      slots = info.slots.map(s => ({
-        x: (s.x / 100) * canvas.width,
-        y: (s.y / 100) * canvas.height,
-        w: (s.width / 100) * canvas.width,
-        h: (s.height / 100) * canvas.height
-      }))
-      console.log('[compositeCustomTemplate] No transparent holes detected in PNG —',
-        'falling back to layout', custom.layout, 'with', slots.length, 'slots',
-        '(percentages → pixel coords)')
+      slots = info.slots.map(s => {
+        const x = (s.x / 100) * canvas.width
+        const y = (s.y / 100) * canvas.height
+        const w = (s.width / 100) * canvas.width
+        const h = (s.height / 100) * canvas.height
+        return { x, y, w, h, cx: x + w / 2, cy: y + h / 2, angle: 0, rw: w, rh: h }
+      })
+      console.log('[compositeCustomTemplate] No transparent holes detected — fallback to layout', custom.layout)
     }
 
-    // Clear canvas (we'll redraw photo + frame)
-    // Black background
+    // Clear canvas — black background
     ctx.fillStyle = '#000000'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-    // Draw photos into slots — contain-fit (FULL photo visible, no crop)
-    // Photos maintain their aspect ratio, centered in slot with black bars
-    // v4.7.61: FIX — slots are ALREADY in pixel coords (both detected and fallback).
-    // Previous code double-calculated for fallback path → photos drawn at wrong position.
+    // v4.7.67: Draw photos into slots — ROTATED to match slot angle.
+    // For detected slots: translate to centroid, rotate by angle, draw at (0,0) with rw×rh.
+    // For fallback slots: angle=0, draws axis-aligned (same as before).
     const photos = photoDataUrls.slice(0, slots.length)
-    console.log('[compositeCustomTemplate] Photos to draw:', photos.length, 'slots:', slots.length, 'usingDetected:', usingDetected)
+    console.log('[compositeCustomTemplate] Photos:', photos.length, 'slots:', slots.length, 'detected:', usingDetected)
     for (let i = 0; i < slots.length && i < photos.length; i++) {
       const slot = slots[i]
-      console.log(`[compositeCustomTemplate] Photo ${i + 1}: dataUrl length=${photos[i]?.length || 0}, starts with data: ${photos[i]?.startsWith('data:')}`)
       const img = await loadImage(photos[i])
-      if (!img) {
-        console.error(`[compositeCustomTemplate] Photo ${i + 1} FAILED to load as Image!`)
-        continue
+      if (!img) { console.error(`[compositeCustomTemplate] Photo ${i+1} load FAILED`); continue }
+
+      const angleDeg = (slot.angle * 180 / Math.PI).toFixed(1)
+      console.log(`[compositeCustomTemplate] Photo ${i+1}: ${img.naturalWidth}x${img.naturalHeight} → slot ${slot.rw|0}x${slot.rh|0} @ (${slot.cx|0},${slot.cy|0}) ${angleDeg}°, mode: ${fitMode||'fit'}`)
+
+      ctx.save()
+      ctx.translate(slot.cx, slot.cy)
+      if (slot.angle !== 0) {
+        ctx.rotate(slot.angle)
       }
-      console.log(`[compositeCustomTemplate] Photo ${i + 1} loaded: ${img.naturalWidth}x${img.naturalHeight}, slot: ${slot.w.toFixed(0)}x${slot.h.toFixed(0)} @ (${slot.x.toFixed(0)},${slot.y.toFixed(0)}), fitMode: ${fitMode || 'fit'}`)
-      // v4.7.66: Use user-selected fit mode.
-      // 'fit' (default) = contain — full photo visible, black bars if ratio differs
-      // 'fill' = cover — zoom-crop to fill slot, no black bars
+      // Draw centered at (0,0) with rotated dimensions rw×rh
+      const dx = -slot.rw / 2
+      const dy = -slot.rh / 2
       if (fitMode === 'fill') {
-        drawImageCover(ctx, img, slot.x, slot.y, slot.w, slot.h)
+        drawImageCover(ctx, img, dx, dy, slot.rw, slot.rh)
       } else {
-        drawImageContain(ctx, img, slot.x, slot.y, slot.w, slot.h)
+        drawImageContain(ctx, img, dx, dy, slot.rw, slot.rh)
       }
+      ctx.restore()
     }
 
     // Overlay PNG frame at NATURAL size — no stretching!
@@ -733,11 +735,30 @@ function drawImageContain(
 // @param alphaThreshold pixels with alpha < this are "hole" (0-255, default 128)
 // @param minArea        ignore regions smaller than this (noise filter)
 // @returns              bounding boxes sorted in reading order
+// ─── SMART SLOT DETECTION (v4.0.3 + v4.7.67 rotation) ──────────
+// Detect transparent regions in a PNG via connected-component labeling
+// on the alpha channel. Each connected transparent region = one slot.
+//
+// v4.7.67: Also compute the ROTATION ANGLE of each slot using image moments.
+// This allows photos to be drawn at any angle — matching tilted/rotated slots
+// in the PNG template (e.g. polaroid-style frames at 15° tilt).
+//
+// Returns slots with: centroid (cx,cy), angle (radians), rotated dimensions
+// (rw,rh), plus axis-aligned bbox (x,y,w,h) for backward compat.
+// Sorted in reading order: top-to-bottom (with row tolerance), then left-to-right.
+
+export interface DetectedSlot {
+  x: number; y: number; w: number; h: number  // axis-aligned bounding box
+  cx: number; cy: number     // centroid (rotation pivot)
+  angle: number              // rotation in radians (0 = horizontal)
+  rw: number; rh: number     // rotated rectangle dimensions (major/minor axes)
+}
+
 function detectHolesFromAlpha(
   imageData: ImageData,
   alphaThreshold = 128,
   minArea = 1000
-): { x: number; y: number; w: number; h: number }[] {
+): DetectedSlot[] {
   const W = imageData.width
   const H = imageData.height
   const data = imageData.data
@@ -745,80 +766,108 @@ function detectHolesFromAlpha(
   // Build binary mask: 1 = hole (transparent), 0 = opaque
   const mask = new Uint8Array(W * H)
   for (let i = 0; i < W * H; i++) {
-    const a = data[i * 4 + 3]
-    mask[i] = a < alphaThreshold ? 1 : 0
+    mask[i] = data[i * 4 + 3] < alphaThreshold ? 1 : 0
   }
 
   // Connected-component labeling via iterative flood fill (4-connectivity)
-  // Iterative (stack-based) to avoid stack overflow on large templates.
-  const labels = new Int32Array(W * H) // 0 = unlabeled
-  const holes: { x: number; y: number; w: number; h: number; area: number }[] = []
+  // v4.7.67: Accumulate image moments for angle computation.
+  const labels = new Int32Array(W * H)
+  interface HoleInfo {
+    label: number
+    minX: number; minY: number; maxX: number; maxY: number
+    area: number; sumX: number; sumY: number; sumXX: number; sumYY: number; sumXY: number
+  }
+  const holes: HoleInfo[] = []
+  const labelToIdx = new Map<number, number>()
   let nextLabel = 1
 
   for (let seed = 0; seed < W * H; seed++) {
     if (mask[seed] !== 1 || labels[seed] !== 0) continue
-
     const label = nextLabel++
-    let minX = W, minY = H, maxX = 0, maxY = 0, area = 0
+    const hd: HoleInfo = {
+      label, minX: W, minY: H, maxX: 0, maxY: 0,
+      area: 0, sumX: 0, sumY: 0, sumXX: 0, sumYY: 0, sumXY: 0
+    }
     const stack: number[] = [seed]
     labels[seed] = label
-
     while (stack.length > 0) {
       const idx = stack.pop()!
       const x = idx % W
       const y = (idx / W) | 0
-
-      area++
-      if (x < minX) minX = x
-      if (y < minY) minY = y
-      if (x > maxX) maxX = x
-      if (y > maxY) maxY = y
-
-      // 4-connectivity neighbors
-      if (x > 0) {
-        const n = idx - 1
-        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
-      }
-      if (x < W - 1) {
-        const n = idx + 1
-        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
-      }
-      if (y > 0) {
-        const n = idx - W
-        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
-      }
-      if (y < H - 1) {
-        const n = idx + W
-        if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) }
-      }
+      hd.area++
+      hd.sumX += x; hd.sumY += y
+      hd.sumXX += x * x; hd.sumYY += y * y; hd.sumXY += x * y
+      if (x < hd.minX) hd.minX = x
+      if (y < hd.minY) hd.minY = y
+      if (x > hd.maxX) hd.maxX = x
+      if (y > hd.maxY) hd.maxY = y
+      if (x > 0) { const n = idx - 1; if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) } }
+      if (x < W - 1) { const n = idx + 1; if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) } }
+      if (y > 0) { const n = idx - W; if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) } }
+      if (y < H - 1) { const n = idx + W; if (mask[n] === 1 && labels[n] === 0) { labels[n] = label; stack.push(n) } }
     }
-
-    if (area >= minArea) {
-      holes.push({
-        x: minX,
-        y: minY,
-        w: maxX - minX + 1,
-        h: maxY - minY + 1,
-        area
-      })
+    if (hd.area >= minArea) {
+      labelToIdx.set(label, holes.length)
+      holes.push(hd)
     }
   }
 
-  // Sort in READING ORDER:
-  // Group by row (using tolerance = max(8px, avgH/3)), then left-to-right within row.
-  if (holes.length > 0) {
-    const avgH = holes.reduce((s, h) => s + h.h, 0) / holes.length
+  // Compute centroid + angle from central moments
+  // theta = 0.5 * atan2(2*mu11, mu20 - mu02)
+  const holesAngled = holes.map(hd => {
+    const cx = hd.sumX / hd.area
+    const cy = hd.sumY / hd.area
+    const mu20 = hd.sumXX / hd.area - cx * cx
+    const mu02 = hd.sumYY / hd.area - cy * cy
+    const mu11 = hd.sumXY / hd.area - cx * cy
+    const theta = 0.5 * Math.atan2(2 * mu11, mu20 - mu02)
+    return { ...hd, cx, cy, theta, minXR: Infinity, maxXR: -Infinity, minYR: Infinity, maxYR: -Infinity }
+  })
+
+  // Second pass: compute rotated bounding box
+  for (let i = 0; i < W * H; i++) {
+    const lbl = labels[i]
+    if (lbl === 0) continue
+    const hIdx = labelToIdx.get(lbl)
+    if (hIdx === undefined) continue
+    const hd = holesAngled[hIdx]
+    const x = i % W
+    const y = (i / W) | 0
+    const dx = x - hd.cx
+    const dy = y - hd.cy
+    const cosT = Math.cos(-hd.theta)
+    const sinT = Math.sin(-hd.theta)
+    const xr = dx * cosT + dy * sinT
+    const yr = -dx * sinT + dy * cosT
+    if (xr < hd.minXR) hd.minXR = xr
+    if (xr > hd.maxXR) hd.maxXR = xr
+    if (yr < hd.minYR) hd.minYR = yr
+    if (yr > hd.maxYR) hd.maxYR = yr
+  }
+
+  // Build result
+  let result: DetectedSlot[] = holesAngled.map(hd => ({
+    x: hd.minX, y: hd.minY,
+    w: hd.maxX - hd.minX + 1, h: hd.maxY - hd.minY + 1,
+    cx: hd.cx, cy: hd.cy,
+    angle: hd.theta,
+    rw: Math.ceil(hd.maxXR - hd.minXR + 1),
+    rh: Math.ceil(hd.maxYR - hd.minYR + 1)
+  }))
+
+  // Sort in reading order (top-to-bottom with row tolerance, then left-to-right)
+  if (result.length > 0) {
+    const avgH = result.reduce((s, h) => s + h.h, 0) / result.length
     const rowTol = Math.max(8, avgH / 3)
-    holes.sort((a, b) => {
+    result.sort((a, b) => {
       const rowA = Math.floor(a.y / rowTol)
       const rowB = Math.floor(b.y / rowTol)
-      if (rowA !== rowB) return rowA - rowB
-      return a.x - b.x
+      return rowA !== rowB ? rowA - rowB : a.x - b.x
     })
   }
-
-  return holes.map(h => ({ x: h.x, y: h.y, w: h.w, h: h.h }))
+  return result
 }
+
 
 // Public helper: detect slots in a PNG and return detailed info.
 // Useful for UI: "Template has 2 slots: 800x600 (1.33:1), 800x600 (1.33:1)"
@@ -843,8 +892,8 @@ export async function detectTemplateSlots(
   return holes.map(h => ({
     x: h.x,
     y: h.y,
-    w: h.w,
-    h: h.h,
-    aspectRatio: h.w / h.h
+    w: h.rw,  // v4.7.67: use rotated dimensions for display
+    h: h.rh,
+    aspectRatio: h.rw / h.rh
   }))
 }
