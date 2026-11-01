@@ -18,7 +18,8 @@ import {
   Maximize2,
   SwitchCamera,
   FlipHorizontal,
-  KeyRound
+  KeyRound,
+  Hand
 } from 'lucide-react'
 
 // v4.7.43: Helper untuk akses Camera2Native plugin — via window.Capacitor.Plugins
@@ -2195,6 +2196,32 @@ export function BoothPage() {
             >
               <FlipHorizontal className="w-4 h-4" />
             </button>
+            {/* v4.7.80: Quick Palm trigger toggle — no need to go to Settings */}
+            <button
+              onClick={() => updateSettings({ palm_trigger: !settings?.palm_trigger })}
+              title={settings?.palm_trigger ? 'Palm: ON (tap to disable)' : 'Palm: OFF (tap to enable)'}
+              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center transition-all min-h-[44px] ${
+                settings?.palm_trigger
+                  ? 'bg-gold-400/30 border-gold-300/50 text-gold-200'
+                  : 'bg-black/40 hover:bg-silver-200/10 border-silver-300/20 text-silver-500'
+              }`}
+            >
+              <Hand className="w-4 h-4" />
+            </button>
+            {/* v4.7.80: Quick Countdown selector — Manual/3s/5s/7s/10s */}
+            <select
+              value={settings?.booth_countdown_seconds ?? 3}
+              onChange={(e) => updateSettings({ booth_countdown_seconds: parseInt(e.target.value, 10) })}
+              title="Countdown time"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 border border-silver-300/20 text-silver-200 text-xs text-center cursor-pointer min-h-[44px] appearance-none pl-1"
+              style={{ textAlignLast: 'center' }}
+            >
+              <option value={0}>M</option>
+              <option value={3}>3s</option>
+              <option value={5}>5s</option>
+              <option value={7}>7s</option>
+              <option value={10}>10s</option>
+            </select>
           </div>
         </div>
       )}

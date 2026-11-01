@@ -530,13 +530,14 @@ export function SettingsPage() {
           <SettingRow
             icon={<Clock className="w-4 h-4" />}
             label="Countdown seconds"
-            hint="Delay before each capture (photo & video)"
+            hint="Delay before each capture. Manual = instant (no countdown)."
           >
             <select
-              className="aray-input w-full sm:w-auto sm:max-w-[120px]"
+              className="aray-input w-full sm:w-auto sm:max-w-[140px]"
               value={settings.booth_countdown_seconds}
               onChange={(e) => updateSettings({ booth_countdown_seconds: parseInt(e.target.value, 10) })}
             >
+              <option value={0}>Manual (0s)</option>
               {[3, 5, 7, 10].map((n) => (
                 <option key={n} value={n}>{n}s</option>
               ))}
