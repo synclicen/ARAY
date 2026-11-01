@@ -1866,7 +1866,10 @@ export function BoothPage() {
     const sensitivity = settings?.hardware_shutter_sensitivity || 'auto'
     const BLACKOUT_THRESHOLD = sensitivity === 'high' ? 0.70 : sensitivity === 'low' ? 0.40 : 0.60
     const MIN_AVG_BRIGHTNESS = 20
-    const COOLDOWN_MS = 3000
+    // v4.7.82: Reduced cooldown from 3000 to 1500ms — 1.5s is enough to prevent
+    // double-trigger from same shutter event (DSLR mirror cycle is ~200-500ms).
+    // Was 3s → user had to wait too long between shots.
+    const COOLDOWN_MS = 1500
     let lastBrightness = -1
     let dipDetected = false
     let dipBrightness = 0
@@ -1877,6 +1880,79 @@ export function BoothPage() {
     let lastFrameData: Uint8ClampedArray | null = null
     let pixelChangeHistory: number[] = []
     const PIXEL_CHANGE_SIZE = 5
+
+    // v4.7.82: CRITICAL FIX — wait for mirror recovery before capture.
+    // When DSLR shutter fires: mirror UP → live view BLACK → mirror DOWN → live view resumes.
+    // If we capture during blackout → BLACK PHOTO.
+    // Fix: after detecting blackout, poll until brightness recovers, THEN trigger capture.
+    const waitForRecoveryAndTrigger = async (preBlackoutBrightness: number) => {
+      console.log(`[Booth] Shutter detected — waiting for mirror recovery (pre-blackout=${preBlackoutBrightness.toFixed(0)})...`)
+      const recoveryTarget = preBlackoutBrightness * 0.70  // 70% of pre-blackout = recovered
+      const maxWaitMs = 2000  // max 2s wait
+      const startWait = Date.now()
+
+      while (monitoring && !cancelled && Date.now() - startWait < maxWaitMs) {
+        try {
+          const result: any = await uvcPlugin.capturePhoto({})
+          if (!monitoring || cancelled) return
+          const base64 = result?.base64
+          if (!base64) { await new Promise(r => setTimeout(r, 50)); continue }
+
+          // Quick brightness check
+          const brightness = await new Promise<number>((resolve) => {
+            const img = new Image()
+            img.onload = () => {
+              try {
+                if (sampleCtx) {
+                  sampleCtx.drawImage(img, 0, 0, 32, 32)
+                  const data = sampleCtx.getImageData(0, 0, 32, 32).data
+                  let sum = 0
+                  for (let i = 0; i < data.length; i += 4) {
+                    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+                  }
+                  resolve(sum / (data.length / 4))
+                } else { resolve(-1) }
+              } catch { resolve(-1) }
+            }
+            img.onerror = () => resolve(-1)
+            img.src = `data:image/jpeg;base64,${base64}`
+          })
+
+          if (brightness > recoveryTarget) {
+            console.log(`[Booth] Mirror recovered! brightness=${brightness.toFixed(0)} (target=${recoveryTarget.toFixed(0)}) — triggering capture`)
+            // Mirror is back down — NOW trigger capture
+            hardwareShutterCooldownRef.current = Date.now()
+
+            setHidePalmTrigger(true)
+            setPalmState('triggered')
+            setPalmTriggerActive(false)
+            if (palmTriggerRef.current) {
+              palmTriggerRef.current.dispose?.()
+              palmTriggerRef.current = null
+            }
+            setPhase('countdown')
+            runCountdownRef.current()
+            return
+          }
+        } catch (e) {
+          // Keep polling
+        }
+        await new Promise(r => setTimeout(r, 50))  // Poll every 50ms for fast recovery
+      }
+
+      // If recovery didn't happen within 2s, trigger anyway (might be a long exposure)
+      console.warn(`[Booth] Mirror recovery timeout — triggering capture anyway`)
+      hardwareShutterCooldownRef.current = Date.now()
+      setHidePalmTrigger(true)
+      setPalmState('triggered')
+      setPalmTriggerActive(false)
+      if (palmTriggerRef.current) {
+        palmTriggerRef.current.dispose?.()
+        palmTriggerRef.current = null
+      }
+      setPhase('countdown')
+      runCountdownRef.current()
+    }
 
     // Small canvas for brightness sampling
     const sampleCanvas = document.createElement('canvas')
@@ -1958,23 +2034,12 @@ export function BoothPage() {
               if (pixelChange > avgChange * 3 && pixelChange > 30 &&
                   lastBrightness > MIN_AVG_BRIGHTNESS && brightness < lastBrightness * 0.80) {
                 console.log(`[Booth] Hardware shutter (auto mode)! pixelChange=${pixelChange.toFixed(0)} (avg=${avgChange.toFixed(0)}), brightness ${lastBrightness.toFixed(0)}→${brightness.toFixed(0)}`)
-                hardwareShutterCooldownRef.current = Date.now()
-
-                setHidePalmTrigger(true)
-                setPalmState('triggered')
-                setPalmTriggerActive(false)
-                if (palmTriggerRef.current) {
-                  palmTriggerRef.current.dispose?.()
-                  palmTriggerRef.current = null
-                }
-                setPhase('countdown')
-                runCountdownRef.current()
-
-                brightnessHistory = []
-                lastBrightness = -1
+                // v4.7.82: Wait for mirror recovery before capture (prevents black photos)
+                const preBlackout1 = lastBrightness
                 dipDetected = false
                 pixelChangeHistory = []
-                await new Promise(r => setTimeout(r, COOLDOWN_MS))
+                await waitForRecoveryAndTrigger(preBlackout1)
+                await new Promise(r => setTimeout(r, 500))  // short post-trigger cooldown
                 continue
               }
             }
@@ -1986,8 +2051,8 @@ export function BoothPage() {
           // This catches blackouts so short we only caught ONE dark frame.
           if (dipDetected && brightness > dipBrightness * 1.5 && brightness > MIN_AVG_BRIGHTNESS) {
             console.log(`[Booth] Hardware shutter (dip recovery)! dip=${dipBrightness.toFixed(0)} → recovered=${brightness.toFixed(0)}`)
+            // v4.7.82: Dip already recovered — trigger directly (mirror already back)
             hardwareShutterCooldownRef.current = Date.now()
-
             setHidePalmTrigger(true)
             setPalmState('triggered')
             setPalmTriggerActive(false)
@@ -1997,11 +2062,8 @@ export function BoothPage() {
             }
             setPhase('countdown')
             runCountdownRef.current()
-
-            brightnessHistory = []
-            lastBrightness = -1
             dipDetected = false
-            await new Promise(r => setTimeout(r, COOLDOWN_MS))
+            await new Promise(r => setTimeout(r, 500))  // short cooldown
             continue
           }
 
@@ -2013,22 +2075,11 @@ export function BoothPage() {
             // For HIGH sensitivity: trigger immediately (don't wait for recovery)
             if (sensitivity === 'high') {
               console.log(`[Booth] Hardware shutter (high sens immediate)! ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)}`)
-              hardwareShutterCooldownRef.current = Date.now()
-
-              setHidePalmTrigger(true)
-              setPalmState('triggered')
-              setPalmTriggerActive(false)
-              if (palmTriggerRef.current) {
-                palmTriggerRef.current.dispose?.()
-                palmTriggerRef.current = null
-              }
-              setPhase('countdown')
-              runCountdownRef.current()
-
-              brightnessHistory = []
-              lastBrightness = -1
+              // v4.7.82: Wait for mirror recovery before capture (prevents black photos)
+              const preBlackout3 = lastBrightness
               dipDetected = false
-              await new Promise(r => setTimeout(r, COOLDOWN_MS))
+              await waitForRecoveryAndTrigger(preBlackout3)
+              await new Promise(r => setTimeout(r, 500))
               continue
             }
 
@@ -2049,22 +2100,11 @@ export function BoothPage() {
 
             if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * (1 - BLACKOUT_THRESHOLD)) {
               console.log(`[Booth] Hardware shutter (avg drop)! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
-              hardwareShutterCooldownRef.current = Date.now()
-
-              setHidePalmTrigger(true)
-              setPalmState('triggered')
-              setPalmTriggerActive(false)
-              if (palmTriggerRef.current) {
-                palmTriggerRef.current.dispose?.()
-                palmTriggerRef.current = null
-              }
-              setPhase('countdown')
-              runCountdownRef.current()
-
-              brightnessHistory = []
-              lastBrightness = -1
+              // v4.7.82: Wait for mirror recovery before capture (prevents black photos)
+              const preBlackout4 = avgBrightness
               dipDetected = false
-              await new Promise(r => setTimeout(r, COOLDOWN_MS))
+              await waitForRecoveryAndTrigger(preBlackout4)
+              await new Promise(r => setTimeout(r, 500))
               continue
             }
           }
