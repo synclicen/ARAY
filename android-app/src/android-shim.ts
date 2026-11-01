@@ -313,8 +313,8 @@ const DEFAULT_SETTINGS = {
   photo_fit_mode: 'fit',
   // v4.7.71: Hardware shutter detection for DSLR via USB capture card
   hardware_shutter: false,
-  // v4.7.77: Hardware shutter sensitivity — 'low' | 'medium' | 'high'
-  hardware_shutter_sensitivity: 'medium'
+  // v4.7.77: Hardware shutter sensitivity — 'auto' | 'low' | 'medium' | 'high'
+  hardware_shutter_sensitivity: 'auto'
 }
 
 async function getSettings() {

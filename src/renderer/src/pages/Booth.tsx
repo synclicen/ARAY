@@ -1852,20 +1852,26 @@ export function BoothPage() {
     let brightnessHistory: number[] = []
     const HISTORY_SIZE = 5
 
-    // v4.7.77: Sensitivity-based thresholds
-    // 'high' = detect brief blackouts (30% drop) — catches quick shutter presses
-    // 'medium' = balanced (40% drop)
-    // 'low' = only long blackouts (60% drop) — stable, may miss quick presses
-    const sensitivity = settings?.hardware_shutter_sensitivity || 'medium'
+    // v4.7.78: Sensitivity-based thresholds + Auto mode for beginners
+    // 'auto'   = smart detection — combines brightness dip + pixel change spike
+    //            Works with AF (ripples), auto exposure (gradual changes), auto shutter
+    // 'high'   = 30% brightness drop, trigger immediately
+    // 'medium' = 40% drop, wait for recovery
+    // 'low'    = 60% drop, only long blackouts
+    const sensitivity = settings?.hardware_shutter_sensitivity || 'auto'
     const BLACKOUT_THRESHOLD = sensitivity === 'high' ? 0.70 : sensitivity === 'low' ? 0.40 : 0.60
     const MIN_AVG_BRIGHTNESS = 20
     const COOLDOWN_MS = 3000
     let lastBrightness = -1
-    // v4.7.77: Dip-recovery tracking — if we see a dark frame, remember it.
-    // If NEXT frame is bright again (recovered), it was a brief blackout → trigger.
-    // This catches blackouts so short we only caught ONE dark frame.
     let dipDetected = false
     let dipBrightness = 0
+    // v4.7.78: Pixel change tracking for Auto mode
+    // When shutter fires, the ENTIRE frame changes (mirror flip) — not just brightness.
+    // We track average pixel difference between consecutive frames.
+    // A spike in pixel change + brightness dip = shutter confirmed.
+    let lastFrameData: Uint8ClampedArray | null = null
+    let pixelChangeHistory: number[] = []
+    const PIXEL_CHANGE_SIZE = 5
 
     // Small canvas for brightness sampling
     const sampleCanvas = document.createElement('canvas')
@@ -1889,25 +1895,86 @@ export function BoothPage() {
           const base64 = result?.base64
           if (!base64) continue
 
-          // Calculate brightness from JPEG
-          const brightness = await new Promise<number>((resolve) => {
+          // Calculate brightness + pixel change from JPEG
+          const { brightness, pixelChange } = await new Promise<{brightness: number, pixelChange: number}>((resolve) => {
             const img = new Image()
             img.onload = () => {
               try {
                 sampleCtx.drawImage(img, 0, 0, 32, 32)
-                const data = sampleCtx.getImageData(0, 0, 32, 32).data
+                const imageData = sampleCtx.getImageData(0, 0, 32, 32)
+                const data = imageData.data
                 let sum = 0
                 for (let i = 0; i < data.length; i += 4) {
                   sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
                 }
-                resolve(sum / (data.length / 4))
-              } catch { resolve(-1) }
+                const brightness = sum / (data.length / 4)
+
+                // v4.7.78: Calculate pixel change vs last frame
+                let pixelChange = 0
+                if (lastFrameData && lastFrameData.length === data.length) {
+                  let diffSum = 0
+                  let count = 0
+                  // Sample every 4th pixel for speed (8x8 = 64 samples)
+                  for (let i = 0; i < data.length; i += 16) {
+                    const dr = Math.abs(data[i] - lastFrameData[i])
+                    const dg = Math.abs(data[i + 1] - lastFrameData[i + 1])
+                    const db = Math.abs(data[i + 2] - lastFrameData[i + 2])
+                    diffSum += (dr + dg + db) / 3
+                    count++
+                  }
+                  pixelChange = diffSum / count
+                }
+                lastFrameData = new Uint8ClampedArray(data)
+                resolve({ brightness, pixelChange })
+              } catch { resolve({ brightness: -1, pixelChange: 0 }) }
             }
-            img.onerror = () => resolve(-1)
+            img.onerror = () => resolve({ brightness: -1, pixelChange: 0 })
             img.src = `data:image/jpeg;base64,${base64}`
           })
 
           if (brightness < 0) continue
+
+          // v4.7.78: AUTO mode — smart detection combining brightness dip + pixel change.
+          // This works with AF cameras (ripples), auto exposure (gradual changes), beginners.
+          // Algorithm:
+          // 1. Track pixel change history (rolling 5 frames)
+          // 2. If current pixel change > 3x average AND brightness dropped >20% → shutter
+          //    (mirror flip causes massive pixel change + brightness dip simultaneously)
+          // 3. This is more reliable than brightness-only for Auto mode cameras
+          if (sensitivity === 'auto') {
+            pixelChangeHistory.push(pixelChange)
+            if (pixelChangeHistory.length > PIXEL_CHANGE_SIZE) pixelChangeHistory.shift()
+
+            if (pixelChangeHistory.length >= 3) {
+              const prevChanges = pixelChangeHistory.slice(0, -1)
+              const avgChange = prevChanges.reduce((a, b) => a + b, 0) / prevChanges.length
+              // Pixel change spike: current change > 3x average (mirror flip = huge change)
+              // AND brightness dipped >20% from last frame
+              if (pixelChange > avgChange * 3 && pixelChange > 30 &&
+                  lastBrightness > MIN_AVG_BRIGHTNESS && brightness < lastBrightness * 0.80) {
+                console.log(`[Booth] Hardware shutter (auto mode)! pixelChange=${pixelChange.toFixed(0)} (avg=${avgChange.toFixed(0)}), brightness ${lastBrightness.toFixed(0)}→${brightness.toFixed(0)}`)
+                hardwareShutterCooldownRef.current = Date.now()
+
+                setHidePalmTrigger(true)
+                setPalmState('triggered')
+                setPalmTriggerActive(false)
+                if (palmTriggerRef.current) {
+                  palmTriggerRef.current.dispose?.()
+                  palmTriggerRef.current = null
+                }
+                setPhase('countdown')
+                runCountdownRef.current()
+
+                brightnessHistory = []
+                lastBrightness = -1
+                dipDetected = false
+                pixelChangeHistory = []
+                await new Promise(r => setTimeout(r, COOLDOWN_MS))
+                continue
+              }
+            }
+            // In auto mode, also still do the dip-recovery + rolling avg checks below
+          }
 
           // v4.7.77: DIP-RECOVERY detection — if previous frame was a dip (dark)
           // and current frame recovered to normal → brief blackout confirmed → trigger.

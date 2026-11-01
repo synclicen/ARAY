@@ -587,33 +587,46 @@ export function SettingsPage() {
           <SettingRow
             icon={<Camera className="w-4 h-4" />}
             label="Shutter sensitivity"
-            hint="High = responsif untuk tekanan singkat. Medium = seimbang. Low = stabil, mungkin perlu tekan lebih lama."
+            hint="Auto = untuk pemula (work dengan setelan kamera apa pun). High = responsif. Medium = seimbang. Low = stabil."
           >
             <select
-              className="aray-input w-full sm:w-auto sm:max-w-[160px]"
-              value={settings.hardware_shutter_sensitivity || 'medium'}
-              onChange={(e) => updateSettings({ hardware_shutter_sensitivity: e.target.value as 'low' | 'medium' | 'high' })}
+              className="aray-input w-full sm:w-auto sm:max-w-[180px]"
+              value={settings.hardware_shutter_sensitivity || 'auto'}
+              onChange={(e) => updateSettings({ hardware_shutter_sensitivity: e.target.value as 'auto' | 'low' | 'medium' | 'high' })}
               disabled={!settings.hardware_shutter}
             >
+              <option value="auto">Auto (untuk pemula)</option>
               <option value="low">Low (tekan lama)</option>
               <option value="medium">Medium (seimbang)</option>
               <option value="high">High (tekan singkat)</option>
             </select>
           </SettingRow>
 
-          {/* v4.7.77: DSLR settings guide */}
+          {/* v4.7.78: DSLR settings guide — beginner-friendly */}
           {settings.hardware_shutter && (
             <div className="p-3 rounded-xl bg-gold-400/10 border border-gold-400/20 text-xs leading-relaxed">
-              <p className="text-gold-300 font-medium mb-2">📌 Pengaturan DSLR ideal untuk shutter detection:</p>
-              <ul className="text-silver-300 space-y-1 ml-4 list-disc">
-                <li><strong>Manual Focus (MF)</strong> — AF menyebabkan delay & blackout tidak konsisten</li>
-                <li><strong>Shutter speed 1/60 atau lebih lambat</strong> — blackout lebih lama = lebih mudah dideteksi</li>
-                <li><strong>Matikan Image Review</strong> — jangan tampilkan foto hasil di LCD setelah capture (menyebabkan blackout panjang yang salah deteksi)</li>
-                <li><strong>Matikan Long Exposure NR</strong> — tambah delay setelah capture</li>
-                <li><strong>Live View mode: Stills</strong> — bukan movie mode</li>
-                <li><strong>Jangan gunakan silent shutter / electronic shutter</strong> — tidak ada mirror flip = tidak ada blackout</li>
-              </ul>
-              <p className="text-silver-400 mt-2">Jika shutter masih sulit terdeteksi, coba ubah sensitivity ke <strong className="text-gold-300">High</strong>.</p>
+              <p className="text-gold-300 font-medium mb-2">📷 Pengaturan DSLR untuk Shutter Detection:</p>
+              <div className="text-silver-300 space-y-2">
+                <div>
+                  <p className="text-silver-200 font-medium">✅ Auto mode (Sensitivitas: Auto) — untuk pemula:</p>
+                  <ul className="ml-4 list-disc space-y-0.5">
+                    <li>Tidak perlu ubah setting apa pun di kamera — biarkan Auto</li>
+                    <li>Pastikan DSLR dalam <strong>Live View</strong> mode (bukan viewfinder)</li>
+                    <li>Pastikan pakai <strong>mechanical shutter</strong> (bukan silent/electronic)</li>
+                    <li>App deteksi kombinasi: blackout + perubahan pixel besar = shutter pressed</li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-silver-200 font-medium">⚙️ Advanced (jika Auto tidak responsif):</p>
+                  <ul className="ml-4 list-disc space-y-0.5">
+                    <li>Ubah <strong>Focus ke Manual (MF)</strong> — AF menyebabkan blackout tidak konsisten</li>
+                    <li><strong>Shutter speed 1/60 atau lebih lambat</strong> — blackout lebih jelas</li>
+                    <li><strong>Matikan Image Review</strong> — jangan tampilkan foto di LCD setelah capture</li>
+                    <li>Ganti sensitivity ke <strong>High</strong> untuk tekanan singkat</li>
+                  </ul>
+                </div>
+              </div>
+              <p className="text-silver-400 mt-2">💡 <strong>Tip:</strong> Mulai dengan <strong className="text-gold-300">Auto</strong> sensitivity. Jika shutter sulit terdeteksi, ganti ke <strong className="text-gold-300">High</strong>.</p>
             </div>
           )}
 

@@ -122,11 +122,12 @@ export interface AraySettings {
   hardware_shutter?: boolean
   /**
    * v4.7.77: Hardware shutter sensitivity.
+   * 'auto'   = smart detection for beginners (default) — works with AF, auto exposure
    * 'low'    = only detect long blackouts (stable, may miss quick presses)
-   * 'medium' = balanced (default)
+   * 'medium' = balanced
    * 'high'   = detect very brief blackouts (responsive, slight false-positive risk)
    */
-  hardware_shutter_sensitivity?: 'low' | 'medium' | 'high'
+  hardware_shutter_sensitivity?: 'auto' | 'low' | 'medium' | 'high'
   /**
    * Password untuk exit fullscreen booth mode.
    * Jika kosong, exit fullscreen tanpa password.
