@@ -124,6 +124,18 @@ export function BoothPage() {
   // calls startCamera() again. For UVC, streamRef is always null so the old guard
   // didn't work. This ref prevents duplicate UVC open → native memory leak → OOM.
   const cameraStartingRef = useRef<boolean>(false)
+  // v4.7.88: Shared capturePhoto lock — prevents concurrent capturePhoto calls
+  // from palm trigger + hardware shutter monitor. Without this, native plugin
+  // gets overwhelmed → frame drops → shutter detection fails (needs 2-3 presses).
+  const captureLockRef = useRef<boolean>(false)
+  const acquireCaptureLock = useCallback((): boolean => {
+    if (captureLockRef.current) return false
+    captureLockRef.current = true
+    return true
+  }, [])
+  const releaseCaptureLock = useCallback(() => {
+    captureLockRef.current = false
+  }, [])
   // v4.7.61: Track if UVC preview is actually showing frames (not just opened).
   // UVC camera takes 1-3s to start streaming. During that time, TextureView is
   // blank. This state controls a "Camera starting..." overlay so user doesn't
@@ -1727,7 +1739,13 @@ export function BoothPage() {
         uvcCaptureLoop = (async () => {
           while (uvcCapturing && !cancelled) {
             try {
+              // v4.7.88: Acquire lock — prevents concurrent capturePhoto with hardware shutter
+              if (!acquireCaptureLock()) {
+                await new Promise(r => setTimeout(r, 50))
+                continue
+              }
               const result: any = await uvcPlugin.capturePhoto({})
+              releaseCaptureLock()
               if (!uvcCapturing || cancelled) break
               const base64 = result?.base64
               if (base64) {
@@ -1865,6 +1883,7 @@ export function BoothPage() {
     let monitoring = true
     let brightnessHistory: number[] = []
     const HISTORY_SIZE = 5
+    let dipDetectedTime = 0  // v4.7.88: track when dip was detected for timeout
 
     // v4.7.78: Sensitivity-based thresholds + Auto mode for beginners
     // 'auto'   = smart detection — combines brightness dip + pixel change spike
@@ -1941,17 +1960,21 @@ export function BoothPage() {
     const monitorLoop = async () => {
       while (monitoring && !cancelled) {
         // v4.7.84: Reduced cooldown check — was blocking detection even when indicator
-        // said "ready". Now only blocks for 800ms (enough to prevent double-trigger
+        // said "ready". Now only blocks for 400ms (enough to prevent double-trigger
         // from same shutter event, but doesn't block next legitimate press).
-        if (Date.now() - hardwareShutterCooldownRef.current < 800) {
-          await new Promise(r => setTimeout(r, 100))
+        if (Date.now() - hardwareShutterCooldownRef.current < 400) {
+          await new Promise(r => setTimeout(r, 50))
           continue
         }
 
         try {
-          // capturePhoto takes ~50-100ms native round-trip.
-          // This IS our polling delay — no need for extra setTimeout.
+          // v4.7.88: Acquire lock — prevents concurrent capturePhoto with palm trigger
+          if (!acquireCaptureLock()) {
+            await new Promise(r => setTimeout(r, 50))
+            continue
+          }
           const result: any = await uvcPlugin.capturePhoto({})
+          releaseCaptureLock()
           if (!monitoring || cancelled) break
           const base64 = result?.base64
           if (!base64) continue
@@ -2083,7 +2106,15 @@ export function BoothPage() {
             // For MEDIUM/LOW: mark as dip, wait for recovery (confirms real blackout)
             dipDetected = true
             dipBrightness = brightness
+            dipDetectedTime = Date.now()  // v4.7.88: track for timeout
             console.log(`[Booth] Dip detected: ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)} (waiting for recovery)`)
+          }
+
+          // v4.7.88: Dip timeout — if dip was detected >500ms ago and no recovery,
+          // clear it. Prevents dipDetected from blocking new detections.
+          if (dipDetected && dipDetectedTime > 0 && Date.now() - dipDetectedTime > 500) {
+            console.log('[Booth] Dip timeout — clearing (no recovery in 500ms)')
+            dipDetected = false
           }
 
           // Also check against rolling average (catches gradual dimming)
