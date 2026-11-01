@@ -2325,31 +2325,16 @@ export function BoothPage() {
         </div>
       )}
 
-      {/* v4.7.83: Shutter Ready Indicator — shows operator when DSLR is ready for next shot.
-          v4.7.84: Moved to TOP center (was bottom, overlapping shutter button).
-          Only shows when hardware_shutter enabled + UVC active + preview phase. */}
+      {/* v4.7.89: Shutter Ready Indicator — minimal dot only, top-right corner.
+          No text, no progress bar — just a small colored dot:
+          green = ready, gold spinning = processing.
+          Positioned at top-right so it doesn't interfere with camera view. */}
       {settings?.hardware_shutter && uvcActive && phase === 'preview' && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-1.5 rounded-full bg-black/70 backdrop-blur-sm border border-silver-300/15">
+        <div className="absolute top-14 right-3 z-30">
           {shutterReady ? (
-            <>
-              <div className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
-                <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-              </div>
-              <span className="text-xs text-green-300 font-medium">Shutter siap</span>
-            </>
+            <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm shadow-green-500/50" />
           ) : (
-            <>
-              <div className="w-3.5 h-3.5 border-2 border-gold-300/40 border-t-gold-300 rounded-full animate-spin" />
-              <div className="w-20 h-1 bg-silver-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-gold-400 to-gold-300 transition-all duration-75"
-                  style={{ width: `${shutterCooldownProgress}%` }}
-                />
-              </div>
-              <span className="text-xs text-gold-200 font-medium">
-                {shutterCooldownProgress < 50 ? 'Memproses...' : 'Menunggu...'}
-              </span>
-            </>
+            <div className="w-3 h-3 border-2 border-gold-300/30 border-t-gold-300 rounded-full animate-spin" />
           )}
         </div>
       )}
