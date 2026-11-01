@@ -2986,6 +2986,35 @@ export function BoothPage() {
                 </span>
               </div>
               <ArayButton
+                variant="ghost"
+                icon={<RotateCcw className="w-4 h-4" />}
+                onClick={() => {
+                  // v4.7.85: Take Again — go directly to preview (not greeting).
+                  // Reset shots but keep camera running. Faster re-shoot for operator.
+                  cleanupAllRecording()
+                  setCapturedShots([])
+                  setCurrentShot(1)
+                  setCompositeUrl(null)
+                  setCompositeMediaId(null)
+                  setRetakeShotNumber(null)
+                  setCountdown(0)
+                  setLastFlash(false)
+                  setHidePalmTrigger(false)
+                  ;(window as any).__aray_current_session_id = undefined
+                  // v4.7.85: Go to preview directly — camera should still be running
+                  // (stopCamera not called). If camera was stopped, greeting effect
+                  // will restart it.
+                  if (streamRef.current || uvcActiveRef.current) {
+                    setPhase('preview')
+                  } else {
+                    // Camera stopped — go to greeting (will auto-start camera)
+                    setPhase('greeting')
+                  }
+                }}
+              >
+                Take Again
+              </ArayButton>
+              <ArayButton
                 variant="gold"
                 icon={<Sparkles className="w-4 h-4" />}
                 onClick={() => {
