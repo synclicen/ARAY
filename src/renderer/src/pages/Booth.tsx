@@ -1322,10 +1322,14 @@ export function BoothPage() {
     const shotToCapture = retakeShotNumber ?? currentShot
     // v4.7.22: Set phase='countdown' di sini juga (bukan hanya di caller)
     // supaya countdown pasti muncul bahkan kalau caller lupa set phase
-    setPhase('countdown')
-    for (let i = countdownSeconds; i > 0; i--) {
-      setCountdown(i)
-      await sleep(1000)
+    // v4.7.79: Skip countdown loop if hardware_shutter_no_countdown enabled
+    // (instant capture from hardware shutter — no 3-2-1 countdown)
+    if (!(settings?.hardware_shutter_no_countdown && mode === 'photo')) {
+      setPhase('countdown')
+      for (let i = countdownSeconds; i > 0; i--) {
+        setCountdown(i)
+        await sleep(1000)
+      }
     }
     // v4.7.26: Capture frame DULU, LALU flash + YAP! bersamaan.
     // v4.7.51: captureFrame sekarang async (UVC capture lewat native plugin).
@@ -1387,7 +1391,7 @@ export function BoothPage() {
     } else {
       setPhase('result')
     }
-  }, [countdownSeconds, performCapture, currentShot, totalShots, mode, startRecording, retakeShotNumber])
+  }, [countdownSeconds, performCapture, currentShot, totalShots, mode, startRecording, retakeShotNumber, settings?.hardware_shutter_no_countdown])
 
   // Keep runCountdownRef in sync so the palm trigger callback always calls the
   // latest runCountdown (otherwise shot 2+ would re-run shot 1's closure).

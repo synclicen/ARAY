@@ -129,6 +129,13 @@ export interface AraySettings {
    */
   hardware_shutter_sensitivity?: 'auto' | 'low' | 'medium' | 'high'
   /**
+   * v4.7.79: Disable countdown for hardware shutter.
+   * When true + hardware_shutter enabled: pressing DSLR shutter → instant capture
+   * (no 3-2-1 countdown). User sees result immediately.
+   * Default: false (countdown enabled for consistency).
+   */
+  hardware_shutter_no_countdown?: boolean
+  /**
    * Password untuk exit fullscreen booth mode.
    * Jika kosong, exit fullscreen tanpa password.
    * Default: 'aray' (user bisa ubah di Settings).

@@ -602,6 +602,19 @@ export function SettingsPage() {
             </select>
           </SettingRow>
 
+          {/* v4.7.79: No countdown for hardware shutter */}
+          <SettingRow
+            icon={<Camera className="w-4 h-4" />}
+            label="Instant capture (no countdown)"
+            hint="Skip 3-2-1 countdown when hardware shutter pressed. Foto langsung diambil saat tekan shutter DSLR."
+          >
+            <Toggle
+              value={settings.hardware_shutter_no_countdown || false}
+              onChange={(v) => updateSettings({ hardware_shutter_no_countdown: v })}
+              disabled={!settings.hardware_shutter}
+            />
+          </SettingRow>
+
           {/* v4.7.78: DSLR settings guide — beginner-friendly */}
           {settings.hardware_shutter && (
             <div className="p-3 rounded-xl bg-gold-400/10 border border-gold-400/20 text-xs leading-relaxed">
@@ -617,6 +630,14 @@ export function SettingsPage() {
                   </ul>
                 </div>
                 <div>
+                  <p className="text-red-300 font-medium">⚠️ Matikan Info Overlay di DSLR:</p>
+                  <ul className="ml-4 list-disc space-y-0.5">
+                    <li>Date/time, F-stop, ISO, "NO CARD" dll yang muncul di live view akan tertangkap foto</li>
+                    <li>Di DSLR: cari tombol <strong>INFO</strong> atau <strong>DISP</strong> → tekan sampai overlay hilang</li>
+                    <li>Atau menu → <strong>Live View Display</strong> → <strong>Off</strong></li>
+                  </ul>
+                </div>
+                <div>
                   <p className="text-silver-200 font-medium">⚙️ Advanced (jika Auto tidak responsif):</p>
                   <ul className="ml-4 list-disc space-y-0.5">
                     <li>Ubah <strong>Focus ke Manual (MF)</strong> — AF menyebabkan blackout tidak konsisten</li>
@@ -626,7 +647,7 @@ export function SettingsPage() {
                   </ul>
                 </div>
               </div>
-              <p className="text-silver-400 mt-2">💡 <strong>Tip:</strong> Mulai dengan <strong className="text-gold-300">Auto</strong> sensitivity. Jika shutter sulit terdeteksi, ganti ke <strong className="text-gold-300">High</strong>.</p>
+              <p className="text-silver-400 mt-2">💡 <strong>Tip:</strong> Mulai dengan <strong className="text-gold-300">Auto</strong> sensitivity. Jika shutter sulit terdeteksi, ganti ke <strong className="text-gold-300">High</strong>. Aktifkan <strong className="text-gold-300">Instant capture</strong> jika tidak mau countdown.</p>
             </div>
           )}
 

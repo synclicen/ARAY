@@ -314,7 +314,9 @@ const DEFAULT_SETTINGS = {
   // v4.7.71: Hardware shutter detection for DSLR via USB capture card
   hardware_shutter: false,
   // v4.7.77: Hardware shutter sensitivity — 'auto' | 'low' | 'medium' | 'high'
-  hardware_shutter_sensitivity: 'auto'
+  hardware_shutter_sensitivity: 'auto',
+  // v4.7.79: Disable countdown for hardware shutter (instant capture)
+  hardware_shutter_no_countdown: false
 }
 
 async function getSettings() {
