@@ -1474,8 +1474,12 @@ export function BoothPage() {
   }, [])
 
   // Auto-start camera on greeting screen for live background
+  // v4.7.84: Also re-start when Booth remounts (e.g. returning from Gallery).
+  // When Booth unmounts → stopCamera → UVC closed. When remounts → all refs reset
+  // → need to re-open camera. The greeting effect handles this.
   useEffect(() => {
-    if (phase === 'greeting' && !streamRef.current) {
+    if (phase === 'greeting' && !streamRef.current && !uvcActiveRef.current) {
+      console.log('[Booth] Greeting: starting camera (streamRef null, uvcActive false)')
       startCamera()
       enumerateCameras()  // v4.7.41: list cameras saat greeting
       // v4.6.8: Trigger event session lock — grace period 72 jam aktif
@@ -1845,6 +1849,8 @@ export function BoothPage() {
   // v4.7.83: Shutter ready indicator state for operator feedback
   const [shutterReady, setShutterReady] = useState(true)
   const [shutterCooldownProgress, setShutterCooldownProgress] = useState(0)  // 0-100
+  // v4.7.84: DSLR OSD warning dismiss state
+  const [osdWarningDismissed, setOsdWarningDismissed] = useState(false)
 
   useEffect(() => {
     if (phase !== 'preview' || !settings?.hardware_shutter || !uvcActive || isRecording) {
@@ -1991,8 +1997,11 @@ export function BoothPage() {
 
     const monitorLoop = async () => {
       while (monitoring && !cancelled) {
-        if (Date.now() - hardwareShutterCooldownRef.current < COOLDOWN_MS) {
-          await new Promise(r => setTimeout(r, 200))
+        // v4.7.84: Reduced cooldown check — was blocking detection even when indicator
+        // said "ready". Now only blocks for 800ms (enough to prevent double-trigger
+        // from same shutter event, but doesn't block next legitimate press).
+        if (Date.now() - hardwareShutterCooldownRef.current < 800) {
+          await new Promise(r => setTimeout(r, 100))
           continue
         }
 
@@ -2154,8 +2163,8 @@ export function BoothPage() {
       cancelled = true
       monitoring = false
       if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null }
-      setShutterReady(true)
-      setShutterCooldownProgress(0)
+      // v4.7.84: Don't reset shutterReady here — let new effect instance handle it.
+      // Resetting here causes indicator to show "ready" even when cooldown hasn't expired.
       console.log('[Booth] Hardware shutter detection stopped')
     }
   }, [phase, settings?.hardware_shutter, uvcActive, isRecording])
@@ -2301,22 +2310,41 @@ export function BoothPage() {
         </div>
       )}
 
+      {/* v4.7.84: DSLR OSD warning — dismissible banner when UVC active.
+          Reminds operator to disable Info Overlay on DSLR (date/time/ISO/battery showing in live view). */}
+      {uvcActive && phase === 'preview' && !osdWarningDismissed && (
+        <div className="absolute top-16 left-3 right-3 z-40 flex items-start gap-2 p-2.5 rounded-xl bg-red-900/80 backdrop-blur-sm border border-red-500/30">
+          <AlertTriangle className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
+          <div className="flex-1 text-xs text-red-100 leading-relaxed">
+            <strong>Info DSLR terlihat di live view?</strong> Matikan overlay di DSLR:
+            tekan tombol <strong>INFO</strong> atau <strong>DISP</strong> sampai bersih.
+            Hanya tampilkan lensa view saja.
+          </div>
+          <button
+            onClick={() => setOsdWarningDismissed(true)}
+            className="shrink-0 w-6 h-6 rounded-full bg-red-500/20 hover:bg-red-500/40 flex items-center justify-center"
+          >
+            <X className="w-3 h-3 text-red-200" />
+          </button>
+        </div>
+      )}
+
       {/* v4.7.83: Shutter Ready Indicator — shows operator when DSLR is ready for next shot.
-          Progress bar fills during cooldown, turns green checkmark when ready.
+          v4.7.84: Moved to TOP center (was bottom, overlapping shutter button).
           Only shows when hardware_shutter enabled + UVC active + preview phase. */}
       {settings?.hardware_shutter && uvcActive && phase === 'preview' && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-black/60 backdrop-blur-sm border border-silver-300/15">
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-1.5 rounded-full bg-black/70 backdrop-blur-sm border border-silver-300/15">
           {shutterReady ? (
             <>
-              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
-                <Check className="w-3 h-3 text-white" strokeWidth={3} />
+              <div className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
+                <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
               </div>
               <span className="text-xs text-green-300 font-medium">Shutter siap</span>
             </>
           ) : (
             <>
-              <div className="w-4 h-4 border-2 border-gold-300/40 border-t-gold-300 rounded-full animate-spin" />
-              <div className="w-24 h-1 bg-silver-700 rounded-full overflow-hidden">
+              <div className="w-3.5 h-3.5 border-2 border-gold-300/40 border-t-gold-300 rounded-full animate-spin" />
+              <div className="w-20 h-1 bg-silver-700 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gradient-to-r from-gold-400 to-gold-300 transition-all duration-75"
                   style={{ width: `${shutterCooldownProgress}%` }}
