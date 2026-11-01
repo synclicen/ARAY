@@ -1842,6 +1842,9 @@ export function BoothPage() {
   // capturePhoto does lock SurfaceTexture briefly, but at 200ms interval the preview
   // has time to render between calls.
   const hardwareShutterCooldownRef = useRef<number>(0)
+  // v4.7.83: Shutter ready indicator state for operator feedback
+  const [shutterReady, setShutterReady] = useState(true)
+  const [shutterCooldownProgress, setShutterCooldownProgress] = useState(0)  // 0-100
 
   useEffect(() => {
     if (phase !== 'preview' || !settings?.hardware_shutter || !uvcActive || isRecording) {
@@ -1887,6 +1890,9 @@ export function BoothPage() {
     // Fix: after detecting blackout, poll until brightness recovers, THEN trigger capture.
     const waitForRecoveryAndTrigger = async (preBlackoutBrightness: number) => {
       console.log(`[Booth] Shutter detected — waiting for mirror recovery (pre-blackout=${preBlackoutBrightness.toFixed(0)})...`)
+      // v4.7.83: Show "processing" indicator to operator
+      setShutterReady(false)
+      setShutterCooldownProgress(10)  // started processing
       const recoveryTarget = preBlackoutBrightness * 0.70  // 70% of pre-blackout = recovered
       const maxWaitMs = 2000  // max 2s wait
       const startWait = Date.now()
@@ -1920,6 +1926,7 @@ export function BoothPage() {
 
           if (brightness > recoveryTarget) {
             console.log(`[Booth] Mirror recovered! brightness=${brightness.toFixed(0)} (target=${recoveryTarget.toFixed(0)}) — triggering capture`)
+            setShutterCooldownProgress(50)  // recovery done, now capturing
             // Mirror is back down — NOW trigger capture
             hardwareShutterCooldownRef.current = Date.now()
 
@@ -1942,6 +1949,7 @@ export function BoothPage() {
 
       // If recovery didn't happen within 2s, trigger anyway (might be a long exposure)
       console.warn(`[Booth] Mirror recovery timeout — triggering capture anyway`)
+      setShutterCooldownProgress(50)
       hardwareShutterCooldownRef.current = Date.now()
       setHidePalmTrigger(true)
       setPalmState('triggered')
@@ -1952,6 +1960,26 @@ export function BoothPage() {
       }
       setPhase('countdown')
       runCountdownRef.current()
+    }
+
+    // v4.7.83: Cooldown progress timer — shows operator when next shutter is ready
+    let cooldownTimer: ReturnType<typeof setInterval> | null = null
+    const startCooldownIndicator = (durationMs: number) => {
+      setShutterReady(false)
+      setShutterCooldownProgress(0)
+      const startTime = Date.now()
+      if (cooldownTimer) clearInterval(cooldownTimer)
+      cooldownTimer = setInterval(() => {
+        const elapsed = Date.now() - startTime
+        const progress = Math.min(100, (elapsed / durationMs) * 100)
+        setShutterCooldownProgress(progress)
+        if (progress >= 100) {
+          if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null }
+          setShutterReady(true)
+          setShutterCooldownProgress(100)
+          console.log('[Booth] Shutter ready for next capture')
+        }
+      }, 50)
     }
 
     // Small canvas for brightness sampling
@@ -2039,7 +2067,8 @@ export function BoothPage() {
                 dipDetected = false
                 pixelChangeHistory = []
                 await waitForRecoveryAndTrigger(preBlackout1)
-                await new Promise(r => setTimeout(r, 500))  // short post-trigger cooldown
+                startCooldownIndicator(1500)  // v4.7.83: show ready indicator
+                await new Promise(r => setTimeout(r, 500))
                 continue
               }
             }
@@ -2063,7 +2092,8 @@ export function BoothPage() {
             setPhase('countdown')
             runCountdownRef.current()
             dipDetected = false
-            await new Promise(r => setTimeout(r, 500))  // short cooldown
+            startCooldownIndicator(1500)  // v4.7.83: show ready indicator
+            await new Promise(r => setTimeout(r, 500))
             continue
           }
 
@@ -2079,6 +2109,7 @@ export function BoothPage() {
               const preBlackout3 = lastBrightness
               dipDetected = false
               await waitForRecoveryAndTrigger(preBlackout3)
+              startCooldownIndicator(1500)  // v4.7.83: show ready indicator
               await new Promise(r => setTimeout(r, 500))
               continue
             }
@@ -2104,6 +2135,7 @@ export function BoothPage() {
               const preBlackout4 = avgBrightness
               dipDetected = false
               await waitForRecoveryAndTrigger(preBlackout4)
+              startCooldownIndicator(1500)  // v4.7.83: show ready indicator
               await new Promise(r => setTimeout(r, 500))
               continue
             }
@@ -2121,6 +2153,9 @@ export function BoothPage() {
     return () => {
       cancelled = true
       monitoring = false
+      if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null }
+      setShutterReady(true)
+      setShutterCooldownProgress(0)
       console.log('[Booth] Hardware shutter detection stopped')
     }
   }, [phase, settings?.hardware_shutter, uvcActive, isRecording])
@@ -2263,6 +2298,35 @@ export function BoothPage() {
               <option value={10}>10s</option>
             </select>
           </div>
+        </div>
+      )}
+
+      {/* v4.7.83: Shutter Ready Indicator — shows operator when DSLR is ready for next shot.
+          Progress bar fills during cooldown, turns green checkmark when ready.
+          Only shows when hardware_shutter enabled + UVC active + preview phase. */}
+      {settings?.hardware_shutter && uvcActive && phase === 'preview' && (
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 px-4 py-2 rounded-full bg-black/60 backdrop-blur-sm border border-silver-300/15">
+          {shutterReady ? (
+            <>
+              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                <Check className="w-3 h-3 text-white" strokeWidth={3} />
+              </div>
+              <span className="text-xs text-green-300 font-medium">Shutter siap</span>
+            </>
+          ) : (
+            <>
+              <div className="w-4 h-4 border-2 border-gold-300/40 border-t-gold-300 rounded-full animate-spin" />
+              <div className="w-24 h-1 bg-silver-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-gold-400 to-gold-300 transition-all duration-75"
+                  style={{ width: `${shutterCooldownProgress}%` }}
+                />
+              </div>
+              <span className="text-xs text-gold-200 font-medium">
+                {shutterCooldownProgress < 50 ? 'Memproses...' : 'Menunggu...'}
+              </span>
+            </>
+          )}
         </div>
       )}
 
