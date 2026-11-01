@@ -1900,13 +1900,34 @@ export function BoothPage() {
       setShutterReady(false)
       setShutterCooldownProgress(10)  // started processing
       const recoveryTarget = preBlackoutBrightness * 0.70  // 70% of pre-blackout = recovered
-      const maxWaitMs = 2000  // max 2s wait
+      const maxWaitMs = 1500  // v4.7.86: reduced from 2000 to 1500ms
       const startWait = Date.now()
+
+      // v4.7.86: Recovery trigger helper — extracted so all exit paths call it
+      const doTrigger = () => {
+        console.log('[Booth] Triggering capture after shutter detection')
+        hardwareShutterCooldownRef.current = Date.now()
+
+        setHidePalmTrigger(true)
+        setPalmState('triggered')
+        setPalmTriggerActive(false)
+        if (palmTriggerRef.current) {
+          palmTriggerRef.current.dispose?.()
+          palmTriggerRef.current = null
+        }
+        setPhase('countdown')
+        runCountdownRef.current()
+      }
 
       while (monitoring && !cancelled && Date.now() - startWait < maxWaitMs) {
         try {
           const result: any = await uvcPlugin.capturePhoto({})
-          if (!monitoring || cancelled) return
+          if (!monitoring || cancelled) {
+            // v4.7.86: Early exit — reset indicator to ready
+            setShutterReady(true)
+            setShutterCooldownProgress(100)
+            return
+          }
           const base64 = result?.base64
           if (!base64) { await new Promise(r => setTimeout(r, 50)); continue }
 
@@ -1931,50 +1952,40 @@ export function BoothPage() {
           })
 
           if (brightness > recoveryTarget) {
-            console.log(`[Booth] Mirror recovered! brightness=${brightness.toFixed(0)} (target=${recoveryTarget.toFixed(0)}) — triggering capture`)
-            setShutterCooldownProgress(50)  // recovery done, now capturing
-            // Mirror is back down — NOW trigger capture
-            hardwareShutterCooldownRef.current = Date.now()
-
-            setHidePalmTrigger(true)
-            setPalmState('triggered')
-            setPalmTriggerActive(false)
-            if (palmTriggerRef.current) {
-              palmTriggerRef.current.dispose?.()
-              palmTriggerRef.current = null
-            }
-            setPhase('countdown')
-            runCountdownRef.current()
+            console.log(`[Booth] Mirror recovered! brightness=${brightness.toFixed(0)} — triggering capture`)
+            setShutterCooldownProgress(50)
+            doTrigger()
             return
           }
         } catch (e) {
           // Keep polling
         }
-        await new Promise(r => setTimeout(r, 50))  // Poll every 50ms for fast recovery
+        await new Promise(r => setTimeout(r, 50))
       }
 
-      // If recovery didn't happen within 2s, trigger anyway (might be a long exposure)
+      // v4.7.86: Timeout OR cancelled — trigger anyway (or reset if cancelled)
+      if (cancelled || !monitoring) {
+        console.log('[Booth] Shutter detection cancelled — resetting indicator')
+        setShutterReady(true)
+        setShutterCooldownProgress(100)
+        return
+      }
+
+      // Timeout — trigger capture anyway
       console.warn(`[Booth] Mirror recovery timeout — triggering capture anyway`)
       setShutterCooldownProgress(50)
-      hardwareShutterCooldownRef.current = Date.now()
-      setHidePalmTrigger(true)
-      setPalmState('triggered')
-      setPalmTriggerActive(false)
-      if (palmTriggerRef.current) {
-        palmTriggerRef.current.dispose?.()
-        palmTriggerRef.current = null
-      }
-      setPhase('countdown')
-      runCountdownRef.current()
+      doTrigger()
     }
 
     // v4.7.83: Cooldown progress timer — shows operator when next shutter is ready
     let cooldownTimer: ReturnType<typeof setInterval> | null = null
+    let cooldownTimeout: ReturnType<typeof setTimeout> | null = null
     const startCooldownIndicator = (durationMs: number) => {
       setShutterReady(false)
       setShutterCooldownProgress(0)
       const startTime = Date.now()
       if (cooldownTimer) clearInterval(cooldownTimer)
+      if (cooldownTimeout) clearTimeout(cooldownTimeout)
       cooldownTimer = setInterval(() => {
         const elapsed = Date.now() - startTime
         const progress = Math.min(100, (elapsed / durationMs) * 100)
@@ -1986,6 +1997,14 @@ export function BoothPage() {
           console.log('[Booth] Shutter ready for next capture')
         }
       }, 50)
+      // v4.7.86: Safety net — force ready after durationMs + 500ms
+      // Prevents indicator from getting stuck if interval misses
+      cooldownTimeout = setTimeout(() => {
+        if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null }
+        setShutterReady(true)
+        setShutterCooldownProgress(100)
+        console.log('[Booth] Shutter ready (safety timeout)')
+      }, durationMs + 500)
     }
 
     // Small canvas for brightness sampling
@@ -2163,8 +2182,9 @@ export function BoothPage() {
       cancelled = true
       monitoring = false
       if (cooldownTimer) { clearInterval(cooldownTimer); cooldownTimer = null }
-      // v4.7.84: Don't reset shutterReady here — let new effect instance handle it.
-      // Resetting here causes indicator to show "ready" even when cooldown hasn't expired.
+      if (cooldownTimeout) { clearTimeout(cooldownTimeout); cooldownTimeout = null }
+      setShutterReady(true)
+      setShutterCooldownProgress(0)
       console.log('[Booth] Hardware shutter detection stopped')
     }
   }, [phase, settings?.hardware_shutter, uvcActive, isRecording])
