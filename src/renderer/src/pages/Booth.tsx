@@ -1890,92 +1890,16 @@ export function BoothPage() {
     let pixelChangeHistory: number[] = []
     const PIXEL_CHANGE_SIZE = 5
 
-    // v4.7.82: CRITICAL FIX — wait for mirror recovery before capture.
-    // When DSLR shutter fires: mirror UP → live view BLACK → mirror DOWN → live view resumes.
-    // If we capture during blackout → BLACK PHOTO.
-    // Fix: after detecting blackout, poll until brightness recovers, THEN trigger capture.
-    const waitForRecoveryAndTrigger = async (preBlackoutBrightness: number) => {
-      console.log(`[Booth] Shutter detected — waiting for mirror recovery (pre-blackout=${preBlackoutBrightness.toFixed(0)})...`)
-      // v4.7.83: Show "processing" indicator to operator
-      setShutterReady(false)
-      setShutterCooldownProgress(10)  // started processing
-      const recoveryTarget = preBlackoutBrightness * 0.70  // 70% of pre-blackout = recovered
-      const maxWaitMs = 1500  // v4.7.86: reduced from 2000 to 1500ms
-      const startWait = Date.now()
-
-      // v4.7.86: Recovery trigger helper — extracted so all exit paths call it
-      const doTrigger = () => {
-        console.log('[Booth] Triggering capture after shutter detection')
-        hardwareShutterCooldownRef.current = Date.now()
-
-        setHidePalmTrigger(true)
-        setPalmState('triggered')
-        setPalmTriggerActive(false)
-        if (palmTriggerRef.current) {
-          palmTriggerRef.current.dispose?.()
-          palmTriggerRef.current = null
-        }
-        setPhase('countdown')
-        runCountdownRef.current()
-      }
-
-      while (monitoring && !cancelled && Date.now() - startWait < maxWaitMs) {
-        try {
-          const result: any = await uvcPlugin.capturePhoto({})
-          if (!monitoring || cancelled) {
-            // v4.7.86: Early exit — reset indicator to ready
-            setShutterReady(true)
-            setShutterCooldownProgress(100)
-            return
-          }
-          const base64 = result?.base64
-          if (!base64) { await new Promise(r => setTimeout(r, 50)); continue }
-
-          // Quick brightness check
-          const brightness = await new Promise<number>((resolve) => {
-            const img = new Image()
-            img.onload = () => {
-              try {
-                if (sampleCtx) {
-                  sampleCtx.drawImage(img, 0, 0, 32, 32)
-                  const data = sampleCtx.getImageData(0, 0, 32, 32).data
-                  let sum = 0
-                  for (let i = 0; i < data.length; i += 4) {
-                    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
-                  }
-                  resolve(sum / (data.length / 4))
-                } else { resolve(-1) }
-              } catch { resolve(-1) }
-            }
-            img.onerror = () => resolve(-1)
-            img.src = `data:image/jpeg;base64,${base64}`
-          })
-
-          if (brightness > recoveryTarget) {
-            console.log(`[Booth] Mirror recovered! brightness=${brightness.toFixed(0)} — triggering capture`)
-            setShutterCooldownProgress(50)
-            doTrigger()
-            return
-          }
-        } catch (e) {
-          // Keep polling
-        }
-        await new Promise(r => setTimeout(r, 50))
-      }
-
-      // v4.7.86: Timeout OR cancelled — trigger anyway (or reset if cancelled)
-      if (cancelled || !monitoring) {
-        console.log('[Booth] Shutter detection cancelled — resetting indicator')
-        setShutterReady(true)
-        setShutterCooldownProgress(100)
-        return
-      }
-
-      // Timeout — trigger capture anyway
-      console.warn(`[Booth] Mirror recovery timeout — triggering capture anyway`)
-      setShutterCooldownProgress(50)
-      doTrigger()
-    }
+    // v4.7.87: SIMPLIFIED — no more waitForRecoveryAndTrigger.
+    // That function called capturePhoto() in a loop which locked SurfaceTexture
+    // and caused black screen + broke preview after multiple presses.
+    // Now: detect blackout -> trigger countdown IMMEDIATELY. Countdown (3s/5s)
+    // gives natural time for mirror to come back down. By the time captureFrame
+    // runs (after countdown), mirror is already down -> photo is not black.
+    // For Manual (0s) mode: captureFrame runs immediately — DSLR mirror cycle
+    // is ~200-500ms, capturePhoto takes ~100ms, so by the time it returns the
+    // mirror is usually back. If still dark, photo will be dark but that's a
+    // tradeoff for instant capture.
 
     // v4.7.83: Cooldown progress timer — shows operator when next shutter is ready
     let cooldownTimer: ReturnType<typeof setInterval> | null = null
@@ -2090,13 +2014,20 @@ export function BoothPage() {
               if (pixelChange > avgChange * 3 && pixelChange > 30 &&
                   lastBrightness > MIN_AVG_BRIGHTNESS && brightness < lastBrightness * 0.80) {
                 console.log(`[Booth] Hardware shutter (auto mode)! pixelChange=${pixelChange.toFixed(0)} (avg=${avgChange.toFixed(0)}), brightness ${lastBrightness.toFixed(0)}→${brightness.toFixed(0)}`)
-                // v4.7.82: Wait for mirror recovery before capture (prevents black photos)
-                const preBlackout1 = lastBrightness
+                // v4.7.87: Direct trigger — countdown gives time for mirror recovery
+                hardwareShutterCooldownRef.current = Date.now()
+                setShutterReady(false)
+                setShutterCooldownProgress(50)
+                setHidePalmTrigger(true)
+                setPalmState('triggered')
+                setPalmTriggerActive(false)
+                if (palmTriggerRef.current) { palmTriggerRef.current.dispose?.(); palmTriggerRef.current = null }
+                setPhase('countdown')
+                runCountdownRef.current()
                 dipDetected = false
                 pixelChangeHistory = []
-                await waitForRecoveryAndTrigger(preBlackout1)
-                startCooldownIndicator(1500)  // v4.7.83: show ready indicator
-                await new Promise(r => setTimeout(r, 500))
+                startCooldownIndicator(1500)
+                await new Promise(r => setTimeout(r, 300))
                 continue
               }
             }
@@ -2133,12 +2064,19 @@ export function BoothPage() {
             // For HIGH sensitivity: trigger immediately (don't wait for recovery)
             if (sensitivity === 'high') {
               console.log(`[Booth] Hardware shutter (high sens immediate)! ${lastBrightness.toFixed(0)} → ${brightness.toFixed(0)}`)
-              // v4.7.82: Wait for mirror recovery before capture (prevents black photos)
-              const preBlackout3 = lastBrightness
+              // v4.7.87: Direct trigger — countdown gives time for mirror recovery
+              hardwareShutterCooldownRef.current = Date.now()
+              setShutterReady(false)
+              setShutterCooldownProgress(50)
+              setHidePalmTrigger(true)
+              setPalmState('triggered')
+              setPalmTriggerActive(false)
+              if (palmTriggerRef.current) { palmTriggerRef.current.dispose?.(); palmTriggerRef.current = null }
+              setPhase('countdown')
+              runCountdownRef.current()
               dipDetected = false
-              await waitForRecoveryAndTrigger(preBlackout3)
-              startCooldownIndicator(1500)  // v4.7.83: show ready indicator
-              await new Promise(r => setTimeout(r, 500))
+              startCooldownIndicator(1500)
+              await new Promise(r => setTimeout(r, 300))
               continue
             }
 
@@ -2159,12 +2097,19 @@ export function BoothPage() {
 
             if (avgBrightness > MIN_AVG_BRIGHTNESS && brightness < avgBrightness * (1 - BLACKOUT_THRESHOLD)) {
               console.log(`[Booth] Hardware shutter (avg drop)! brightness=${brightness.toFixed(0)}, avg=${avgBrightness.toFixed(0)}`)
-              // v4.7.82: Wait for mirror recovery before capture (prevents black photos)
-              const preBlackout4 = avgBrightness
+              // v4.7.87: Direct trigger — countdown gives time for mirror recovery
+              hardwareShutterCooldownRef.current = Date.now()
+              setShutterReady(false)
+              setShutterCooldownProgress(50)
+              setHidePalmTrigger(true)
+              setPalmState('triggered')
+              setPalmTriggerActive(false)
+              if (palmTriggerRef.current) { palmTriggerRef.current.dispose?.(); palmTriggerRef.current = null }
+              setPhase('countdown')
+              runCountdownRef.current()
               dipDetected = false
-              await waitForRecoveryAndTrigger(preBlackout4)
-              startCooldownIndicator(1500)  // v4.7.83: show ready indicator
-              await new Promise(r => setTimeout(r, 500))
+              startCooldownIndicator(1500)
+              await new Promise(r => setTimeout(r, 300))
               continue
             }
           }
