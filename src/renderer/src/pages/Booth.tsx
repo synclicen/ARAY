@@ -1697,6 +1697,7 @@ export function BoothPage() {
     const startPalmTrigger = async () => {
       if (cancelled || started) return
       if (isRecording) return
+      console.log('[Booth] Palm: startPalmTrigger called', { uvcActive, uvcPreviewReady: uvcPreviewReadyRef.current })
 
       // v4.7.70: For UVC, create a hidden canvas and start capture loop.
       // For HP camera, use the <video> element directly.
@@ -1831,7 +1832,9 @@ export function BoothPage() {
 
       if (!cancelled) {
         setPalmTriggerActive(true)
-        console.log(`[Booth] Palm trigger v3 activated (${uvcActive ? 'UVC canvas' : 'HP video'})`)
+        console.log(`[Booth] Palm trigger v3 activated (${uvcActive ? 'UVC canvas 2fps' : 'HP video'})`)
+      } else {
+        console.warn('[Booth] Palm trigger start cancelled before activation')
       }
     }
 
