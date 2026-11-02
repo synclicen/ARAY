@@ -2688,7 +2688,7 @@ export function BoothPage() {
                   >
                     SIAP
                   </motion.div>
-                  <div className="text-silver-200 text-2xl font-semibold mt-4">
+                  <div className="text-silver-200 text-base sm:text-xl md:text-2xl font-semibold mt-2 sm:mt-4">
                     Tarik tangan untuk capture
                   </div>
                 </div>
@@ -2704,7 +2704,7 @@ export function BoothPage() {
                 <div className="text-center">
                   <motion.svg
                     viewBox="0 0 200 220"
-                    className="w-64 h-72 mx-auto drop-shadow-2xl"
+                    className="w-40 h-44 sm:w-56 sm:h-64 md:w-64 md:h-72 mx-auto drop-shadow-2xl"
                     animate={{
                       scale: palmState === 'hand_detected' ? [1, 1.05, 1] : [1, 1.03, 1],
                       opacity: palmState === 'hand_detected' ? 1 : [0.6, 0.9, 0.6]
@@ -2731,7 +2731,7 @@ export function BoothPage() {
                     />
                   </motion.svg>
                   {/* SATU teks singkat saja — ganti sesuai state */}
-                  <div className="mt-4 text-silver-200 text-lg font-medium">
+                  <div className="mt-2 sm:mt-4 text-silver-200 text-sm sm:text-base md:text-lg font-medium px-4">
                     {palmState === 'hand_detected' ? 'Tahan...' : 'Arahkan tangan ke layar, tahan, dan lepaskan'}
                   </div>
                 </div>
@@ -2808,9 +2808,9 @@ export function BoothPage() {
                     setPhase('countdown')
                     runCountdown()
                   }}
-                  className="w-24 h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold"
+                  className="w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 rounded-full border-4 transition-transform hover:scale-105 flex items-center justify-center bg-gradient-to-br from-gold-300 to-gold-500 border-white/80 shadow-glow-gold"
                 >
-                  <Video className="w-10 h-10 text-purple-haze-950" />
+                  <Video className="w-7 h-7 sm:w-9 sm:h-9 md:w-10 md:h-10 text-purple-haze-950" />
                 </button>
               )
             ) : null}
@@ -2819,7 +2819,7 @@ export function BoothPage() {
 
       {phase === 'countdown' && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-            <div className="text-[200px] font-extrabold aray-gradient-text" style={{ textShadow: '0 0 60px rgba(123, 97, 168, 0.6)' }}>
+            <div className="text-[120px] xs:text-[150px] sm:text-[180px] md:text-[200px] font-extrabold aray-gradient-text" style={{ textShadow: '0 0 60px rgba(123, 97, 168, 0.6)' }}>
               {countdown}
             </div>
         </div>
@@ -2829,7 +2829,7 @@ export function BoothPage() {
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
           {/* v4.7.28: YAP! dengan animasi zoom — CSS animation, tidak pakai framer-motion */}
           <div
-            className="text-7xl xs:text-8xl font-extrabold aray-gradient-text"
+            className="text-5xl xs:text-7xl sm:text-8xl font-extrabold aray-gradient-text"
             style={{
               textShadow: '0 0 80px rgba(212, 175, 55, 0.8)',
               animation: 'yapZoom 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards'
@@ -3079,10 +3079,10 @@ export function BoothPage() {
               setPhase('countdown')
               runCountdown()
             }}
-            className="relative w-24 h-24 rounded-full bg-gradient-to-br from-gold-300 to-gold-500 border-4 border-white/80 shadow-glow-gold hover:scale-105 transition-transform flex flex-col items-center justify-center"
+            className="relative w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 rounded-full bg-gradient-to-br from-gold-300 to-gold-500 border-4 border-white/80 shadow-glow-gold hover:scale-105 transition-transform flex flex-col items-center justify-center"
           >
-            <Camera className="w-7 h-7 text-purple-haze-950" />
-            <span className="text-purple-haze-950 text-sm font-extrabold leading-none mt-1">
+            <Camera className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 text-purple-haze-950" />
+            <span className="text-purple-haze-950 text-xs sm:text-sm font-extrabold leading-none mt-1">
               {currentShot}/{totalShots}
             </span>
           </button>
