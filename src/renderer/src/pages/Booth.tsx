@@ -1583,7 +1583,9 @@ export function BoothPage() {
   // Retry logic: call setAspectRatio 3x with delay to handle async textureView creation.
   useEffect(() => {
     const uvc = getUVCCameraNative()
-    if (!uvc || !uvcActiveRef.current) return
+    // v4.7.94: Use uvcActive state (not ref) so effect re-runs when uvcActive changes.
+    // Also re-run when currentAspectRatio changes — user may change ratio while UVC active.
+    if (!uvc || !uvcActive) return
     const dims = aspectDims[currentAspectRatio] || aspectDims['9:16']
 
     const applyRatio = async (attempt: number) => {
@@ -2201,8 +2203,12 @@ export function BoothPage() {
             aspectRatio: currentAspectRatio.replace(':', ' / '),
             maxHeight: '100dvh',
             maxWidth: '100%',
-            width: (currentAspectRatio === '16:9' || currentAspectRatio === '4:3') ? '100%' : 'auto',
-            height: (currentAspectRatio === '16:9' || currentAspectRatio === '4:3') ? 'auto' : '100dvh'
+            // v4.7.94: Fix 1:1 showing portrait full.
+            // For portrait ratios (9:16): height=100dvh, width=auto
+            // For landscape (16:9, 4:3): width=100%, height=auto
+            // For square (1:1): width=100%, height=auto (CSS aspectRatio makes it square)
+            width: (currentAspectRatio === '9:16') ? 'auto' : '100%',
+            height: (currentAspectRatio === '9:16') ? '100dvh' : 'auto'
           }}
         />
       </div>
@@ -2221,74 +2227,69 @@ export function BoothPage() {
       </AnimatePresence>
 
       {/* Top bar — hidden saat fullscreenBooth ATAU kiosk mode.
-          Di fullscreen/kiosk, hanya tombol X kecil yang tampil (untuk exit). */}
+          v4.7.94: Responsive — compact on small screens, full on tablets.
+          flex-wrap ensures buttons don't overlap on any screen size. */}
       {!fullscreenBooth && !settings?.kiosk_mode && (
-        <div className="absolute top-0 left-0 right-0 z-20 p-3 sm:p-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between bg-gradient-to-b from-black/60 to-transparent" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}>
+        <div className="absolute top-0 left-0 right-0 z-20 p-2 sm:p-3 md:p-5 flex items-start justify-between gap-2 bg-gradient-to-b from-black/60 to-transparent" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}>
           <button
             onClick={() => {
               stopCamera()
               navigate('/dashboard')
             }}
-            className="text-silver-300 hover:text-white flex items-center gap-2 text-sm min-h-[44px]"
+            className="text-silver-300 hover:text-white flex items-center gap-1 text-xs sm:text-sm min-h-[44px] shrink-0"
           >
-            <ChevronLeft className="w-5 h-5" />
-            Exit Booth
+            <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+            <span className="hidden sm:inline">Exit Booth</span>
           </button>
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <ArayBadge variant="purple">{activeEvent.code}</ArayBadge>
-            <ArayBadge variant="gold" className="hidden xs:inline-flex sm:inline-flex">{activeEvent.name}</ArayBadge>
-            {/* v4.6.5: Quick camera controls — switch front/back + mirror toggle
-                v4.7.64: Hide switch button when UVC active — UVC has no front/back,
-                and pressing it caused phone restart (close/reopen crash). */}
+          <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3 flex-wrap justify-end">
+            <ArayBadge variant="purple" className="text-[10px] sm:text-xs">{activeEvent.code}</ArayBadge>
+            {/* v4.6.5: Quick camera controls — switch front/back + mirror toggle */}
             {!uvcActive && (
             <button
               onClick={() => switchCameraRef.current()}
               title={`Switch to ${settings?.camera_facing === 'user' ? 'back' : 'front'} camera`}
-              className="ml-1 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px]"
+              className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px] shrink-0"
             >
-              <SwitchCamera className="w-4 h-4 text-silver-200" />
+              <SwitchCamera className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-silver-200" />
             </button>
             )}
-            {/* v4.7.41: Camera device selector — list semua kamera termasuk USB */}
             <button
               onClick={async () => {
                 await enumerateCameras()
                 setShowCameraSelector(!showCameraSelector)
               }}
               title="Pilih kamera"
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px]"
+              className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-full bg-black/40 hover:bg-purple-haze-500/30 border border-silver-300/20 flex items-center justify-center transition-all min-h-[44px] shrink-0"
             >
-              <Camera className="w-4 h-4 text-silver-200" />
+              <Camera className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-silver-200" />
             </button>
             <button
               onClick={toggleMirror}
-              title={mirror ? 'Mirror: ON (tap to disable)' : 'Mirror: OFF (tap to enable)'}
-              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center transition-all min-h-[44px] ${
+              title={mirror ? 'Mirror: ON' : 'Mirror: OFF'}
+              className={`w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-full border flex items-center justify-center transition-all min-h-[44px] shrink-0 ${
                 mirror
                   ? 'bg-purple-haze-500/40 border-purple-haze-400/50 text-purple-haze-100'
                   : 'bg-black/40 hover:bg-silver-200/10 border-silver-300/20 text-silver-400'
               }`}
             >
-              <FlipHorizontal className="w-4 h-4" />
+              <FlipHorizontal className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
-            {/* v4.7.80: Quick Palm trigger toggle — no need to go to Settings */}
             <button
               onClick={() => updateSettings({ palm_trigger: !settings?.palm_trigger })}
-              title={settings?.palm_trigger ? 'Palm: ON (tap to disable)' : 'Palm: OFF (tap to enable)'}
-              className={`w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center transition-all min-h-[44px] ${
+              title={settings?.palm_trigger ? 'Palm: ON' : 'Palm: OFF'}
+              className={`w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-full border flex items-center justify-center transition-all min-h-[44px] shrink-0 ${
                 settings?.palm_trigger
                   ? 'bg-gold-400/30 border-gold-300/50 text-gold-200'
                   : 'bg-black/40 hover:bg-silver-200/10 border-silver-300/20 text-silver-500'
               }`}
             >
-              <Hand className="w-4 h-4" />
+              <Hand className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
-            {/* v4.7.80: Quick Countdown selector — Manual/3s/5s/7s/10s */}
             <select
               value={settings?.booth_countdown_seconds ?? 3}
               onChange={(e) => updateSettings({ booth_countdown_seconds: parseInt(e.target.value, 10) })}
               title="Countdown time"
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/40 border border-silver-300/20 text-silver-200 text-xs text-center cursor-pointer min-h-[44px] appearance-none pl-1"
+              className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-full bg-black/40 border border-silver-300/20 text-silver-200 text-[10px] sm:text-xs text-center cursor-pointer min-h-[44px] appearance-none pl-0.5 shrink-0"
               style={{ textAlignLast: 'center' }}
             >
               <option value={0}>M</option>
