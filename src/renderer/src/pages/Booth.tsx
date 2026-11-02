@@ -2186,9 +2186,9 @@ export function BoothPage() {
       <canvas ref={canvasRef} className="hidden" />
 
       {/* Camera video — ALWAYS rendered (for getUserMedia path).
-          v4.7.52: When UVC active, hide the <video> element entirely — it has no
-          srcObject (UVC uses native TextureView behind WebView), and its parent
-          bg-black would block the TextureView from showing through. */}
+          v4.7.52: When UVC active, hide the <video> element entirely.
+          v4.7.96: Video maintains aspect ratio — object-contain for letterbox, not object-cover.
+          In landscape, video centered with letterbox bars if ratio differs from screen. */}
       <div className={`absolute inset-0 flex items-center justify-center overflow-hidden ${uvcActive ? 'bg-transparent' : 'bg-black'}`}>
         <video
           ref={videoRef}
@@ -2201,14 +2201,10 @@ export function BoothPage() {
           style={{
             filter: activeFilter.css,
             aspectRatio: currentAspectRatio.replace(':', ' / '),
-            maxHeight: '100dvh',
             maxWidth: '100%',
-            // v4.7.94: Fix 1:1 showing portrait full.
-            // For portrait ratios (9:16): height=100dvh, width=auto
-            // For landscape (16:9, 4:3): width=100%, height=auto
-            // For square (1:1): width=100%, height=auto (CSS aspectRatio makes it square)
+            maxHeight: '100%',
             width: (currentAspectRatio === '9:16') ? 'auto' : '100%',
-            height: (currentAspectRatio === '9:16') ? '100dvh' : 'auto'
+            height: (currentAspectRatio === '9:16') ? '100%' : 'auto'
           }}
         />
       </div>
@@ -2841,34 +2837,40 @@ export function BoothPage() {
       )}
 
       {phase === 'result' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-8 overflow-auto">
-            <div className="text-center mb-6">
-              <h1 className="text-3xl xs:text-4xl sm:text-5xl font-extrabold mb-2 aray-gradient-text">
+        <div className="absolute inset-0 z-10 flex flex-col md:flex-row items-center justify-center bg-gradient-to-br from-purple-haze-950 via-surface-base to-purple-haze-900 p-4 sm:p-6 md:p-8 overflow-hidden gap-4 md:gap-8">
+          {/* v4.7.96: Responsive result layout — flex-col on mobile, flex-row on md+.
+              No scroll needed — everything fits in one screen. */}
+          {/* Left: Composite preview */}
+          <div className="flex-shrink-0 flex flex-col items-center">
+            <div className="text-center mb-3 md:mb-4">
+              <h1 className="text-2xl xs:text-3xl sm:text-4xl md:text-3xl lg:text-4xl font-extrabold mb-1 aray-gradient-text">
                 LOOK AT YOU!
               </h1>
-              <p className="text-silver-300 text-lg italic">Your memories are ready.</p>
+              <p className="text-silver-300 text-sm sm:text-base md:text-lg italic">Your memories are ready.</p>
             </div>
 
-            {/* Composite preview (template result) */}
             {mode === 'photo' && compositing && (
-              <div className="mb-6 flex items-center gap-3 text-silver-300">
+              <div className="flex items-center gap-3 text-silver-300">
                 <RefreshCw className="w-5 h-5 animate-spin text-purple-haze-300" />
                 <span className="text-sm">Compositing template...</span>
               </div>
             )}
             {mode === 'photo' && compositeUrl && (
-              <div className="mb-6 max-w-sm mx-auto">
+              <div className="max-w-[180px] sm:max-w-[240px] md:max-w-[280px] lg:max-w-sm mx-auto">
                 <img
                   src={compositeUrl}
                   alt="Template composite"
-                  className="max-h-64 rounded-xl border-2 border-gold-400/40 shadow-glow-gold mx-auto"
+                  className="max-h-[35vh] sm:max-h-[40vh] md:max-h-[50vh] lg:max-h-[60vh] rounded-xl border-2 border-gold-400/40 shadow-glow-gold mx-auto"
                 />
               </div>
             )}
+          </div>
 
-            {/* v4.6.2: Individual photos — KLIK untuk retake foto tersebut saja */}
+          {/* Right: Actions + individual shots */}
+          <div className="flex flex-col items-center gap-3 md:gap-4 max-w-full md:max-w-md">
+            {/* v4.6.2: Individual photos — KLIK untuk retake */}
             {mode === 'photo' && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-3xl mb-8">
+              <div className="grid grid-cols-4 gap-2 sm:gap-3 max-w-full">
                 {capturedShots.map((shot) => (
                   <motion.button
                     key={shot.shotNumber}
@@ -2876,18 +2878,16 @@ export function BoothPage() {
                     animate={{ scale: 1, opacity: 1, y: 0 }}
                     transition={{ delay: shot.shotNumber * 0.1 }}
                     onClick={() => retakeShot(shot.shotNumber)}
-                    className="relative aspect-[3/2] rounded-xl overflow-hidden border-2 border-purple-haze-500/30 hover:border-gold-400/60 shadow-card group cursor-pointer transition-all"
+                    className="relative aspect-[3/2] rounded-lg sm:rounded-xl overflow-hidden border-2 border-purple-haze-500/30 hover:border-gold-400/60 shadow-card group cursor-pointer transition-all"
                     title={`Retake shot ${shot.shotNumber}`}
                   >
                     <img src={shot.dataUrl} alt={`Shot ${shot.shotNumber}`} className="w-full h-full object-cover" />
-                    {/* Retake overlay on hover */}
                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <div className="text-center">
-                        <RotateCcw className="w-8 h-8 text-gold-400 mx-auto mb-1" />
-                        <span className="text-gold-300 text-xs font-medium">Retake</span>
+                        <RotateCcw className="w-5 h-5 sm:w-6 sm:h-6 text-gold-400 mx-auto mb-1" />
+                        <span className="text-gold-300 text-[10px] sm:text-xs font-medium">Retake</span>
                       </div>
                     </div>
-                    {/* Shot number badge */}
                     <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] font-bold rounded px-1.5 py-0.5">
                       {shot.shotNumber}
                     </div>
@@ -2901,7 +2901,7 @@ export function BoothPage() {
             {/* v4.5.11: Hapus badge "Saved locally" dan "Syncing to Google Drive"
                 — tidak professional untuk event display */}
 
-            <div className="flex items-center gap-3 flex-wrap justify-center">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
               {settings?.show_print_button !== false && (
               <ArayButton
                 variant="silver"
@@ -3022,6 +3022,7 @@ export function BoothPage() {
                 Done
               </ArayButton>
             </div>
+          </div>
         </div>
       )}
 
