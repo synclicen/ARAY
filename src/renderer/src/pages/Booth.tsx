@@ -1683,9 +1683,9 @@ export function BoothPage() {
       return
     }
     // v4.7.92: RE-ENABLED palm trigger for UVC — using time-sliced capturePhoto.
-    // Palm trigger takes 1 frame every 500ms (2fps), shutter monitor takes the rest.
-    // Both use shared captureLockRef — no concurrent capturePhoto calls.
-    // Palm trigger at 2fps is enough for hand detection (hand hold = 500ms+).
+    // v4.7.97: Palm trigger gets LOWER priority — if lock not available immediately,
+    // skip this frame entirely (don't wait). Shutter monitor gets priority.
+    // Palm trigger at 2fps with skip-on-busy = minimal impact on shutter detection.
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1734,9 +1734,10 @@ export function BoothPage() {
         uvcCaptureLoop = (async () => {
           while (uvcCapturing && !cancelled) {
             try {
-              // v4.7.88: Acquire lock — prevents concurrent capturePhoto with hardware shutter
+              // v4.7.97: Skip-on-busy — if lock not available, skip this frame.
+              // Shutter monitor gets priority. Don't wait (was 50ms wait before).
               if (!acquireCaptureLock()) {
-                await new Promise(r => setTimeout(r, 50))
+                await new Promise(r => setTimeout(r, 500))
                 continue
               }
               const result: any = await uvcPlugin.capturePhoto({})
@@ -1965,9 +1966,9 @@ export function BoothPage() {
         }
 
         try {
-          // v4.7.88: Acquire lock — prevents concurrent capturePhoto with palm trigger
+          // v4.7.97: Shutter monitor has HIGHER priority — retry every 20ms if locked
           if (!acquireCaptureLock()) {
-            await new Promise(r => setTimeout(r, 50))
+            await new Promise(r => setTimeout(r, 20))
             continue
           }
           const result: any = await uvcPlugin.capturePhoto({})
