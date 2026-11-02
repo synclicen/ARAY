@@ -1671,6 +1671,10 @@ export function BoothPage() {
   //   Capture loop runs at ~5fps (200ms interval) — enough for hand detection,
   //   keeps native Bitmap allocation low (5 per second, recycled).
   useEffect(() => {
+    // v4.7.91: If hardware shutter is enabled, DON'T activate palm trigger's
+    // capturePhoto loop — it competes with hardware shutter monitor for capturePhoto.
+    // Palm trigger only works with HP camera (getUserMedia <video>), not UVC.
+    // For UVC, use hardware shutter instead.
     if (phase !== 'preview' || !settings?.palm_trigger || isRecording) {
       if (palmTriggerRef.current) {
         palmTriggerRef.current.dispose?.()
@@ -1678,6 +1682,12 @@ export function BoothPage() {
       }
       setPalmTriggerActive(false)
       setPalmState('none')
+      return
+    }
+    // v4.7.91: Skip palm trigger if UVC active — hardware shutter handles UVC.
+    // Previously: palm trigger UVC canvas loop + hardware shutter monitor competed.
+    if (uvcActive) {
+      console.log('[Booth] Palm trigger skipped — UVC active, hardware shutter handles capture')
       return
     }
 
