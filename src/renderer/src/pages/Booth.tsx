@@ -1671,10 +1671,6 @@ export function BoothPage() {
   //   Capture loop runs at ~5fps (200ms interval) — enough for hand detection,
   //   keeps native Bitmap allocation low (5 per second, recycled).
   useEffect(() => {
-    // v4.7.91: If hardware shutter is enabled, DON'T activate palm trigger's
-    // capturePhoto loop — it competes with hardware shutter monitor for capturePhoto.
-    // Palm trigger only works with HP camera (getUserMedia <video>), not UVC.
-    // For UVC, use hardware shutter instead.
     if (phase !== 'preview' || !settings?.palm_trigger || isRecording) {
       if (palmTriggerRef.current) {
         palmTriggerRef.current.dispose?.()
@@ -1684,12 +1680,10 @@ export function BoothPage() {
       setPalmState('none')
       return
     }
-    // v4.7.91: Skip palm trigger if UVC active — hardware shutter handles UVC.
-    // Previously: palm trigger UVC canvas loop + hardware shutter monitor competed.
-    if (uvcActive) {
-      console.log('[Booth] Palm trigger skipped — UVC active, hardware shutter handles capture')
-      return
-    }
+    // v4.7.92: RE-ENABLED palm trigger for UVC — using time-sliced capturePhoto.
+    // Palm trigger takes 1 frame every 500ms (2fps), shutter monitor takes the rest.
+    // Both use shared captureLockRef — no concurrent capturePhoto calls.
+    // Palm trigger at 2fps is enough for hand detection (hand hold = 500ms+).
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1766,11 +1760,13 @@ export function BoothPage() {
             } catch (e) {
               // Expected — keep polling
             }
-            // ~5fps = 200ms interval
-            await new Promise(r => setTimeout(r, 200))
+            // v4.7.92: 500ms interval (2fps) — slower than before (was 200ms/5fps)
+            // to reduce competition with hardware shutter monitor.
+            // 2fps is enough for palm detection (hand hold = 500ms+).
+            await new Promise(r => setTimeout(r, 500))
           }
         })()
-        console.log('[Booth] Palm: UVC canvas capture loop started (5fps)')
+        console.log('[Booth] Palm: UVC canvas capture loop started (2fps)')
       } else {
         // HP camera path: use <video> element
         const video = videoRef.current
