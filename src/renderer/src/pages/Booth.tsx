@@ -1446,17 +1446,10 @@ export function BoothPage() {
   const showModeSelector = boothModeSetting === 'combined'
 
   // v4.7.37 P0: Comprehensive cleanup on unmount — camera + recording + palm trigger
+  // v4.7.90: DON'T stop camera on unmount — keep UVC alive across tab switches.
+  // Only stop recording + palm trigger. Camera will be cleaned up when app exits.
   useEffect(() => {
     return () => {
-      // Stop camera
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop())
-        streamRef.current = null
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null
-        videoRef.current.onloadedmetadata = null
-      }
       // Stop recording (prevent leak: MediaRecorder + timer + raf + canvas)
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
@@ -1471,24 +1464,15 @@ export function BoothPage() {
         palmTriggerRef.current.dispose?.()
         palmTriggerRef.current = null
       }
-      // v4.7.51: Close UVC camera + remove body class on unmount
-      if (uvcActiveRef.current) {
-        const uvc = getUVCCameraNative()
-        if (uvc) {
-          try { uvc.hidePreview({}).catch(() => {}) } catch (e) {}
-          try { uvc.closeCamera({}).catch(() => {}) } catch (e) {}
-        }
-        uvcActiveRef.current = false
-        setUvcActive(false)
-        document.body.classList.remove('aray-uvc-active')
-      }
+      // v4.7.90: DON'T stop camera here — keep it alive for tab switches.
+      // Camera will be cleaned up when app truly exits (handleOnDestroy in native).
+      //;(window as any).__aray_current_session_id = undefined
     }
   }, [])
 
   // Auto-start camera on greeting screen for live background
-  // v4.7.84: Also re-start when Booth remounts (e.g. returning from Gallery).
-  // When Booth unmounts → stopCamera → UVC closed. When remounts → all refs reset
-  // → need to re-open camera. The greeting effect handles this.
+  // v4.7.90: Camera stays alive across tab switches (cleanup doesn't stop it).
+  // Only start if neither getUserMedia stream nor UVC is active.
   useEffect(() => {
     if (phase === 'greeting' && !streamRef.current && !uvcActiveRef.current) {
       console.log('[Booth] Greeting: starting camera (streamRef null, uvcActive false)')
@@ -1574,12 +1558,16 @@ export function BoothPage() {
     if (shouldShow) {
       try { uvc.showPreview({}).catch(() => {}) } catch (e) {}
       document.body.classList.add('aray-uvc-active')
-      setUvcActive(true)
+      // v4.7.90: Don't setUvcActive(true) here — it's already true and causes
+      // unnecessary re-renders. Only set if it was false.
+      if (!uvcActive) setUvcActive(true)
     } else {
       // review / result / error — sembunyikan TextureView supaya WebView composite terlihat
       try { uvc.hidePreview({}).catch(() => {}) } catch (e) {}
       document.body.classList.remove('aray-uvc-active')
-      setUvcActive(false)
+      // v4.7.90: DON'T setUvcActive(false) — this breaks hardware shutter re-detection
+      // when returning to preview. UVC camera is still open, just hidden.
+      // Only hide visually, keep uvcActive=true for detection logic.
     }
   }, [phase])
 
@@ -1886,28 +1874,26 @@ export function BoothPage() {
     let dipDetectedTime = 0  // v4.7.88: track when dip was detected for timeout
 
     // v4.7.78: Sensitivity-based thresholds + Auto mode for beginners
-    // 'auto'   = smart detection — combines brightness dip + pixel change spike
-    //            Works with AF (ripples), auto exposure (gradual changes), auto shutter
-    // 'high'   = 30% brightness drop, trigger immediately
-    // 'medium' = 40% drop, wait for recovery
-    // 'low'    = 60% drop, only long blackouts
     const sensitivity = settings?.hardware_shutter_sensitivity || 'auto'
     const BLACKOUT_THRESHOLD = sensitivity === 'high' ? 0.70 : sensitivity === 'low' ? 0.40 : 0.60
     const MIN_AVG_BRIGHTNESS = 20
-    // v4.7.82: Reduced cooldown from 3000 to 1500ms — 1.5s is enough to prevent
-    // double-trigger from same shutter event (DSLR mirror cycle is ~200-500ms).
-    // Was 3s → user had to wait too long between shots.
     const COOLDOWN_MS = 1500
     let lastBrightness = -1
     let dipDetected = false
     let dipBrightness = 0
-    // v4.7.78: Pixel change tracking for Auto mode
-    // When shutter fires, the ENTIRE frame changes (mirror flip) — not just brightness.
-    // We track average pixel difference between consecutive frames.
-    // A spike in pixel change + brightness dip = shutter confirmed.
     let lastFrameData: Uint8ClampedArray | null = null
     let pixelChangeHistory: number[] = []
     const PIXEL_CHANGE_SIZE = 5
+
+    // v4.7.90: Reset all detection state when effect starts (re-entering preview).
+    // This ensures shutter detection works on EVERY preview entry, not just first.
+    // Previously: dipDetected could be stuck true from previous trigger, blocking new detections.
+    dipDetected = false
+    lastBrightness = -1
+    lastFrameData = null
+    pixelChangeHistory = []
+    hardwareShutterCooldownRef.current = 0  // reset cooldown so detection starts immediately
+    setShutterReady(true)  // start in ready state
 
     // v4.7.87: SIMPLIFIED — no more waitForRecoveryAndTrigger.
     // That function called capturePhoto() in a loop which locked SurfaceTexture
