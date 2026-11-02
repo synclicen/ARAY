@@ -1412,13 +1412,9 @@ export function BoothPage() {
   // v4.3.7: Keep startRecordingRef in sync untuk palm trigger video mode
   useEffect(() => { startRecordingRef.current = startRecording }, [startRecording])
 
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      stopCamera()
-      ;(window as any).__aray_current_session_id = undefined
-    }
-  }, [stopCamera])
+  // v4.7.98: REMOVED old cleanup that called stopCamera() on unmount.
+  // The new cleanup below (v4.7.90) keeps camera alive across tab switches.
+  // This old effect was DUPLICATE — both ran on unmount, old one killed camera.
 
   // v4.7.68: Pre-create session when entering preview phase — eliminates lag
   // on first capture. Session creation is async IPC; doing it during countdown
@@ -1473,7 +1469,24 @@ export function BoothPage() {
   // Auto-start camera on greeting screen for live background
   // v4.7.90: Camera stays alive across tab switches (cleanup doesn't stop it).
   // Only start if neither getUserMedia stream nor UVC is active.
+  // v4.7.98: On remount, restore uvcActive state if ref says camera is still open.
   useEffect(() => {
+    // Restore state from refs (refs survive unmount/remount)
+    if (uvcActiveRef.current && !uvcActive) {
+      console.log('[Booth] Greeting: restoring uvcActive state (camera still open)')
+      setUvcActive(true)
+      document.body.classList.add('aray-uvc-active')
+      // Also restore uvcPreviewReady
+      if (uvcPreviewReadyRef.current) {
+        setUvcPreviewReady(true)
+      }
+      // Show TextureView
+      const uvc = getUVCCameraNative()
+      if (uvc) {
+        try { uvc.showPreview({}).catch(() => {}) } catch (e) {}
+      }
+      return  // Don't start camera — it's already running
+    }
     if (phase === 'greeting' && !streamRef.current && !uvcActiveRef.current) {
       console.log('[Booth] Greeting: starting camera (streamRef null, uvcActive false)')
       startCamera()
@@ -2230,7 +2243,8 @@ export function BoothPage() {
         <div className="absolute top-0 left-0 right-0 z-20 p-2 sm:p-3 md:p-5 flex items-start justify-between gap-2 bg-gradient-to-b from-black/60 to-transparent" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}>
           <button
             onClick={() => {
-              stopCamera()
+              // v4.7.98: DON'T stopCamera on Exit Booth — keep UVC alive.
+              // Camera stays open, will be reused when returning to Booth.
               navigate('/dashboard')
             }}
             className="text-silver-300 hover:text-white flex items-center gap-1 text-xs sm:text-sm min-h-[44px] shrink-0"
