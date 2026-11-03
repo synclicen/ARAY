@@ -124,10 +124,12 @@ export function BoothPage() {
   // calls startCamera() again. For UVC, streamRef is always null so the old guard
   // didn't work. This ref prevents duplicate UVC open → native memory leak → OOM.
   const cameraStartingRef = useRef<boolean>(false)
-  // v4.7.88: Shared capturePhoto lock — prevents concurrent capturePhoto calls
-  // from palm trigger + hardware shutter monitor. Without this, native plugin
-  // gets overwhelmed → frame drops → shutter detection fails (needs 2-3 presses).
+  // v4.7.88: Shared capturePhoto lock — prevents concurrent capturePhoto calls.
+  // v4.7.99: Replaced with unified frame bus — one capturePhoto feeds both
+  // palm trigger AND shutter monitor. No more competing loops.
   const captureLockRef = useRef<boolean>(false)
+  // v4.7.99: Latest captured frame — shared between palm trigger canvas and shutter monitor
+  const latestFrameRef = useRef<{ base64: string; brightness: number; pixelChange: number } | null>(null)
   const acquireCaptureLock = useCallback((): boolean => {
     if (captureLockRef.current) return false
     captureLockRef.current = true
@@ -1696,9 +1698,9 @@ export function BoothPage() {
       return
     }
     // v4.7.92: RE-ENABLED palm trigger for UVC — using time-sliced capturePhoto.
-    // v4.7.97: Palm trigger gets LOWER priority — if lock not available immediately,
-    // skip this frame entirely (don't wait). Shutter monitor gets priority.
-    // Palm trigger at 2fps with skip-on-busy = minimal impact on shutter detection.
+    // v4.7.99: UNIFIED — palm trigger canvas is filled by the shutter monitor's
+    // capturePhoto loop. No separate capture loop needed. One capturePhoto feeds both.
+    // Palm trigger canvas reads from latestFrameRef (set by shutter monitor).
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1719,7 +1721,9 @@ export function BoothPage() {
       let imageSource: HTMLVideoElement | HTMLCanvasElement
 
       if (uvcActive) {
-        // UVC path: create canvas, start frame capture loop
+        // v4.7.99: UVC palm trigger — NO separate capturePhoto loop!
+        // Canvas is filled by reading latestFrameRef (set by shutter monitor).
+        // This eliminates ALL competition for capturePhoto.
         const uvcPlugin = getUVCCameraNative()
         if (!uvcPlugin) {
           console.warn('[Booth] Palm: UVC active but plugin not available')
@@ -1731,59 +1735,44 @@ export function BoothPage() {
           retryTimer = setTimeout(startPalmTrigger, 200)
           return
         }
-        // Create hidden canvas (320x240 — enough for hand detection, saves memory)
+        // Create hidden canvas (320x240 — enough for hand detection)
         uvcCanvas = document.createElement('canvas')
         uvcCanvas.width = 320
         uvcCanvas.height = 240
         const uvcCtx = uvcCanvas.getContext('2d')
         if (!uvcCtx) { console.warn('[Booth] Palm: UVC canvas context failed'); return }
-        // Fill black initially
         uvcCtx.fillStyle = '#000000'
         uvcCtx.fillRect(0, 0, 320, 240)
         imageSource = uvcCanvas
 
-        // Start capture loop — draws UVC frames to canvas at ~5fps
+        // v4.7.99: Canvas update loop — reads latestFrameRef (NO capturePhoto!)
+        // Runs at ~5fps (200ms) — just draws the latest frame to canvas for MediaPipe.
+        // Shutter monitor fills latestFrameRef at ~10fps, we read it at 5fps.
         uvcCapturing = true
         uvcCaptureLoop = (async () => {
+          console.log('[Booth] Palm: canvas update loop started (reads latestFrameRef, 5fps)')
           while (uvcCapturing && !cancelled) {
-            try {
-              // v4.7.97: Skip-on-busy — if lock not available, skip this frame.
-              // Shutter monitor gets priority. Don't wait (was 50ms wait before).
-              if (!acquireCaptureLock()) {
-                await new Promise(r => setTimeout(r, 500))
-                continue
-              }
-              const result: any = await uvcPlugin.capturePhoto({})
-              releaseCaptureLock()
-              if (!uvcCapturing || cancelled) break
-              const base64 = result?.base64
-              if (base64) {
-                // Load as Image, draw to small canvas
-                const img = new Image()
-                img.onload = () => {
-                  if (!uvcCapturing || cancelled) return
-                  if (uvcCtx) {
-                    // Cover-fit the UVC frame to 320x240
-                    const ir = img.width / img.height
-                    const cr = 320 / 240
-                    let sx = 0, sy = 0, sw = img.width, sh = img.height
-                    if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
-                    else { sh = img.width / cr; sy = (img.height - sh) / 2 }
-                    uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
-                  }
+            const frame = latestFrameRef.current
+            if (frame && frame.base64) {
+              // Draw the latest frame (already captured by shutter monitor) to canvas
+              const img = new Image()
+              img.onload = () => {
+                if (!uvcCapturing || cancelled) return
+                if (uvcCtx) {
+                  const ir = img.width / img.height
+                  const cr = 320 / 240
+                  let sx = 0, sy = 0, sw = img.width, sh = img.height
+                  if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
+                  else { sh = img.width / cr; sy = (img.height - sh) / 2 }
+                  uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
                 }
-                img.src = `data:image/jpeg;base64,${base64}`
               }
-            } catch (e) {
-              // Expected — keep polling
+              img.src = `data:image/jpeg;base64,${frame.base64}`
             }
-            // v4.7.92: 500ms interval (2fps) — slower than before (was 200ms/5fps)
-            // to reduce competition with hardware shutter monitor.
-            // 2fps is enough for palm detection (hand hold = 500ms+).
-            await new Promise(r => setTimeout(r, 500))
+            await new Promise(r => setTimeout(r, 200))  // 5fps canvas update
           }
         })()
-        console.log('[Booth] Palm: UVC canvas capture loop started (2fps)')
+        console.log('[Booth] Palm: canvas update loop started (reads latestFrameRef)')
       } else {
         // HP camera path: use <video> element
         const video = videoRef.current
@@ -2028,6 +2017,9 @@ export function BoothPage() {
           })
 
           if (brightness < 0) continue
+
+          // v4.7.99: Store latest frame for palm trigger canvas (NO extra capturePhoto needed)
+          latestFrameRef.current = { base64, brightness, pixelChange }
 
           // v4.7.78: AUTO mode — smart detection combining brightness dip + pixel change.
           // This works with AF cameras (ripples), auto exposure (gradual changes), beginners.
