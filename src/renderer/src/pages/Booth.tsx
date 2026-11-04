@@ -2920,10 +2920,10 @@ export function BoothPage() {
 
             {/* v4.5.11: Hapus "Video saved successfully" — tidak professional */}
 
-            {/* v4.5.11: Hapus badge "Saved locally" dan "Syncing to Google Drive"
-                — tidak professional untuk event display */}
-
-            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
+            {/* v4.7.101: Responsive button layout — queue number ALWAYS visible.
+                Buttons wrap to next row if not enough space.
+                Queue badge has min-w to prevent truncation. */}
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center max-w-full">
               {settings?.show_print_button !== false && (
               <ArayButton
                 variant="silver"
@@ -2978,10 +2978,12 @@ export function BoothPage() {
               {/* v4.7.30: Hapus tombol Retake — user bisa retake via klik foto di atas.
                   Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive.
                   v4.7.31: Perkecil badge supaya muat di semua rasio (16:9, 4:3, dll). */}
-              <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-haze-500/15 border border-purple-haze-500/30">
-                <KeyRound className="w-3.5 h-3.5 text-gold-400 shrink-0" />
-                <span className="text-xs text-silver-200 whitespace-nowrap">
-                  Antrean ke: <span className="text-gold-300 font-bold text-sm">{queueNumber}</span>
+              {/* v4.7.101: Queue number — always visible, responsive sizing.
+                  min-w prevents truncation. text-[10px] on mobile, text-xs on sm. */}
+              <div className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-gold-400/15 border border-gold-400/30 shrink-0 order-first w-full sm:w-auto justify-center sm:justify-start">
+                <KeyRound className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gold-400 shrink-0" />
+                <span className="text-[10px] sm:text-xs text-silver-100 whitespace-nowrap">
+                  Antrean: <span className="text-gold-300 font-bold text-sm sm:text-base">{queueNumber}</span>
                 </span>
               </div>
               <ArayButton
