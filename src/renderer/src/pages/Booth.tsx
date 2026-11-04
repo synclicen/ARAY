@@ -1621,6 +1621,21 @@ export function BoothPage() {
       }
     }
     applyRatio(1)
+
+    // v4.7.100: Re-apply aspect ratio on orientation change (portrait ↔ landscape).
+    // When screen rotates, TextureView's parent dimensions change → need to
+    // re-trigger onMeasure with correct ratio.
+    const handleResize = () => {
+      console.log('[ARAY] Orientation/resize changed — re-applying UVC aspect ratio')
+      applyRatio(1)
+    }
+    window.addEventListener('resize', handleResize)
+    window.addEventListener('orientationchange', handleResize)
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('orientationchange', handleResize)
+    }
   }, [currentAspectRatio, uvcActive])
 
   // v4.7.61: Poll UVC camera until it's actually streaming frames.

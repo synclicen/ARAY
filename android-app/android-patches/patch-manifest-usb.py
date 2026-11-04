@@ -31,25 +31,34 @@ def patch(path: str) -> None:
 """
 
     # Try to find MainActivity <activity> block first
-    pattern = r'(<activity[^>]*android:name="[^"]*MainActivity"[^>]*>)(.*?)(</activity>)'
+    # v4.7.100: Also inject configChanges to handle orientation without Activity recreation
+    # (so TextureView isn't destroyed/recreated on rotation → aspect ratio stays applied)
+    pattern = r'(<activity[^>]*android:name="[^"]*MainActivity"[^>]*)(>)(.*?)(</activity>)'
     match = re.search(pattern, content, re.DOTALL)
     if match:
-        new_activity = match.group(1) + match.group(2) + usb_block + match.group(3)
+        activity_attrs = match.group(1)
+        # Add configChanges if not already present
+        if 'configChanges' not in activity_attrs:
+            activity_attrs += ' android:configChanges="orientation|screenSize|keyboardHidden"'
+        new_activity = activity_attrs + match.group(2) + match.group(3) + usb_block + match.group(4)
         content = content[:match.start()] + new_activity + content[match.end():]
         with open(path, "w") as f:
             f.write(content)
-        print("OK Injected USB_DEVICE_ATTACHED intent-filter into MainActivity")
+        print("OK Injected USB_DEVICE_ATTACHED + configChanges into MainActivity")
         return
 
     # Fallback: inject into first <activity> block
-    pattern = r'(<activity[^>]*>)(.*?)(</activity>)'
+    pattern = r'(<activity[^>]*)(>)(.*?)(</activity>)'
     match = re.search(pattern, content, re.DOTALL)
     if match:
-        new_activity = match.group(1) + match.group(2) + usb_block + match.group(3)
+        activity_attrs = match.group(1)
+        if 'configChanges' not in activity_attrs:
+            activity_attrs += ' android:configChanges="orientation|screenSize|keyboardHidden"'
+        new_activity = activity_attrs + match.group(2) + match.group(3) + usb_block + match.group(4)
         content = content[:match.start()] + new_activity + content[match.end():]
         with open(path, "w") as f:
             f.write(content)
-        print("OK Injected USB_DEVICE_ATTACHED intent-filter into first activity (fallback)")
+        print("OK Injected USB_DEVICE_ATTACHED + configChanges into first activity (fallback)")
         return
 
     print("WARN: No <activity> block found in AndroidManifest", file=sys.stderr)
