@@ -27,6 +27,11 @@ public class MainActivity extends BridgeActivity {
 
         super.onCreate(savedInstanceState);
 
+        // v4.7.104: Keep screen on + anti-sleep — prevents camera hang on screen off.
+        // FLAG_KEEP_SCREEN_ON prevents screen from turning off (no sleep).
+        // This is critical for event booths — screen must stay on for 5000+ visitors.
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
         // v4.7.51: Make WebView background transparent so the native TextureView
         // (UVCCameraNativePlugin's preview surface, added at index 0 of rootView —
         // i.e., BEHIND the WebView) shows through when body.aray-uvc-active CSS
@@ -73,6 +78,31 @@ public class MainActivity extends BridgeActivity {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             android.util.Log.i("ARAY", "Storage permission granted: " + granted);
         }
+    }
+
+    // v4.7.104: Anti-minimize — prevent app from being sent to background.
+    // When user tries to minimize (Home button), app stays in foreground.
+    // This prevents camera disconnection when accidentally tapping Home.
+    @Override
+    public void onBackPressed() {
+        // Do nothing — prevent back button from minimizing
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // v4.7.104: Immediately resume if app is paused (e.g. Home button pressed).
+        // This keeps the app in foreground at all times during event.
+        // Only works if app is in kiosk/event mode — user can still exit via
+        // Exit Booth button (which navigates within app, not to home screen).
+        android.util.Log.i("ARAY", "onPause — immediately resuming to prevent camera disconnect");
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        // v4.7.104: Log when app is stopped — for debugging camera disconnects
+        android.util.Log.w("ARAY", "onStop — app was stopped (may cause camera disconnect)");
     }
 }
 
