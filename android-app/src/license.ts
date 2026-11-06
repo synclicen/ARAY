@@ -360,10 +360,8 @@ export async function generateLicenseCode(
     verified: boolean
   }
 }> {
-  const expectedAdminKey = (await sha256Hex(`${LICENSE_SECRET}:admin-api-key`))
-    .substring(0, 16).toUpperCase()
-
-  if (adminKey.toUpperCase() !== expectedAdminKey) {
+  // v4.7.105: Admin Key changed to 'fajribowo2026' (easy to remember, same as Electron)
+  if (adminKey !== 'fajribowo2026') {
     return { success: false, error: 'Admin key tidak valid. Akses ditolak.' }
   }
   if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
