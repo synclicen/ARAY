@@ -128,10 +128,6 @@ export function BoothPage() {
   // from palm trigger + hardware shutter monitor. Without this, native plugin
   // gets overwhelmed → frame drops → shutter detection fails (needs 2-3 presses).
   const captureLockRef = useRef<boolean>(false)
-  // v4.7.108: Latest frame base64 — shared from shutter monitor to palm trigger canvas.
-  // Shutter monitor writes base64 string here (zero overhead — just string assignment).
-  // Palm trigger canvas reads it at 5fps for MediaPipe. No extra capturePhoto needed.
-  const latestFrameRef = useRef<string | null>(null)
   const acquireCaptureLock = useCallback((): boolean => {
     if (captureLockRef.current) return false
     captureLockRef.current = true
@@ -1416,8 +1412,7 @@ export function BoothPage() {
   // v4.3.7: Keep startRecordingRef in sync untuk palm trigger video mode
   useEffect(() => { startRecordingRef.current = startRecording }, [startRecording])
 
-  // v4.7.98: REMOVED old cleanup that called stopCamera() on unmount.
-  // Keep camera alive across tab switches (Gallery, Settings, etc).
+  // v4.7.110: Keep camera alive across tab switches — don't stopCamera on unmount
   useEffect(() => {
     return () => {
       ;(window as any).__aray_current_session_id = undefined
@@ -1479,16 +1474,11 @@ export function BoothPage() {
   // Only start if neither getUserMedia stream nor UVC is active.
   useEffect(() => {
     if (uvcActiveRef.current && !uvcActive) {
-      console.log('[Booth] Greeting: restoring uvcActive state (camera still open)')
       setUvcActive(true)
       document.body.classList.add('aray-uvc-active')
-      if (uvcPreviewReadyRef.current) {
-        setUvcPreviewReady(true)
-      }
+      if (uvcPreviewReadyRef.current) setUvcPreviewReady(true)
       const uvc = getUVCCameraNative()
-      if (uvc) {
-        try { uvc.showPreview({}).catch(() => {}) } catch (e) {}
-      }
+      if (uvc) { try { uvc.showPreview({}).catch(() => {}) } catch (e) {} }
       return
     }
     if (phase === 'greeting' && !streamRef.current && !uvcActiveRef.current) {
@@ -1699,18 +1689,10 @@ export function BoothPage() {
       setPalmState('none')
       return
     }
-    // v4.7.108: Palm trigger RE-ENABLED for UVC — using shared frame from shutter monitor.
-    // Shutter monitor stores base64 to latestFrameRef (just a string assignment, zero overhead).
-    // Palm trigger reads latestFrameRef at 5fps, creates Image only for canvas draw.
-    // No extra capturePhoto calls — palm borrows shutter monitor's frame.
-    // v4.7.107: Palm trigger DISABLED for UVC.
-    // Palm trigger's capturePhoto loop was the #1 cause of shutter detection failure.
-    // Even with priority lock, palm's capturePhoto calls stole frames from shutter monitor.
-    // For UVC: hardware shutter DSLR is the primary trigger. Palm trigger only for HP camera.
-    // if (uvcActive) {
-    //   console.log('[Booth] Palm trigger disabled for UVC — use hardware shutter')
-    //   return
-    // }
+    // v4.7.92: RE-ENABLED palm trigger for UVC — using time-sliced capturePhoto.
+    // v4.7.97: Palm trigger gets LOWER priority — if lock not available immediately,
+    // skip this frame entirely (don't wait). Shutter monitor gets priority.
+    // Palm trigger at 2fps with skip-on-busy = minimal impact on shutter detection.
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1754,34 +1736,48 @@ export function BoothPage() {
         uvcCtx.fillRect(0, 0, 320, 240)
         imageSource = uvcCanvas
 
-        // v4.7.108: Canvas update loop — reads latestFrameRef (NO capturePhoto!).
-        // Shutter monitor fills latestFrameRef with base64 at ~10fps.
-        // Palm reads it at 5fps (200ms), creates Image for canvas draw.
-        // ZERO capturePhoto calls from palm → zero competition with shutter.
+        // Start capture loop — draws UVC frames to canvas at ~5fps
         uvcCapturing = true
         uvcCaptureLoop = (async () => {
-          console.log('[Booth] Palm: canvas loop started (reads latestFrameRef, 5fps)')
           while (uvcCapturing && !cancelled) {
-            const frameBase64 = latestFrameRef.current
-            if (frameBase64) {
-              const img = new Image()
-              img.onload = () => {
-                if (!uvcCapturing || cancelled) return
-                if (uvcCtx) {
-                  const ir = img.width / img.height
-                  const cr = 320 / 240
-                  let sx = 0, sy = 0, sw = img.width, sh = img.height
-                  if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
-                  else { sh = img.width / cr; sy = (img.height - sh) / 2 }
-                  uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
-                }
+            try {
+              // v4.7.97: Skip-on-busy — if lock not available, skip this frame.
+              // Shutter monitor gets priority. Don't wait (was 50ms wait before).
+              if (!acquireCaptureLock()) {
+                await new Promise(r => setTimeout(r, 1000))
+                continue
               }
-              img.src = `data:image/jpeg;base64,${frameBase64}`
+              const result: any = await uvcPlugin.capturePhoto({})
+              releaseCaptureLock()
+              if (!uvcCapturing || cancelled) break
+              const base64 = result?.base64
+              if (base64) {
+                // Load as Image, draw to small canvas
+                const img = new Image()
+                img.onload = () => {
+                  if (!uvcCapturing || cancelled) return
+                  if (uvcCtx) {
+                    // Cover-fit the UVC frame to 320x240
+                    const ir = img.width / img.height
+                    const cr = 320 / 240
+                    let sx = 0, sy = 0, sw = img.width, sh = img.height
+                    if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
+                    else { sh = img.width / cr; sy = (img.height - sh) / 2 }
+                    uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
+                  }
+                }
+                img.src = `data:image/jpeg;base64,${base64}`
+              }
+            } catch (e) {
+              // Expected — keep polling
             }
-            await new Promise(r => setTimeout(r, 200))  // 5fps
+            // v4.7.92: 500ms interval (2fps) — slower than before (was 200ms/5fps)
+            // to reduce competition with hardware shutter monitor.
+            // 2fps is enough for palm detection (hand hold = 500ms+).
+            await new Promise(r => setTimeout(r, 1000))
           }
         })()
-        console.log('[Booth] Palm: canvas loop started (reads latestFrameRef)')
+        console.log('[Booth] Palm: UVC canvas capture loop started (2fps)')
       } else {
         // HP camera path: use <video> element
         const video = videoRef.current
@@ -1968,19 +1964,14 @@ export function BoothPage() {
 
     const monitorLoop = async () => {
       while (monitoring && !cancelled) {
-        // v4.7.107: NO cooldown check — detect immediately every loop.
-        // Cooldown is handled by setPhase('countdown') which stops the loop.
-        // When phase returns to 'preview', effect re-runs with fresh state.
+        // v4.7.84: Reduced cooldown check — was blocking detection even when indicator
+        // said "ready". Now only blocks for 400ms (enough to prevent double-trigger
+        // from same shutter event, but doesn't block next legitimate press).
         try {
-          // v4.7.107: NO lock — palm trigger is disabled for UVC (see below).
-          // Shutter monitor is the SOLE capturePhoto caller. No competition.
           const result: any = await uvcPlugin.capturePhoto({})
           if (!monitoring || cancelled) break
           const base64 = result?.base64
           if (!base64) continue
-
-          // v4.7.108: Store base64 for palm trigger canvas (zero overhead — string assignment)
-          latestFrameRef.current = base64
 
           // Calculate brightness + pixel change from JPEG
           const { brightness, pixelChange } = await new Promise<{brightness: number, pixelChange: number}>((resolve) => {
@@ -2078,7 +2069,7 @@ export function BoothPage() {
             runCountdownRef.current()
             dipDetected = false
             startCooldownIndicator(1500)  // v4.7.83: show ready indicator
-            await new Promise(r => setTimeout(r, 500))
+            await new Promise(r => setTimeout(r, 1000))
             continue
           }
 
@@ -2961,10 +2952,10 @@ export function BoothPage() {
               {/* v4.7.30: Hapus tombol Retake — user bisa retake via klik foto di atas.
                   Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive.
                   v4.7.31: Perkecil badge supaya muat di semua rasio (16:9, 4:3, dll). */}
-              <div className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-gold-400/15 border border-gold-400/30 shrink-0 order-first w-full sm:w-auto justify-center sm:justify-start">
-                <KeyRound className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gold-400 shrink-0" />
-                <span className="text-[10px] sm:text-xs text-silver-100 whitespace-nowrap">
-                  Antrean: <span className="text-gold-300 font-bold text-sm sm:text-base">{queueNumber}</span>
+              <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-haze-500/15 border border-purple-haze-500/30">
+                <KeyRound className="w-3.5 h-3.5 text-gold-400 shrink-0" />
+                <span className="text-xs text-silver-200 whitespace-nowrap">
+                  Antrean ke: <span className="text-gold-300 font-bold text-sm">{queueNumber}</span>
                 </span>
               </div>
               <ArayButton
