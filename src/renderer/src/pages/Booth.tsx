@@ -128,6 +128,10 @@ export function BoothPage() {
   // from palm trigger + hardware shutter monitor. Without this, native plugin
   // gets overwhelmed → frame drops → shutter detection fails (needs 2-3 presses).
   const captureLockRef = useRef<boolean>(false)
+  // v4.7.108: Latest frame base64 — shared from shutter monitor to palm trigger canvas.
+  // Shutter monitor writes base64 string here (zero overhead — just string assignment).
+  // Palm trigger canvas reads it at 5fps for MediaPipe. No extra capturePhoto needed.
+  const latestFrameRef = useRef<string | null>(null)
   const acquireCaptureLock = useCallback((): boolean => {
     if (captureLockRef.current) return false
     captureLockRef.current = true
@@ -1695,14 +1699,18 @@ export function BoothPage() {
       setPalmState('none')
       return
     }
+    // v4.7.108: Palm trigger RE-ENABLED for UVC — using shared frame from shutter monitor.
+    // Shutter monitor stores base64 to latestFrameRef (just a string assignment, zero overhead).
+    // Palm trigger reads latestFrameRef at 5fps, creates Image only for canvas draw.
+    // No extra capturePhoto calls — palm borrows shutter monitor's frame.
     // v4.7.107: Palm trigger DISABLED for UVC.
     // Palm trigger's capturePhoto loop was the #1 cause of shutter detection failure.
     // Even with priority lock, palm's capturePhoto calls stole frames from shutter monitor.
     // For UVC: hardware shutter DSLR is the primary trigger. Palm trigger only for HP camera.
-    if (uvcActive) {
-      console.log('[Booth] Palm trigger disabled for UVC — use hardware shutter')
-      return
-    }
+    // if (uvcActive) {
+    //   console.log('[Booth] Palm trigger disabled for UVC — use hardware shutter')
+    //   return
+    // }
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1746,48 +1754,34 @@ export function BoothPage() {
         uvcCtx.fillRect(0, 0, 320, 240)
         imageSource = uvcCanvas
 
-        // Start capture loop — draws UVC frames to canvas at ~5fps
+        // v4.7.108: Canvas update loop — reads latestFrameRef (NO capturePhoto!).
+        // Shutter monitor fills latestFrameRef with base64 at ~10fps.
+        // Palm reads it at 5fps (200ms), creates Image for canvas draw.
+        // ZERO capturePhoto calls from palm → zero competition with shutter.
         uvcCapturing = true
         uvcCaptureLoop = (async () => {
+          console.log('[Booth] Palm: canvas loop started (reads latestFrameRef, 5fps)')
           while (uvcCapturing && !cancelled) {
-            try {
-              // v4.7.97: Skip-on-busy — if lock not available, skip this frame.
-              // Shutter monitor gets priority. Don't wait (was 50ms wait before).
-              if (!acquireCaptureLock()) {
-                await new Promise(r => setTimeout(r, 500))
-                continue
-              }
-              const result: any = await uvcPlugin.capturePhoto({})
-              releaseCaptureLock()
-              if (!uvcCapturing || cancelled) break
-              const base64 = result?.base64
-              if (base64) {
-                // Load as Image, draw to small canvas
-                const img = new Image()
-                img.onload = () => {
-                  if (!uvcCapturing || cancelled) return
-                  if (uvcCtx) {
-                    // Cover-fit the UVC frame to 320x240
-                    const ir = img.width / img.height
-                    const cr = 320 / 240
-                    let sx = 0, sy = 0, sw = img.width, sh = img.height
-                    if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
-                    else { sh = img.width / cr; sy = (img.height - sh) / 2 }
-                    uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
-                  }
+            const frameBase64 = latestFrameRef.current
+            if (frameBase64) {
+              const img = new Image()
+              img.onload = () => {
+                if (!uvcCapturing || cancelled) return
+                if (uvcCtx) {
+                  const ir = img.width / img.height
+                  const cr = 320 / 240
+                  let sx = 0, sy = 0, sw = img.width, sh = img.height
+                  if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
+                  else { sh = img.width / cr; sy = (img.height - sh) / 2 }
+                  uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
                 }
-                img.src = `data:image/jpeg;base64,${base64}`
               }
-            } catch (e) {
-              // Expected — keep polling
+              img.src = `data:image/jpeg;base64,${frameBase64}`
             }
-            // v4.7.92: 500ms interval (2fps) — slower than before (was 200ms/5fps)
-            // to reduce competition with hardware shutter monitor.
-            // 2fps is enough for palm detection (hand hold = 500ms+).
-            await new Promise(r => setTimeout(r, 500))
+            await new Promise(r => setTimeout(r, 200))  // 5fps
           }
         })()
-        console.log('[Booth] Palm: UVC canvas capture loop started (2fps)')
+        console.log('[Booth] Palm: canvas loop started (reads latestFrameRef)')
       } else {
         // HP camera path: use <video> element
         const video = videoRef.current
@@ -1984,6 +1978,9 @@ export function BoothPage() {
           if (!monitoring || cancelled) break
           const base64 = result?.base64
           if (!base64) continue
+
+          // v4.7.108: Store base64 for palm trigger canvas (zero overhead — string assignment)
+          latestFrameRef.current = base64
 
           // Calculate brightness + pixel change from JPEG
           const { brightness, pixelChange } = await new Promise<{brightness: number, pixelChange: number}>((resolve) => {
