@@ -1695,10 +1695,14 @@ export function BoothPage() {
       setPalmState('none')
       return
     }
-    // v4.7.92: RE-ENABLED palm trigger for UVC — using time-sliced capturePhoto.
-    // v4.7.97: Palm trigger gets LOWER priority — if lock not available immediately,
-    // skip this frame entirely (don't wait). Shutter monitor gets priority.
-    // Palm trigger at 2fps with skip-on-busy = minimal impact on shutter detection.
+    // v4.7.107: Palm trigger DISABLED for UVC.
+    // Palm trigger's capturePhoto loop was the #1 cause of shutter detection failure.
+    // Even with priority lock, palm's capturePhoto calls stole frames from shutter monitor.
+    // For UVC: hardware shutter DSLR is the primary trigger. Palm trigger only for HP camera.
+    if (uvcActive) {
+      console.log('[Booth] Palm trigger disabled for UVC — use hardware shutter')
+      return
+    }
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1970,22 +1974,13 @@ export function BoothPage() {
 
     const monitorLoop = async () => {
       while (monitoring && !cancelled) {
-        // v4.7.84: Reduced cooldown check — was blocking detection even when indicator
-        // said "ready". Now only blocks for 400ms (enough to prevent double-trigger
-        // from same shutter event, but doesn't block next legitimate press).
-        if (Date.now() - hardwareShutterCooldownRef.current < 400) {
-          await new Promise(r => setTimeout(r, 50))
-          continue
-        }
-
+        // v4.7.107: NO cooldown check — detect immediately every loop.
+        // Cooldown is handled by setPhase('countdown') which stops the loop.
+        // When phase returns to 'preview', effect re-runs with fresh state.
         try {
-          // v4.7.97: Shutter monitor has HIGHER priority — retry every 20ms if locked
-          if (!acquireCaptureLock()) {
-            await new Promise(r => setTimeout(r, 20))
-            continue
-          }
+          // v4.7.107: NO lock — palm trigger is disabled for UVC (see below).
+          // Shutter monitor is the SOLE capturePhoto caller. No competition.
           const result: any = await uvcPlugin.capturePhoto({})
-          releaseCaptureLock()
           if (!monitoring || cancelled) break
           const base64 = result?.base64
           if (!base64) continue
@@ -2061,7 +2056,7 @@ export function BoothPage() {
                 dipDetected = false
                 pixelChangeHistory = []
                 startCooldownIndicator(1500)
-                await new Promise(r => setTimeout(r, 300))
+                await new Promise(r => setTimeout(r, 100))
                 continue
               }
             }
@@ -2110,7 +2105,7 @@ export function BoothPage() {
               runCountdownRef.current()
               dipDetected = false
               startCooldownIndicator(1500)
-              await new Promise(r => setTimeout(r, 300))
+              await new Promise(r => setTimeout(r, 100))
               continue
             }
 
@@ -2151,7 +2146,7 @@ export function BoothPage() {
               runCountdownRef.current()
               dipDetected = false
               startCooldownIndicator(1500)
-              await new Promise(r => setTimeout(r, 300))
+              await new Promise(r => setTimeout(r, 100))
               continue
             }
           }
