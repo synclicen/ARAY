@@ -87,22 +87,5 @@ public class MainActivity extends BridgeActivity {
     public void onBackPressed() {
         // Do nothing — prevent back button from minimizing
     }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        // v4.7.104: Immediately resume if app is paused (e.g. Home button pressed).
-        // This keeps the app in foreground at all times during event.
-        // Only works if app is in kiosk/event mode — user can still exit via
-        // Exit Booth button (which navigates within app, not to home screen).
-        android.util.Log.i("ARAY", "onPause — immediately resuming to prevent camera disconnect");
-    }
-
-    @Override
-    protected void onStop() {
-        super.onStop();
-        // v4.7.104: Log when app is stopped — for debugging camera disconnects
-        android.util.Log.w("ARAY", "onStop — app was stopped (may cause camera disconnect)");
-    }
 }
 
