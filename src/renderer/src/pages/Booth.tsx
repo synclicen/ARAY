@@ -124,12 +124,10 @@ export function BoothPage() {
   // calls startCamera() again. For UVC, streamRef is always null so the old guard
   // didn't work. This ref prevents duplicate UVC open → native memory leak → OOM.
   const cameraStartingRef = useRef<boolean>(false)
-  // v4.7.88: Shared capturePhoto lock — prevents concurrent capturePhoto calls.
-  // v4.7.99: Replaced with unified frame bus — one capturePhoto feeds both
-  // palm trigger AND shutter monitor. No more competing loops.
+  // v4.7.88: Shared capturePhoto lock — prevents concurrent capturePhoto calls
+  // from palm trigger + hardware shutter monitor. Without this, native plugin
+  // gets overwhelmed → frame drops → shutter detection fails (needs 2-3 presses).
   const captureLockRef = useRef<boolean>(false)
-  // v4.7.99: Latest captured frame — shared between palm trigger canvas and shutter monitor
-  const latestFrameRef = useRef<{ base64: string; brightness: number; pixelChange: number } | null>(null)
   const acquireCaptureLock = useCallback((): boolean => {
     if (captureLockRef.current) return false
     captureLockRef.current = true
@@ -1415,8 +1413,12 @@ export function BoothPage() {
   useEffect(() => { startRecordingRef.current = startRecording }, [startRecording])
 
   // v4.7.98: REMOVED old cleanup that called stopCamera() on unmount.
-  // The new cleanup below (v4.7.90) keeps camera alive across tab switches.
-  // This old effect was DUPLICATE — both ran on unmount, old one killed camera.
+  // Keep camera alive across tab switches (Gallery, Settings, etc).
+  useEffect(() => {
+    return () => {
+      ;(window as any).__aray_current_session_id = undefined
+    }
+  }, [])
 
   // v4.7.68: Pre-create session when entering preview phase — eliminates lag
   // on first capture. Session creation is async IPC; doing it during countdown
@@ -1471,23 +1473,19 @@ export function BoothPage() {
   // Auto-start camera on greeting screen for live background
   // v4.7.90: Camera stays alive across tab switches (cleanup doesn't stop it).
   // Only start if neither getUserMedia stream nor UVC is active.
-  // v4.7.98: On remount, restore uvcActive state if ref says camera is still open.
   useEffect(() => {
-    // Restore state from refs (refs survive unmount/remount)
     if (uvcActiveRef.current && !uvcActive) {
       console.log('[Booth] Greeting: restoring uvcActive state (camera still open)')
       setUvcActive(true)
       document.body.classList.add('aray-uvc-active')
-      // Also restore uvcPreviewReady
       if (uvcPreviewReadyRef.current) {
         setUvcPreviewReady(true)
       }
-      // Show TextureView
       const uvc = getUVCCameraNative()
       if (uvc) {
         try { uvc.showPreview({}).catch(() => {}) } catch (e) {}
       }
-      return  // Don't start camera — it's already running
+      return
     }
     if (phase === 'greeting' && !streamRef.current && !uvcActiveRef.current) {
       console.log('[Booth] Greeting: starting camera (streamRef null, uvcActive false)')
@@ -1621,21 +1619,6 @@ export function BoothPage() {
       }
     }
     applyRatio(1)
-
-    // v4.7.100: Re-apply aspect ratio on orientation change (portrait ↔ landscape).
-    // When screen rotates, TextureView's parent dimensions change → need to
-    // re-trigger onMeasure with correct ratio.
-    const handleResize = () => {
-      console.log('[ARAY] Orientation/resize changed — re-applying UVC aspect ratio')
-      applyRatio(1)
-    }
-    window.addEventListener('resize', handleResize)
-    window.addEventListener('orientationchange', handleResize)
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      window.removeEventListener('orientationchange', handleResize)
-    }
   }, [currentAspectRatio, uvcActive])
 
   // v4.7.61: Poll UVC camera until it's actually streaming frames.
@@ -1713,9 +1696,9 @@ export function BoothPage() {
       return
     }
     // v4.7.92: RE-ENABLED palm trigger for UVC — using time-sliced capturePhoto.
-    // v4.7.99: UNIFIED — palm trigger canvas is filled by the shutter monitor's
-    // capturePhoto loop. No separate capture loop needed. One capturePhoto feeds both.
-    // Palm trigger canvas reads from latestFrameRef (set by shutter monitor).
+    // v4.7.97: Palm trigger gets LOWER priority — if lock not available immediately,
+    // skip this frame entirely (don't wait). Shutter monitor gets priority.
+    // Palm trigger at 2fps with skip-on-busy = minimal impact on shutter detection.
 
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -1736,9 +1719,7 @@ export function BoothPage() {
       let imageSource: HTMLVideoElement | HTMLCanvasElement
 
       if (uvcActive) {
-        // v4.7.99: UVC palm trigger — NO separate capturePhoto loop!
-        // Canvas is filled by reading latestFrameRef (set by shutter monitor).
-        // This eliminates ALL competition for capturePhoto.
+        // UVC path: create canvas, start frame capture loop
         const uvcPlugin = getUVCCameraNative()
         if (!uvcPlugin) {
           console.warn('[Booth] Palm: UVC active but plugin not available')
@@ -1750,44 +1731,59 @@ export function BoothPage() {
           retryTimer = setTimeout(startPalmTrigger, 200)
           return
         }
-        // Create hidden canvas (320x240 — enough for hand detection)
+        // Create hidden canvas (320x240 — enough for hand detection, saves memory)
         uvcCanvas = document.createElement('canvas')
         uvcCanvas.width = 320
         uvcCanvas.height = 240
         const uvcCtx = uvcCanvas.getContext('2d')
         if (!uvcCtx) { console.warn('[Booth] Palm: UVC canvas context failed'); return }
+        // Fill black initially
         uvcCtx.fillStyle = '#000000'
         uvcCtx.fillRect(0, 0, 320, 240)
         imageSource = uvcCanvas
 
-        // v4.7.99: Canvas update loop — reads latestFrameRef (NO capturePhoto!)
-        // Runs at ~5fps (200ms) — just draws the latest frame to canvas for MediaPipe.
-        // Shutter monitor fills latestFrameRef at ~10fps, we read it at 5fps.
+        // Start capture loop — draws UVC frames to canvas at ~5fps
         uvcCapturing = true
         uvcCaptureLoop = (async () => {
-          console.log('[Booth] Palm: canvas update loop started (reads latestFrameRef, 5fps)')
           while (uvcCapturing && !cancelled) {
-            const frame = latestFrameRef.current
-            if (frame && frame.base64) {
-              // Draw the latest frame (already captured by shutter monitor) to canvas
-              const img = new Image()
-              img.onload = () => {
-                if (!uvcCapturing || cancelled) return
-                if (uvcCtx) {
-                  const ir = img.width / img.height
-                  const cr = 320 / 240
-                  let sx = 0, sy = 0, sw = img.width, sh = img.height
-                  if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
-                  else { sh = img.width / cr; sy = (img.height - sh) / 2 }
-                  uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
-                }
+            try {
+              // v4.7.97: Skip-on-busy — if lock not available, skip this frame.
+              // Shutter monitor gets priority. Don't wait (was 50ms wait before).
+              if (!acquireCaptureLock()) {
+                await new Promise(r => setTimeout(r, 500))
+                continue
               }
-              img.src = `data:image/jpeg;base64,${frame.base64}`
+              const result: any = await uvcPlugin.capturePhoto({})
+              releaseCaptureLock()
+              if (!uvcCapturing || cancelled) break
+              const base64 = result?.base64
+              if (base64) {
+                // Load as Image, draw to small canvas
+                const img = new Image()
+                img.onload = () => {
+                  if (!uvcCapturing || cancelled) return
+                  if (uvcCtx) {
+                    // Cover-fit the UVC frame to 320x240
+                    const ir = img.width / img.height
+                    const cr = 320 / 240
+                    let sx = 0, sy = 0, sw = img.width, sh = img.height
+                    if (ir > cr) { sw = img.height * cr; sx = (img.width - sw) / 2 }
+                    else { sh = img.width / cr; sy = (img.height - sh) / 2 }
+                    uvcCtx.drawImage(img, sx, sy, sw, sh, 0, 0, 320, 240)
+                  }
+                }
+                img.src = `data:image/jpeg;base64,${base64}`
+              }
+            } catch (e) {
+              // Expected — keep polling
             }
-            await new Promise(r => setTimeout(r, 200))  // 5fps canvas update
+            // v4.7.92: 500ms interval (2fps) — slower than before (was 200ms/5fps)
+            // to reduce competition with hardware shutter monitor.
+            // 2fps is enough for palm detection (hand hold = 500ms+).
+            await new Promise(r => setTimeout(r, 500))
           }
         })()
-        console.log('[Booth] Palm: canvas update loop started (reads latestFrameRef)')
+        console.log('[Booth] Palm: UVC canvas capture loop started (2fps)')
       } else {
         // HP camera path: use <video> element
         const video = videoRef.current
@@ -2033,9 +2029,6 @@ export function BoothPage() {
 
           if (brightness < 0) continue
 
-          // v4.7.99: Store latest frame for palm trigger canvas (NO extra capturePhoto needed)
-          latestFrameRef.current = { base64, brightness, pixelChange }
-
           // v4.7.78: AUTO mode — smart detection combining brightness dip + pixel change.
           // This works with AF cameras (ripples), auto exposure (gradual changes), beginners.
           // Algorithm:
@@ -2250,8 +2243,6 @@ export function BoothPage() {
         <div className="absolute top-0 left-0 right-0 z-20 p-2 sm:p-3 md:p-5 flex items-start justify-between gap-2 bg-gradient-to-b from-black/60 to-transparent" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.5rem)' }}>
           <button
             onClick={() => {
-              // v4.7.98: DON'T stopCamera on Exit Booth — keep UVC alive.
-              // Camera stays open, will be reused when returning to Booth.
               navigate('/dashboard')
             }}
             className="text-silver-300 hover:text-white flex items-center gap-1 text-xs sm:text-sm min-h-[44px] shrink-0"
@@ -2920,10 +2911,10 @@ export function BoothPage() {
 
             {/* v4.5.11: Hapus "Video saved successfully" — tidak professional */}
 
-            {/* v4.7.101: Responsive button layout — queue number ALWAYS visible.
-                Buttons wrap to next row if not enough space.
-                Queue badge has min-w to prevent truncation. */}
-            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center max-w-full">
+            {/* v4.5.11: Hapus badge "Saved locally" dan "Syncing to Google Drive"
+                — tidak professional untuk event display */}
+
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
               {settings?.show_print_button !== false && (
               <ArayButton
                 variant="silver"
@@ -2978,8 +2969,6 @@ export function BoothPage() {
               {/* v4.7.30: Hapus tombol Retake — user bisa retake via klik foto di atas.
                   Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive.
                   v4.7.31: Perkecil badge supaya muat di semua rasio (16:9, 4:3, dll). */}
-              {/* v4.7.101: Queue number — always visible, responsive sizing.
-                  min-w prevents truncation. text-[10px] on mobile, text-xs on sm. */}
               <div className="flex items-center gap-1 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg bg-gold-400/15 border border-gold-400/30 shrink-0 order-first w-full sm:w-auto justify-center sm:justify-start">
                 <KeyRound className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gold-400 shrink-0" />
                 <span className="text-[10px] sm:text-xs text-silver-100 whitespace-nowrap">
