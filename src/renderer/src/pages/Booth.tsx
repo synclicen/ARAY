@@ -2894,10 +2894,18 @@ export function BoothPage() {
 
             {/* v4.5.11: Hapus "Video saved successfully" — tidak professional */}
 
-            {/* v4.5.11: Hapus badge "Saved locally" dan "Syncing to Google Drive"
-                — tidak professional untuk event display */}
-
-            <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
+            {/* v4.7.101: Responsive button layout — queue number ALWAYS visible.
+                Queue number gets its own row so it never gets squeezed out. */}
+            <div className="flex flex-col items-center gap-2 w-full">
+              {/* Queue number — always full width, always visible */}
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-haze-500/15 border border-purple-haze-500/30">
+                <KeyRound className="w-3.5 h-3.5 text-gold-400 shrink-0" />
+                <span className="text-xs sm:text-sm text-silver-200 whitespace-nowrap">
+                  Antrean ke: <span className="text-gold-300 font-bold text-sm sm:text-base">{queueNumber}</span>
+                </span>
+              </div>
+              {/* Action buttons — wrap if needed, queue stays on its own row */}
+              <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-center">
               {settings?.show_print_button !== false && (
               <ArayButton
                 variant="silver"
@@ -2949,74 +2957,114 @@ export function BoothPage() {
                   Share
                 </ArayButton>
               )}
-              {/* v4.7.30: Hapus tombol Retake — user bisa retake via klik foto di atas.
-                  Ganti dengan nomor antrean foto untuk kemudahan cari di Google Drive.
-                  v4.7.31: Perkecil badge supaya muat di semua rasio (16:9, 4:3, dll). */}
-              <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-haze-500/15 border border-purple-haze-500/30">
-                <KeyRound className="w-3.5 h-3.5 text-gold-400 shrink-0" />
-                <span className="text-xs text-silver-200 whitespace-nowrap">
-                  Antrean ke: <span className="text-gold-300 font-bold text-sm">{queueNumber}</span>
-                </span>
-              </div>
-              <ArayButton
-                variant="ghost"
-                icon={<RotateCcw className="w-4 h-4" />}
-                onClick={() => {
-                  // v4.7.85: Take Again — go directly to preview (not greeting).
-                  // Reset shots but keep camera running. Faster re-shoot for operator.
-                  cleanupAllRecording()
-                  setCapturedShots([])
-                  setCurrentShot(1)
-                  setCompositeUrl(null)
-                  setCompositeMediaId(null)
-                  setRetakeShotNumber(null)
-                  setCountdown(0)
-                  setLastFlash(false)
-                  setHidePalmTrigger(false)
-                  ;(window as any).__aray_current_session_id = undefined
-                  // v4.7.85: Go to preview directly — camera should still be running
-                  // (stopCamera not called). If camera was stopped, greeting effect
-                  // will restart it.
-                  if (streamRef.current || uvcActiveRef.current) {
-                    setPhase('preview')
-                  } else {
-                    // Camera stopped — go to greeting (will auto-start camera)
+              {settings?.show_print_button !== false && (
+                <ArayButton
+                  variant="silver"
+                  icon={<Printer className="w-4 h-4" />}
+                  onClick={async () => {
+                    const mediaId = compositeMediaId ?? capturedShots[0]?.mediaId ?? ''
+                    if (!mediaId) return
+                    const printSettings = {
+                      paper_size: settings?.print_paper_size || '4x6',
+                      custom_width: settings?.print_custom_width || 100,
+                      custom_height: settings?.print_custom_height || 150,
+                      copies: settings?.print_copies || 1,
+                      color: settings?.print_color !== false,
+                      orientation: settings?.print_orientation || 'portrait',
+                      quality: settings?.print_quality || 'normal',
+                      fit: settings?.print_fit || 'contain'
+                    }
+                    await window.aray.print.queue(
+                      mediaId,
+                      settings?.printer_name || undefined,
+                      settings?.print_copies || 1,
+                      printSettings
+                    )
+                  }}
+                  className="text-xs sm:text-sm"
+                >
+                  Print
+                </ArayButton>
+                )}
+                {settings?.show_share_button !== false && settings?.share_qr_enabled && (
+                <ArayButton
+                  variant="silver"
+                  icon={<Share2 className="w-4 h-4" />}
+                  onClick={async () => {
+                    if (!settings?.share_qr_link) return
+                    try {
+                      const QRCode = (await import('qrcode')).default
+                      const dataUrl = await QRCode.toDataURL(settings.share_qr_link, {
+                        width: 256,
+                        margin: 1,
+                        color: { dark: '#0F0B1A', light: '#FFFFFF' }
+                      })
+                      setQrDataUrl(dataUrl)
+                      setShowQrModal(true)
+                    } catch (e) {
+                      console.error('[Booth] QR generation failed:', e)
+                    }
+                  }}
+                  className="text-xs sm:text-sm"
+                >
+                  Share
+                </ArayButton>
+                )}
+                <ArayButton
+                  variant="ghost"
+                  icon={<RotateCcw className="w-4 h-4" />}
+                  className="text-xs sm:text-sm"
+                  onClick={() => {
+                    cleanupAllRecording()
+                    setCapturedShots([])
+                    setCurrentShot(1)
+                    setCompositeUrl(null)
+                    setCompositeMediaId(null)
+                    setRetakeShotNumber(null)
+                    setCountdown(0)
+                    setLastFlash(false)
+                    setHidePalmTrigger(false)
+                    ;(window as any).__aray_current_session_id = undefined
+                    if (streamRef.current || uvcActiveRef.current) {
+                      setPhase('preview')
+                    } else {
+                      setPhase('greeting')
+                    }
+                  }}
+                >
+                  Take Again
+                </ArayButton>
+                <ArayButton
+                  variant="gold"
+                  icon={<Sparkles className="w-4 h-4" />}
+                  className="text-xs sm:text-sm"
+                  onClick={() => {
+                    cleanupAllRecording()
+                    setCapturedShots([])
+                    setCurrentShot(1)
+                    setCompositeUrl(null)
+                    setCompositeMediaId(null)
+                    setRetakeShotNumber(null)
+                    setCountdown(0)
+                    setLastFlash(false)
+                    setError(null)
+                    setPalmState('none')
+                    setPalmStatus('unloaded')
+                    setPalmError(null)
+                    setPalmProgress(0)
+                    setQrDataUrl(null)
+                    setShowQrModal(false)
+                    setShowPasswordModal(false)
+                    setPasswordInput('')
+                    setPasswordError(false)
+                    setHidePalmTrigger(false)
+                    ;(window as any).__aray_current_session_id = undefined
                     setPhase('greeting')
-                  }
-                }}
-              >
-                Take Again
-              </ArayButton>
-              <ArayButton
-                variant="gold"
-                icon={<Sparkles className="w-4 h-4" />}
-                onClick={() => {
-                  // v4.7.37 P1: Reset ALL state — prevent artifact di sesi baru
-                  cleanupAllRecording()
-                  setCapturedShots([])
-                  setCurrentShot(1)
-                  setCompositeUrl(null)
-                  setCompositeMediaId(null)
-                  setRetakeShotNumber(null)
-                  setCountdown(0)
-                  setLastFlash(false)
-                  setError(null)
-                  setPalmState('none')
-                  setPalmStatus('unloaded')
-                  setPalmError(null)
-                  setPalmProgress(0)
-                  setQrDataUrl(null)
-                  setShowQrModal(false)
-                  setShowPasswordModal(false)
-                  setPasswordInput('')
-                  setPasswordError(false)
-                  setHidePalmTrigger(false)
-                  ;(window as any).__aray_current_session_id = undefined
-                  setPhase('greeting')
-                }}
-              >
-                Done
-              </ArayButton>
+                  }}
+                >
+                  Done
+                </ArayButton>
+              </div>
             </div>
           </div>
         </div>
