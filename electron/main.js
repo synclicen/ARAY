@@ -288,8 +288,7 @@ function activateLicense(activationCode) {
   return { success: true, licenseType: verification.licenseType };
 }
 function generateLicenseCode(machineId, adminKey) {
-  const expectedAdminKey = crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex").substring(0, 16).toUpperCase();
-  if (adminKey.toUpperCase() !== expectedAdminKey) {
+  if (adminKey !== "fajribowo2026") {
     return { success: false, error: "Admin key tidak valid. Akses ditolak." };
   }
   if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
@@ -324,7 +323,7 @@ function generateLicenseCode(machineId, adminKey) {
   };
 }
 function getAdminKeyHash() {
-  return crypto.createHash("sha256").update(`${LICENSE_SECRET}:admin-api-key`).digest("hex").substring(0, 16);
+  return "fajribowo2026";
 }
 var crypto, fs, os, path, import_electron, LICENSE_SECRET, _eventSessionStartedAt, EVENT_GRACE_PERIOD_HOURS;
 var init_license = __esm({

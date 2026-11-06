@@ -89,26 +89,12 @@ export async function getMachineId(): Promise<string> {
   return _cachedMachineId
 }
 
-// v4.7.102: Custom display name — easier to remember than hex hash.
-// User can set their own display name via Preferences.
-const CUSTOM_MACHINE_NAME_KEY = 'aray_machine_name'
-export async function getDisplayMachineId(machineId: string): Promise<string> {
-  // v4.7.102: Check if user has set a custom display name
-  try {
-    const { Preferences } = await import('@capacitor/preferences')
-    const { value } = await Preferences.get({ key: CUSTOM_MACHINE_NAME_KEY })
-    if (value && value.trim().length > 0) return value.trim()
-  } catch {}
-  // Fallback: short hash
+// v4.7.105: REVERTED — Machine ID kembali ke hardware fingerprint hash.
+// Tampilan: short hex (e.g. 3699-4549-5B14)
+// Hanya Admin Key yang diubah ke 'fajribowo2026'.
+export function getDisplayMachineId(machineId: string): string {
   const short = machineId.substring(0, 12).toUpperCase()
   return `${short.slice(0, 4)}-${short.slice(4, 8)}-${short.slice(8, 12)}`
-}
-
-export async function setCustomMachineName(name: string): Promise<void> {
-  try {
-    const { Preferences } = await import('@capacitor/preferences')
-    await Preferences.set({ key: CUSTOM_MACHINE_NAME_KEY, value: name.trim() })
-  } catch {}
 }
 
 // ─── Activation Code ───────────────────────────────────────────────────────
@@ -276,7 +262,7 @@ export async function checkLicenseStatus(): Promise<LicenseStatus> {
       await Preferences.set({ key: CUSTOM_MACHINE_NAME_KEY, value: 'fajribowo2026' })
     }
   } catch {}
-  const displayMachineId = await getDisplayMachineId(machineId)
+  const displayMachineId = getDisplayMachineId(machineId)
   const licenseData = await readLicenseFile()
 
   if (licenseData) {
@@ -392,7 +378,7 @@ export async function generateLicenseCode(
   expiresAt.setHours(23, 59, 59, 0)
 
   const code = await generateExpectedCode(machineId, 'monthly', expiresAt.toISOString())
-  const displayMachineId = await getDisplayMachineId(machineId)
+  const displayMachineId = getDisplayMachineId(machineId)
   const verification = await verifyActivationCode(machineId, code)
 
   return {

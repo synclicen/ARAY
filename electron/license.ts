@@ -391,15 +391,8 @@ export function generateLicenseCode(
     verified: boolean
   }
 } {
-  const expectedAdminKey = crypto
-    .createHash('sha256')
-    .update(`${LICENSE_SECRET}:admin-api-key`)
-    .digest('hex')
-    .substring(0, 16)
-    .toUpperCase()
-
-  // v4.4.3: Case-insensitive comparison — user bisa input huruf besar/kecil
-  if (adminKey.toUpperCase() !== expectedAdminKey) {
+  // v4.7.105: Admin Key changed to 'fajribowo2026' (easy to remember)
+  if (adminKey !== 'fajribowo2026') {
     return { success: false, error: 'Admin key tidak valid. Akses ditolak.' }
   }
 
@@ -442,11 +435,8 @@ export function generateLicenseCode(
   }
 }
 
-// ─── Get Admin Key Hash (for display to developer) ─────────────────────────
+// ─── Get Admin Key (for display) ──────────────────────────────────────────
+// v4.7.105: Admin Key is now a simple string: 'fajribowo2026'
 export function getAdminKeyHash(): string {
-  return crypto
-    .createHash('sha256')
-    .update(`${LICENSE_SECRET}:admin-api-key`)
-    .digest('hex')
-    .substring(0, 16)
+  return 'fajribowo2026'
 }
