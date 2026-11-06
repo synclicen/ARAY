@@ -91,10 +91,7 @@ export async function getMachineId(): Promise<string> {
 
 // v4.7.102: Custom display name — easier to remember than hex hash.
 // User can set their own display name via Preferences.
-// v4.7.103: Custom name is ALSO used as machineId for license verification.
-// This means: license generated with "fajribowo2026" will work on this device.
 const CUSTOM_MACHINE_NAME_KEY = 'aray_machine_name'
-
 export async function getDisplayMachineId(machineId: string): Promise<string> {
   // v4.7.102: Check if user has set a custom display name
   try {
@@ -112,18 +109,6 @@ export async function setCustomMachineName(name: string): Promise<void> {
     const { Preferences } = await import('@capacitor/preferences')
     await Preferences.set({ key: CUSTOM_MACHINE_NAME_KEY, value: name.trim() })
   } catch {}
-}
-
-// v4.7.103: Get the machineId used for license verification.
-// If custom name is set, use it as machineId (so license generated with
-// "fajribowo2026" works). Otherwise use hardware fingerprint hash.
-export async function getLicenseMachineId(): Promise<string> {
-  try {
-    const { Preferences } = await import('@capacitor/preferences')
-    const { value } = await Preferences.get({ key: CUSTOM_MACHINE_NAME_KEY })
-    if (value && value.trim().length > 0) return value.trim()
-  } catch {}
-  return await getMachineId()
 }
 
 // ─── Activation Code ───────────────────────────────────────────────────────
@@ -282,8 +267,8 @@ export async function isEventSessionActive(): Promise<boolean> {
 }
 
 export async function checkLicenseStatus(): Promise<LicenseStatus> {
-  // v4.7.103: Use getLicenseMachineId() — returns custom name if set, else hash
-  // Set default custom name if not set
+  const machineId = await getMachineId()
+  // v4.7.102: Set default custom name if not set
   try {
     const { Preferences } = await import('@capacitor/preferences')
     const { value } = await Preferences.get({ key: CUSTOM_MACHINE_NAME_KEY })
@@ -291,7 +276,6 @@ export async function checkLicenseStatus(): Promise<LicenseStatus> {
       await Preferences.set({ key: CUSTOM_MACHINE_NAME_KEY, value: 'fajribowo2026' })
     }
   } catch {}
-  const machineId = await getLicenseMachineId()
   const displayMachineId = await getDisplayMachineId(machineId)
   const licenseData = await readLicenseFile()
 
@@ -343,8 +327,7 @@ export async function checkLicenseStatus(): Promise<LicenseStatus> {
 export async function activateLicense(
   activationCode: string
 ): Promise<{ success: boolean; error?: string; licenseType?: LicenseType }> {
-  // v4.7.103: Use getLicenseMachineId() — returns custom name if set
-  const machineId = await getLicenseMachineId()
+  const machineId = await getMachineId()
   const verification = await verifyActivationCode(machineId, activationCode)
   if (!verification) {
     return { success: false, error: 'Kode aktivasi tidak valid untuk perangkat ini.' }
@@ -397,11 +380,10 @@ export async function generateLicenseCode(
   if (adminKey.toUpperCase() !== expectedAdminKey) {
     return { success: false, error: 'Admin key tidak valid. Akses ditolak.' }
   }
-  // v4.7.103: Accept both hex hash (64 chars) AND custom names (any string)
-  if (!machineId || machineId.trim().length < 3) {
+  if (!machineId || !/^[a-f0-9]{64}$/i.test(machineId)) {
     return {
       success: false,
-      error: `Machine ID tidak valid. Diterima: '${machineId}'`,
+      error: `Machine ID tidak valid. Harus 64 karakter hex. Diterima: ${machineId?.length || 0} karakter.`,
     }
   }
 
@@ -410,7 +392,7 @@ export async function generateLicenseCode(
   expiresAt.setHours(23, 59, 59, 0)
 
   const code = await generateExpectedCode(machineId, 'monthly', expiresAt.toISOString())
-  const displayMachineId = getDisplayMachineId(machineId)
+  const displayMachineId = await getDisplayMachineId(machineId)
   const verification = await verifyActivationCode(machineId, code)
 
   return {
